@@ -1,0 +1,558 @@
+#property copyright "Satyam"
+#property version   "1.00"
+#property strict
+
+#include <Trade/Trade.mqh>
+
+enum ENUM_RISK_MODE
+{
+   RISK_MODE_FIXED_LOT = 0,
+   RISK_MODE_CURRENT_BALANCE_PERCENT = 1,
+   RISK_MODE_STARTING_BALANCE_PERCENT = 2
+};
+
+input long   InpMagicNumber            = 12345;
+input int    InpTakeProfitPoints       = 1000;
+input int    InpStopLossPoints         = 1000;
+input int    InpTrailingStartPoints    = 100;
+input int    InpTrailingDistancePoints = 50;
+input bool   InpTrailByThresholdSteps  = true;
+
+input group "Risk Settings"
+input ENUM_RISK_MODE InpRiskMode       = RISK_MODE_FIXED_LOT;
+input double InpFixedLotSize           = 0.10;
+input double InpRiskPercent            = 1.0;
+input double InpStartingBalance        = 1000.0;
+
+CTrade trade;
+
+string   EA_TAG                 = "PrevDayBreakoutEA";
+string   TRAIL_LINE_BUY_NAME    = "PrevDayBreakout_Trail_BUY";
+string   TRAIL_LINE_SELL_NAME   = "PrevDayBreakout_Trail_SELL";
+datetime g_lastDailyBarTime     = 0;
+datetime g_lastPlacedDayStart   = 0;
+bool     g_dailyOrdersPlaced    = false;
+datetime g_lastRetryAttemptTime = 0;
+int      g_retryIntervalSeconds = 30;
+
+//+------------------------------------------------------------------+
+//| Expert initialization                                            |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   trade.SetExpertMagicNumber(InpMagicNumber);
+   trade.SetDeviationInPoints(20);
+
+   g_lastDailyBarTime = iTime(_Symbol, PERIOD_D1, 0);
+   if(g_lastDailyBarTime > 0)
+   {
+      g_lastPlacedDayStart = g_lastDailyBarTime;
+      ResetForNewDayAndPlaceOrders();
+   }
+
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization                                          |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   ObjectDelete(0, TRAIL_LINE_BUY_NAME);
+   ObjectDelete(0, TRAIL_LINE_SELL_NAME);
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   DetectNewDayAndRefresh();
+   EnsureDailyPendingOrdersPlaced();
+   ManageTrailingStopsTickByTick();
+}
+
+//+------------------------------------------------------------------+
+//| Detect day change and reset                                      |
+//+------------------------------------------------------------------+
+void DetectNewDayAndRefresh()
+{
+   datetime currentD1Start = iTime(_Symbol, PERIOD_D1, 0);
+   if(currentD1Start <= 0)
+      return;
+
+   if(currentD1Start != g_lastDailyBarTime)
+   {
+      g_lastDailyBarTime = currentD1Start;
+      g_lastPlacedDayStart = currentD1Start;
+      ResetForNewDayAndPlaceOrders();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Reset daily orders/positions and place fresh pending orders      |
+//+------------------------------------------------------------------+
+void ResetForNewDayAndPlaceOrders()
+{
+   CloseAllEAOwnPositions();
+   DeleteAllEAOwnPendingOrders();
+   ObjectDelete(0, TRAIL_LINE_BUY_NAME);
+   ObjectDelete(0, TRAIL_LINE_SELL_NAME);
+   g_dailyOrdersPlaced = false;
+
+   double prevHigh = iHigh(_Symbol, PERIOD_D1, 1);
+   double prevLow  = iLow(_Symbol, PERIOD_D1, 1);
+
+   if(prevHigh <= 0 || prevLow <= 0)
+   {
+      Print("[", EA_TAG, "] Previous day OHLC not available yet.");
+      return;
+   }
+
+   // Try immediately; if market/session is closed this will be retried on next ticks.
+   PlaceBreakoutPendingOrders(prevHigh, prevLow);
+}
+
+//+------------------------------------------------------------------+
+//| Place both buy stop and sell stop                                |
+//+------------------------------------------------------------------+
+bool HasPendingOrPositionSide(bool isBuySide)
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0 || !OrderSelect(ticket))
+         continue;
+
+      string sym = OrderGetString(ORDER_SYMBOL);
+      long magic = (long)OrderGetInteger(ORDER_MAGIC);
+      if(sym != _Symbol || magic != InpMagicNumber)
+         continue;
+
+      ENUM_ORDER_TYPE type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+      if(isBuySide && (type == ORDER_TYPE_BUY_STOP || type == ORDER_TYPE_BUY_LIMIT || type == ORDER_TYPE_BUY_STOP_LIMIT))
+         return true;
+      if(!isBuySide && (type == ORDER_TYPE_SELL_STOP || type == ORDER_TYPE_SELL_LIMIT || type == ORDER_TYPE_SELL_STOP_LIMIT))
+         return true;
+   }
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+
+      string sym = PositionGetString(POSITION_SYMBOL);
+      long magic = (long)PositionGetInteger(POSITION_MAGIC);
+      if(sym != _Symbol || magic != InpMagicNumber)
+         continue;
+
+      long posType = PositionGetInteger(POSITION_TYPE);
+      if(isBuySide && posType == POSITION_TYPE_BUY)
+         return true;
+      if(!isBuySide && posType == POSITION_TYPE_SELL)
+         return true;
+   }
+
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Place only missing side pending orders                           |
+//+------------------------------------------------------------------+
+void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice)
+{
+   double lotSize = CalculateLotSizeByRiskMode();
+   if(lotSize <= 0.0)
+   {
+      Print("[", EA_TAG, "] Lot size calculation failed. Orders not placed.");
+      return;
+   }
+
+   double slBuy = NormalizeDouble(buyPrice - InpStopLossPoints * _Point, _Digits);
+   double tpBuy = NormalizeDouble(buyPrice + InpTakeProfitPoints * _Point, _Digits);
+
+   double slSell = NormalizeDouble(sellPrice + InpStopLossPoints * _Point, _Digits);
+   double tpSell = NormalizeDouble(sellPrice - InpTakeProfitPoints * _Point, _Digits);
+
+   buyPrice  = NormalizeDouble(buyPrice, _Digits);
+   sellPrice = NormalizeDouble(sellPrice, _Digits);
+
+   trade.SetExpertMagicNumber(InpMagicNumber);
+
+   bool hasBuySide = HasPendingOrPositionSide(true);
+   bool hasSellSide = HasPendingOrPositionSide(false);
+
+   bool buyOk = hasBuySide;
+   bool sellOk = hasSellSide;
+   uint buyRetcode = 0;
+   uint sellRetcode = 0;
+
+   int stopLevelPts = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double minGap = stopLevelPts * _Point;
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   if(!hasBuySide)
+   {
+      bool buyPriceValidNow = (buyPrice > ask + minGap);
+      if(buyPriceValidNow)
+      {
+         buyOk = trade.BuyStop(lotSize, buyPrice, _Symbol, slBuy, tpBuy, ORDER_TIME_DAY, 0, "PrevDayBuyBreakout");
+         buyRetcode = trade.ResultRetcode();
+         if(!buyOk && buyRetcode != TRADE_RETCODE_MARKET_CLOSED && buyRetcode != TRADE_RETCODE_INVALID_PRICE)
+            Print("[", EA_TAG, "] BuyStop failed. Retcode=", buyRetcode, " ", trade.ResultRetcodeDescription());
+      }
+      else
+      {
+         buyOk = false;
+      }
+   }
+
+   if(!hasSellSide)
+   {
+      bool sellPriceValidNow = (sellPrice < bid - minGap);
+      if(sellPriceValidNow)
+      {
+         sellOk = trade.SellStop(lotSize, sellPrice, _Symbol, slSell, tpSell, ORDER_TIME_DAY, 0, "PrevDaySellBreakout");
+         sellRetcode = trade.ResultRetcode();
+         if(!sellOk && sellRetcode != TRADE_RETCODE_MARKET_CLOSED && sellRetcode != TRADE_RETCODE_INVALID_PRICE)
+            Print("[", EA_TAG, "] SellStop failed. Retcode=", sellRetcode, " ", trade.ResultRetcodeDescription());
+      }
+      else
+      {
+         sellOk = false;
+      }
+   }
+
+   if((buyOk || hasBuySide) && (sellOk || hasSellSide))
+   {
+      g_dailyOrdersPlaced = true;
+      Print("[", EA_TAG, "] New day pending orders placed. Lot=", DoubleToString(lotSize, 2), " BuyStop=", buyPrice, " SellStop=", sellPrice);
+   }
+   else
+   {
+      g_dailyOrdersPlaced = false;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Retry daily pending placement until market/session opens         |
+//+------------------------------------------------------------------+
+void EnsureDailyPendingOrdersPlaced()
+{
+   if(g_dailyOrdersPlaced)
+      return;
+
+   datetime currentD1Start = iTime(_Symbol, PERIOD_D1, 0);
+   if(currentD1Start <= 0 || currentD1Start != g_lastPlacedDayStart)
+      return;
+
+   datetime nowTs = TimeCurrent();
+   if(g_lastRetryAttemptTime > 0 && (nowTs - g_lastRetryAttemptTime) < g_retryIntervalSeconds)
+      return;
+   g_lastRetryAttemptTime = nowTs;
+
+   // Avoid retry spam when symbol cannot trade in this tick/session.
+   long tradeMode = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE);
+   if(tradeMode == SYMBOL_TRADE_MODE_DISABLED || tradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
+      return;
+
+   bool hasBuySide = false;
+   bool hasSellSide = false;
+
+   // Check pending orders first.
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0 || !OrderSelect(ticket))
+         continue;
+
+      string sym = OrderGetString(ORDER_SYMBOL);
+      long magic = (long)OrderGetInteger(ORDER_MAGIC);
+      ENUM_ORDER_TYPE type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+      if(sym != _Symbol || magic != InpMagicNumber)
+         continue;
+
+      if(type == ORDER_TYPE_BUY_STOP || type == ORDER_TYPE_BUY_LIMIT || type == ORDER_TYPE_BUY_STOP_LIMIT)
+         hasBuySide = true;
+      else if(type == ORDER_TYPE_SELL_STOP || type == ORDER_TYPE_SELL_LIMIT || type == ORDER_TYPE_SELL_STOP_LIMIT)
+         hasSellSide = true;
+   }
+
+   // Also count already-triggered positions as side present.
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+
+      string sym = PositionGetString(POSITION_SYMBOL);
+      long magic = (long)PositionGetInteger(POSITION_MAGIC);
+      if(sym != _Symbol || magic != InpMagicNumber)
+         continue;
+
+      long posType = PositionGetInteger(POSITION_TYPE);
+      if(posType == POSITION_TYPE_BUY)
+         hasBuySide = true;
+      else if(posType == POSITION_TYPE_SELL)
+         hasSellSide = true;
+   }
+
+   if(hasBuySide && hasSellSide)
+   {
+      g_dailyOrdersPlaced = true;
+      return;
+   }
+
+   double prevHigh = iHigh(_Symbol, PERIOD_D1, 1);
+   double prevLow  = iLow(_Symbol, PERIOD_D1, 1);
+   if(prevHigh <= 0 || prevLow <= 0)
+      return;
+
+   PlaceBreakoutPendingOrders(prevHigh, prevLow);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate lot based on selected risk mode                        |
+//+------------------------------------------------------------------+
+double CalculateLotSizeByRiskMode()
+{
+   if(InpRiskMode == RISK_MODE_FIXED_LOT)
+      return NormalizeLotToSymbol(InpFixedLotSize);
+
+   if(InpStopLossPoints <= 0)
+      return 0.0;
+
+   double baseBalance = 0.0;
+   if(InpRiskMode == RISK_MODE_CURRENT_BALANCE_PERCENT)
+      baseBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   else if(InpRiskMode == RISK_MODE_STARTING_BALANCE_PERCENT)
+      baseBalance = InpStartingBalance;
+
+   if(baseBalance <= 0.0 || InpRiskPercent <= 0.0)
+      return 0.0;
+
+   double riskMoney = baseBalance * (InpRiskPercent / 100.0);
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+
+   if(tickValue <= 0.0 || tickSize <= 0.0)
+      return 0.0;
+
+   // Money value of one point move for 1.00 lot.
+   double pointValuePerLot = tickValue * (_Point / tickSize);
+   if(pointValuePerLot <= 0.0)
+      return 0.0;
+
+   double moneyLossPerLotAtSL = InpStopLossPoints * pointValuePerLot;
+   if(moneyLossPerLotAtSL <= 0.0)
+      return 0.0;
+
+   double rawLot = riskMoney / moneyLossPerLotAtSL;
+   return NormalizeLotToSymbol(rawLot);
+}
+
+//+------------------------------------------------------------------+
+//| Normalize lot to broker min/max/step                             |
+//+------------------------------------------------------------------+
+double NormalizeLotToSymbol(double lot)
+{
+   double volMin  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double volMax  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double volStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+   if(volMin <= 0.0 || volMax <= 0.0 || volStep <= 0.0)
+      return 0.0;
+
+   double normalized = MathFloor((lot + 1e-12) / volStep) * volStep;
+   if(normalized < volMin)
+      normalized = volMin;
+   if(normalized > volMax)
+      normalized = volMax;
+
+   int digits = 2;
+   if(volStep < 1.0)
+      digits = (int)MathRound(-MathLog10(volStep));
+
+   return NormalizeDouble(normalized, digits);
+}
+
+//+------------------------------------------------------------------+
+//| Manage trailing SL each tick                                     |
+//+------------------------------------------------------------------+
+void ManageTrailingStopsTickByTick()
+{
+   bool hasBuyPos = false;
+   bool hasSellPos = false;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      if(!PositionSelectByTicket(ticket))
+         continue;
+
+      string sym = PositionGetString(POSITION_SYMBOL);
+      long magic = (long)PositionGetInteger(POSITION_MAGIC);
+      if(sym != _Symbol || magic != InpMagicNumber)
+         continue;
+
+      long type = PositionGetInteger(POSITION_TYPE);
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double currentSL = PositionGetDouble(POSITION_SL);
+      double currentTP = PositionGetDouble(POSITION_TP);
+
+      if(type == POSITION_TYPE_BUY)
+      {
+         hasBuyPos = true;
+         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double profitPoints = (bid - openPrice) / _Point;
+
+         if(profitPoints >= InpTrailingStartPoints)
+         {
+            double desiredSL = 0.0;
+            if(InpTrailByThresholdSteps && InpTrailingStartPoints > 0)
+            {
+               int steps = (int)MathFloor(profitPoints / InpTrailingStartPoints);
+               double lockPoints = (steps * InpTrailingStartPoints) - InpTrailingDistancePoints;
+               desiredSL = NormalizeDouble(openPrice + lockPoints * _Point, _Digits);
+            }
+            else
+            {
+               desiredSL = NormalizeDouble(bid - InpTrailingDistancePoints * _Point, _Digits);
+            }
+
+            if(desiredSL > currentSL && desiredSL < bid)
+            {
+               if(trade.PositionModify(ticket, desiredSL, currentTP))
+                  DrawOrUpdateTrailLine(TRAIL_LINE_BUY_NAME, desiredSL, clrLime);
+               else
+                  Print("[", EA_TAG, "] Buy trail modify failed. Retcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+            }
+            else
+            {
+               DrawOrUpdateTrailLine(TRAIL_LINE_BUY_NAME, desiredSL, clrLime);
+            }
+         }
+      }
+      else if(type == POSITION_TYPE_SELL)
+      {
+         hasSellPos = true;
+         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double profitPoints = (openPrice - ask) / _Point;
+
+         if(profitPoints >= InpTrailingStartPoints)
+         {
+            double desiredSL = 0.0;
+            if(InpTrailByThresholdSteps && InpTrailingStartPoints > 0)
+            {
+               int steps = (int)MathFloor(profitPoints / InpTrailingStartPoints);
+               double lockPoints = (steps * InpTrailingStartPoints) - InpTrailingDistancePoints;
+               desiredSL = NormalizeDouble(openPrice - lockPoints * _Point, _Digits);
+            }
+            else
+            {
+               desiredSL = NormalizeDouble(ask + InpTrailingDistancePoints * _Point, _Digits);
+            }
+
+            bool canMove = (currentSL == 0.0 || desiredSL < currentSL) && desiredSL > ask;
+            if(canMove)
+            {
+               if(trade.PositionModify(ticket, desiredSL, currentTP))
+                  DrawOrUpdateTrailLine(TRAIL_LINE_SELL_NAME, desiredSL, clrTomato);
+               else
+                  Print("[", EA_TAG, "] Sell trail modify failed. Retcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+            }
+            else
+            {
+               DrawOrUpdateTrailLine(TRAIL_LINE_SELL_NAME, desiredSL, clrTomato);
+            }
+         }
+      }
+   }
+
+   if(!hasBuyPos)
+      ObjectDelete(0, TRAIL_LINE_BUY_NAME);
+   if(!hasSellPos)
+      ObjectDelete(0, TRAIL_LINE_SELL_NAME);
+}
+
+//+------------------------------------------------------------------+
+//| Draw/update horizontal trailing line                             |
+//+------------------------------------------------------------------+
+void DrawOrUpdateTrailLine(string name, double price, color clr)
+{
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(0, name, OBJ_HLINE, 0, 0, price);
+      ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DASH);
+      ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);
+      ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   }
+   else
+   {
+      ObjectSetDouble(0, name, OBJPROP_PRICE, price);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Close all open positions for this EA + symbol                    |
+//+------------------------------------------------------------------+
+void CloseAllEAOwnPositions()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      if(!PositionSelectByTicket(ticket))
+         continue;
+
+      string sym = PositionGetString(POSITION_SYMBOL);
+      long magic = (long)PositionGetInteger(POSITION_MAGIC);
+      if(sym != _Symbol || magic != InpMagicNumber)
+         continue;
+
+      if(!trade.PositionClose(ticket))
+         Print("[", EA_TAG, "] Failed to close position ticket=", ticket, " Retcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Delete all pending orders for this EA + symbol                   |
+//+------------------------------------------------------------------+
+void DeleteAllEAOwnPendingOrders()
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      if(!OrderSelect(ticket))
+         continue;
+
+      string sym = OrderGetString(ORDER_SYMBOL);
+      long magic = (long)OrderGetInteger(ORDER_MAGIC);
+      ENUM_ORDER_TYPE type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+
+      bool isPending = (type == ORDER_TYPE_BUY_LIMIT || type == ORDER_TYPE_SELL_LIMIT ||
+                        type == ORDER_TYPE_BUY_STOP  || type == ORDER_TYPE_SELL_STOP  ||
+                        type == ORDER_TYPE_BUY_STOP_LIMIT || type == ORDER_TYPE_SELL_STOP_LIMIT);
+
+      if(sym != _Symbol || magic != InpMagicNumber || !isPending)
+         continue;
+
+      if(!trade.OrderDelete(ticket))
+      {
+         uint rc = trade.ResultRetcode();
+         if(rc != TRADE_RETCODE_MARKET_CLOSED && rc != TRADE_RETCODE_LOCKED)
+            Print("[", EA_TAG, "] Failed to delete pending ticket=", ticket, " Retcode=", rc, " ", trade.ResultRetcodeDescription());
+      }
+   }
+}
