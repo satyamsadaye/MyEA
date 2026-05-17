@@ -37,6 +37,9 @@ bool     g_pendingDayReset      = false;
 datetime g_lastRetryAttemptTime = 0;
 int      g_retryIntervalSeconds = 30;
 bool     g_skipCurrentDaySignal = false;
+ulong    g_trailPosIds[];
+bool     g_trailWasActivated[];
+ulong    g_trailActivationLoggedPosIds[];
 
 //+------------------------------------------------------------------+
 //| Expert initialization                                            |
@@ -75,6 +78,48 @@ void OnTick()
    EnforceMaxPositionLimit();
    EnsureDailyPendingOrdersPlaced();
    ManageTrailingStopsTickByTick();
+}
+
+//+------------------------------------------------------------------+
+//| Trade transaction handler                                        |
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest &request, const MqlTradeResult &result)
+{
+   if(trans.type != TRADE_TRANSACTION_DEAL_ADD)
+      return;
+
+   if(trans.deal == 0 || !HistoryDealSelect(trans.deal))
+      return;
+
+   string sym = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
+   long magic = (long)HistoryDealGetInteger(trans.deal, DEAL_MAGIC);
+   if(sym != _Symbol || magic != InpMagicNumber)
+      return;
+
+   long entry = (long)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+   ulong posId = (ulong)HistoryDealGetInteger(trans.deal, DEAL_POSITION_ID);
+
+   if(entry == DEAL_ENTRY_IN)
+   {
+      LogEntryRiskReward(trans.deal, posId);
+      return;
+   }
+
+   if(entry != DEAL_ENTRY_OUT)
+      return;
+
+   long reason = (long)HistoryDealGetInteger(trans.deal, DEAL_REASON);
+
+   if(reason == DEAL_REASON_SL)
+   {
+      if(WasTrailingSLActivated(posId))
+         Print("[", EA_TAG, "] Trailing SL Exit. PositionId=", posId, " Deal=", trans.deal);
+      else
+         Print("[", EA_TAG, "] Full SL Exit. PositionId=", posId, " Deal=", trans.deal);
+   }
+
+   RemoveTrailingState(posId);
+   RemoveTrailActivationLoggedState(posId);
 }
 
 //+------------------------------------------------------------------+
@@ -557,18 +602,29 @@ void ManageTrailingStopsTickByTick()
          continue;
 
       long type = PositionGetInteger(POSITION_TYPE);
+      ulong posId = (ulong)PositionGetInteger(POSITION_IDENTIFIER);
       double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
       double currentSL = PositionGetDouble(POSITION_SL);
       double currentTP = PositionGetDouble(POSITION_TP);
+
+      EnsureTrailingState(posId, false);
 
       if(type == POSITION_TYPE_BUY)
       {
          hasBuyPos = true;
          double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
          double profitPoints = (bid - openPrice) / _Point;
+         bool trailingEligible = (profitPoints >= InpTrailingStartPoints);
 
-         if(profitPoints >= InpTrailingStartPoints)
+         if(trailingEligible)
          {
+            if(!WasTrailActivationLogged(posId))
+            {
+               Print("[", EA_TAG, "] BUY position ", ticket, " now met trailing level at ",
+                     DoubleToString(profitPoints, 1), " points. Trailing is now active.");
+               MarkTrailActivationLogged(posId);
+            }
+
             double desiredSL = 0.0;
             if(InpTrailByThresholdSteps && InpTrailingStartPoints > 0)
             {
@@ -584,9 +640,15 @@ void ManageTrailingStopsTickByTick()
             if(desiredSL > currentSL && desiredSL < bid)
             {
                if(trade.PositionModify(ticket, desiredSL, currentTP))
+               {
                   DrawOrUpdateTrailLine(TRAIL_LINE_BUY_NAME, desiredSL, clrLime);
+                  EnsureTrailingState(posId, true);
+               }
                else
-                  Print("[", EA_TAG, "] Buy trail modify failed. Retcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+               {
+                  if(!TryApplyFallbackTrailSL(ticket, POSITION_TYPE_BUY, currentTP, desiredSL))
+                     Print("[", EA_TAG, "] Buy trail modify failed. Retcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+               }
             }
             else
             {
@@ -599,9 +661,17 @@ void ManageTrailingStopsTickByTick()
          hasSellPos = true;
          double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
          double profitPoints = (openPrice - ask) / _Point;
+         bool trailingEligible = (profitPoints >= InpTrailingStartPoints);
 
-         if(profitPoints >= InpTrailingStartPoints)
+         if(trailingEligible)
          {
+            if(!WasTrailActivationLogged(posId))
+            {
+               Print("[", EA_TAG, "] SELL position ", ticket, " now met trailing level at ",
+                     DoubleToString(profitPoints, 1), " points. Trailing is now active.");
+               MarkTrailActivationLogged(posId);
+            }
+
             double desiredSL = 0.0;
             if(InpTrailByThresholdSteps && InpTrailingStartPoints > 0)
             {
@@ -618,9 +688,15 @@ void ManageTrailingStopsTickByTick()
             if(canMove)
             {
                if(trade.PositionModify(ticket, desiredSL, currentTP))
+               {
                   DrawOrUpdateTrailLine(TRAIL_LINE_SELL_NAME, desiredSL, clrTomato);
+                  EnsureTrailingState(posId, true);
+               }
                else
-                  Print("[", EA_TAG, "] Sell trail modify failed. Retcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+               {
+                  if(!TryApplyFallbackTrailSL(ticket, POSITION_TYPE_SELL, currentTP, desiredSL))
+                     Print("[", EA_TAG, "] Sell trail modify failed. Retcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+               }
             }
             else
             {
@@ -634,6 +710,231 @@ void ManageTrailingStopsTickByTick()
       ObjectDelete(0, TRAIL_LINE_BUY_NAME);
    if(!hasSellPos)
       ObjectDelete(0, TRAIL_LINE_SELL_NAME);
+}
+
+//+------------------------------------------------------------------+
+//| Track whether trailing SL has been activated per position        |
+//+------------------------------------------------------------------+
+int FindTrailingStateIndex(ulong positionId)
+{
+   for(int i = 0; i < ArraySize(g_trailPosIds); i++)
+   {
+      if(g_trailPosIds[i] == positionId)
+         return i;
+   }
+   return -1;
+}
+
+void EnsureTrailingState(ulong positionId, bool trailingActivated)
+{
+   if(positionId == 0)
+      return;
+
+   int idx = FindTrailingStateIndex(positionId);
+   if(idx >= 0)
+   {
+      if(trailingActivated)
+         g_trailWasActivated[idx] = true;
+      return;
+   }
+
+   int newSize = ArraySize(g_trailPosIds) + 1;
+   ArrayResize(g_trailPosIds, newSize);
+   ArrayResize(g_trailWasActivated, newSize);
+   g_trailPosIds[newSize - 1] = positionId;
+   g_trailWasActivated[newSize - 1] = trailingActivated;
+}
+
+bool WasTrailingSLActivated(ulong positionId)
+{
+   int idx = FindTrailingStateIndex(positionId);
+   if(idx < 0)
+      return false;
+   return g_trailWasActivated[idx];
+}
+
+void RemoveTrailingState(ulong positionId)
+{
+   int idx = FindTrailingStateIndex(positionId);
+   if(idx < 0)
+      return;
+
+   int last = ArraySize(g_trailPosIds) - 1;
+   if(idx != last)
+   {
+      g_trailPosIds[idx] = g_trailPosIds[last];
+      g_trailWasActivated[idx] = g_trailWasActivated[last];
+   }
+
+   ArrayResize(g_trailPosIds, last);
+   ArrayResize(g_trailWasActivated, last);
+}
+
+int FindTrailActivationLoggedIndex(ulong positionId)
+{
+   for(int i = 0; i < ArraySize(g_trailActivationLoggedPosIds); i++)
+   {
+      if(g_trailActivationLoggedPosIds[i] == positionId)
+         return i;
+   }
+   return -1;
+}
+
+bool WasTrailActivationLogged(ulong positionId)
+{
+   return (FindTrailActivationLoggedIndex(positionId) >= 0);
+}
+
+void MarkTrailActivationLogged(ulong positionId)
+{
+   if(positionId == 0 || WasTrailActivationLogged(positionId))
+      return;
+
+   int newSize = ArraySize(g_trailActivationLoggedPosIds) + 1;
+   ArrayResize(g_trailActivationLoggedPosIds, newSize);
+   g_trailActivationLoggedPosIds[newSize - 1] = positionId;
+}
+
+void RemoveTrailActivationLoggedState(ulong positionId)
+{
+   int idx = FindTrailActivationLoggedIndex(positionId);
+   if(idx < 0)
+      return;
+
+   int last = ArraySize(g_trailActivationLoggedPosIds) - 1;
+   if(idx != last)
+      g_trailActivationLoggedPosIds[idx] = g_trailActivationLoggedPosIds[last];
+
+   ArrayResize(g_trailActivationLoggedPosIds, last);
+}
+
+double ComputeMoneyAtPrice(long posType, double volume, double entryPrice, double closePrice)
+{
+   double pnl = 0.0;
+   ENUM_ORDER_TYPE calcType = (posType == POSITION_TYPE_BUY) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+   if(OrderCalcProfit(calcType, _Symbol, volume, entryPrice, closePrice, pnl))
+      return pnl;
+
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tickValue <= 0.0 || tickSize <= 0.0)
+      return 0.0;
+
+   double points = (posType == POSITION_TYPE_BUY)
+                 ? ((closePrice - entryPrice) / _Point)
+                 : ((entryPrice - closePrice) / _Point);
+   double pointValuePerLot = tickValue * (_Point / tickSize);
+   return points * pointValuePerLot * volume;
+}
+
+void LogEntryRiskReward(ulong dealTicket, ulong positionId)
+{
+   if(dealTicket == 0 || !HistoryDealSelect(dealTicket))
+      return;
+
+   double entryPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+   double volume     = HistoryDealGetDouble(dealTicket, DEAL_VOLUME);
+   if(entryPrice <= 0.0 || volume <= 0.0)
+      return;
+
+   long dealTypeLong = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+   long posType = -1;
+   if(dealTypeLong == DEAL_TYPE_BUY)
+      posType = POSITION_TYPE_BUY;
+   else if(dealTypeLong == DEAL_TYPE_SELL)
+      posType = POSITION_TYPE_SELL;
+   else
+      return;
+
+   double sl = 0.0, tp = 0.0;
+   bool gotPosition = false;
+   if(positionId > 0)
+      gotPosition = PositionSelectByTicket(positionId);
+
+   if(gotPosition)
+   {
+      sl = PositionGetDouble(POSITION_SL);
+      tp = PositionGetDouble(POSITION_TP);
+   }
+   else
+   {
+      sl = HistoryDealGetDouble(dealTicket, DEAL_SL);
+      tp = HistoryDealGetDouble(dealTicket, DEAL_TP);
+   }
+
+   double maxLoss = 0.0;
+   double maxProfit = 0.0;
+   bool hasLoss = false;
+   bool hasProfit = false;
+
+   if(sl > 0.0)
+   {
+      double lossPnl = ComputeMoneyAtPrice(posType, volume, entryPrice, sl);
+      maxLoss = MathAbs(lossPnl);
+      hasLoss = true;
+   }
+
+   if(tp > 0.0)
+   {
+      double profitPnl = ComputeMoneyAtPrice(posType, volume, entryPrice, tp);
+      maxProfit = MathAbs(profitPnl);
+      hasProfit = true;
+   }
+
+   string rrText = "n/a";
+   if(hasLoss && hasProfit && maxLoss > 0.0)
+      rrText = DoubleToString(maxProfit / maxLoss, 2);
+
+   string side = (posType == POSITION_TYPE_BUY) ? "BUY" : "SELL";
+   Print("[", EA_TAG, "] ", side, " trade opened. PositionId=", positionId,
+         " Entry=", DoubleToString(entryPrice, _Digits),
+         " SL=", (sl > 0.0 ? DoubleToString(sl, _Digits) : "none"),
+         " TP=", (tp > 0.0 ? DoubleToString(tp, _Digits) : "none"),
+         " MaxLoss=", (hasLoss ? DoubleToString(maxLoss, 2) : "n/a"),
+         " MaxProfit=", (hasProfit ? DoubleToString(maxProfit, 2) : "n/a"),
+         " RR=", rrText);
+}
+
+bool TryApplyFallbackTrailSL(ulong ticket, long posType, double currentTP, double desiredSL)
+{
+   uint firstRetcode = trade.ResultRetcode();
+   string firstDesc = trade.ResultRetcodeDescription();
+
+   int stopLevelPts = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   int freezeLevelPts = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_FREEZE_LEVEL);
+   int minProtectPts = MathMax(stopLevelPts, freezeLevelPts) + 1;
+   double minProtectGap = minProtectPts * _Point;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double fallbackSL = desiredSL;
+
+   if(posType == POSITION_TYPE_BUY)
+      fallbackSL = NormalizeDouble(MathMin(desiredSL, bid - minProtectGap), _Digits);
+   else if(posType == POSITION_TYPE_SELL)
+      fallbackSL = NormalizeDouble(MathMax(desiredSL, ask + minProtectGap), _Digits);
+   else
+      return false;
+
+   if((posType == POSITION_TYPE_BUY && fallbackSL <= 0.0) ||
+      (posType == POSITION_TYPE_SELL && fallbackSL <= 0.0))
+      return false;
+
+   if(trade.PositionModify(ticket, fallbackSL, currentTP))
+   {
+      Print("[", EA_TAG, "] Trail modify fallback applied. Ticket=", ticket,
+            " RequestedSL=", DoubleToString(desiredSL, _Digits),
+            " FallbackSL=", DoubleToString(fallbackSL, _Digits),
+            " InitialRetcode=", firstRetcode, " ", firstDesc);
+      return true;
+   }
+
+   Print("[", EA_TAG, "] Trail modify failed even after fallback. Ticket=", ticket,
+         " RequestedSL=", DoubleToString(desiredSL, _Digits),
+         " FallbackSL=", DoubleToString(fallbackSL, _Digits),
+         " InitialRetcode=", firstRetcode, " ", firstDesc,
+         " FallbackRetcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+   return false;
 }
 
 //+------------------------------------------------------------------+
