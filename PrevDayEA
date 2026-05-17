@@ -17,6 +17,7 @@ input int    InpStopLossPoints         = 1000;
 input int    InpTrailingStartPoints    = 100;
 input int    InpTrailingDistancePoints = 50;
 input bool   InpTrailByThresholdSteps  = true;
+input int    InpMaxConcurrentPositions = 1;
 
 input group "Risk Settings"
 input ENUM_RISK_MODE InpRiskMode       = RISK_MODE_FIXED_LOT;
@@ -32,8 +33,10 @@ string   TRAIL_LINE_SELL_NAME   = "PrevDayBreakout_Trail_SELL";
 datetime g_lastDailyBarTime     = 0;
 datetime g_lastPlacedDayStart   = 0;
 bool     g_dailyOrdersPlaced    = false;
+bool     g_pendingDayReset      = false;
 datetime g_lastRetryAttemptTime = 0;
 int      g_retryIntervalSeconds = 30;
+bool     g_skipCurrentDaySignal = false;
 
 //+------------------------------------------------------------------+
 //| Expert initialization                                            |
@@ -47,7 +50,7 @@ int OnInit()
    if(g_lastDailyBarTime > 0)
    {
       g_lastPlacedDayStart = g_lastDailyBarTime;
-      ResetForNewDayAndPlaceOrders();
+      g_pendingDayReset = true;
    }
 
    return(INIT_SUCCEEDED);
@@ -68,6 +71,8 @@ void OnDeinit(const int reason)
 void OnTick()
 {
    DetectNewDayAndRefresh();
+   TryProcessPendingDayReset();
+   EnforceMaxPositionLimit();
    EnsureDailyPendingOrdersPlaced();
    ManageTrailingStopsTickByTick();
 }
@@ -85,8 +90,123 @@ void DetectNewDayAndRefresh()
    {
       g_lastDailyBarTime = currentD1Start;
       g_lastPlacedDayStart = currentD1Start;
-      ResetForNewDayAndPlaceOrders();
+      g_pendingDayReset = true;
+      g_dailyOrdersPlaced = false;
+      g_skipCurrentDaySignal = false;
+      g_lastRetryAttemptTime = 0;
    }
+}
+
+//+------------------------------------------------------------------+
+//| Check if symbol can be traded in current server session          |
+//+------------------------------------------------------------------+
+bool IsSymbolTradeOpenNow()
+{
+   long tradeMode = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE);
+   if(tradeMode == SYMBOL_TRADE_MODE_DISABLED || tradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
+      return false;
+
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) || !MQLInfoInteger(MQL_TRADE_ALLOWED))
+      return false;
+
+   datetime nowTs = TimeTradeServer();
+   if(nowTs <= 0)
+      nowTs = TimeCurrent();
+   if(nowTs <= 0)
+      return false;
+
+   MqlDateTime dt;
+   TimeToStruct(nowTs, dt);
+   ENUM_DAY_OF_WEEK dow = (ENUM_DAY_OF_WEEK)dt.day_of_week;
+   int secNow = dt.hour * 3600 + dt.min * 60 + dt.sec;
+
+   datetime from = 0, to = 0;
+   bool hasAnySession = false;
+   for(int i = 0; i < 10; i++)
+   {
+      if(!SymbolInfoSessionTrade(_Symbol, dow, i, from, to))
+         break;
+
+      hasAnySession = true;
+      MqlDateTime sFrom, sTo;
+      TimeToStruct(from, sFrom);
+      TimeToStruct(to, sTo);
+      int secFrom = sFrom.hour * 3600 + sFrom.min * 60 + sFrom.sec;
+      int secTo   = sTo.hour * 3600 + sTo.min * 60 + sTo.sec;
+
+      if(secFrom <= secTo)
+      {
+         if(secNow >= secFrom && secNow <= secTo)
+            return true;
+      }
+      else
+      {
+         // Overnight session (crosses midnight).
+         if(secNow >= secFrom || secNow <= secTo)
+            return true;
+      }
+   }
+
+   // If broker does not expose sessions, fall back to quote availability.
+   if(!hasAnySession)
+   {
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      return (bid > 0.0 && ask > 0.0);
+   }
+
+   return false;
+}
+
+int CountEAOwnOpenPositions()
+{
+   int count = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+
+      string sym = PositionGetString(POSITION_SYMBOL);
+      long magic = (long)PositionGetInteger(POSITION_MAGIC);
+      if(sym == _Symbol && magic == InpMagicNumber)
+         count++;
+   }
+   return count;
+}
+
+int EffectiveMaxConcurrentPositions()
+{
+   return MathMax(1, InpMaxConcurrentPositions);
+}
+
+bool IsMaxPositionLimitReached()
+{
+   return (CountEAOwnOpenPositions() >= EffectiveMaxConcurrentPositions());
+}
+
+void EnforceMaxPositionLimit()
+{
+   if(!IsMaxPositionLimitReached())
+      return;
+
+   // Prevent any additional entries once max open positions is reached.
+   DeleteAllEAOwnPendingOrders();
+}
+
+//+------------------------------------------------------------------+
+//| Execute new-day reset only when symbol is tradable               |
+//+------------------------------------------------------------------+
+void TryProcessPendingDayReset()
+{
+   if(!g_pendingDayReset)
+      return;
+
+   if(!IsSymbolTradeOpenNow())
+      return;
+
+   ResetForNewDayAndPlaceOrders();
+   g_pendingDayReset = false;
 }
 
 //+------------------------------------------------------------------+
@@ -94,7 +214,14 @@ void DetectNewDayAndRefresh()
 //+------------------------------------------------------------------+
 void ResetForNewDayAndPlaceOrders()
 {
-   CloseAllEAOwnPositions();
+   if(IsMaxPositionLimitReached())
+   {
+      g_skipCurrentDaySignal = true;
+      g_dailyOrdersPlaced = true;
+      Print("[", EA_TAG, "] Max open position limit reached. Current day signal skipped.");
+      return;
+   }
+
    DeleteAllEAOwnPendingOrders();
    ObjectDelete(0, TRAIL_LINE_BUY_NAME);
    ObjectDelete(0, TRAIL_LINE_SELL_NAME);
@@ -162,6 +289,24 @@ bool HasPendingOrPositionSide(bool isBuySide)
 //+------------------------------------------------------------------+
 void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice)
 {
+   if(g_skipCurrentDaySignal)
+   {
+      g_dailyOrdersPlaced = true;
+      return;
+   }
+
+   if(IsMaxPositionLimitReached())
+   {
+      g_dailyOrdersPlaced = true;
+      return;
+   }
+
+   if(!IsSymbolTradeOpenNow())
+   {
+      g_dailyOrdersPlaced = false;
+      return;
+   }
+
    double lotSize = CalculateLotSizeByRiskMode();
    if(lotSize <= 0.0)
    {
@@ -243,6 +388,18 @@ void EnsureDailyPendingOrdersPlaced()
 {
    if(g_dailyOrdersPlaced)
       return;
+   if(g_pendingDayReset)
+      return;
+   if(g_skipCurrentDaySignal)
+   {
+      g_dailyOrdersPlaced = true;
+      return;
+   }
+   if(IsMaxPositionLimitReached())
+   {
+      g_dailyOrdersPlaced = true;
+      return;
+   }
 
    datetime currentD1Start = iTime(_Symbol, PERIOD_D1, 0);
    if(currentD1Start <= 0 || currentD1Start != g_lastPlacedDayStart)
@@ -254,8 +411,7 @@ void EnsureDailyPendingOrdersPlaced()
    g_lastRetryAttemptTime = nowTs;
 
    // Avoid retry spam when symbol cannot trade in this tick/session.
-   long tradeMode = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE);
-   if(tradeMode == SYMBOL_TRADE_MODE_DISABLED || tradeMode == SYMBOL_TRADE_MODE_CLOSEONLY)
+   if(!IsSymbolTradeOpenNow())
       return;
 
    bool hasBuySide = false;
