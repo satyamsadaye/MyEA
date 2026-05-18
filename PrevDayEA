@@ -19,6 +19,12 @@ input int    InpTrailingDistancePoints = 50;
 input bool   InpTrailByThresholdSteps  = true;
 input int    InpMaxConcurrentPositions = 1;
 
+input group "Session Breakout Settings"
+input bool   InpEnablePrevDayBreakout      = true;
+input bool   InpEnableLondonSessionBreakout= true;
+input int    InpLondonSessionStartHour     = 8;
+input int    InpLondonSessionEndHour       = 17;
+
 input group "Risk Settings"
 input ENUM_RISK_MODE InpRiskMode       = RISK_MODE_FIXED_LOT;
 input double InpFixedLotSize           = 0.10;
@@ -30,6 +36,20 @@ CTrade trade;
 string   EA_TAG                 = "PrevDayBreakoutEA";
 string   TRAIL_LINE_BUY_NAME    = "PrevDayBreakout_Trail_BUY";
 string   TRAIL_LINE_SELL_NAME   = "PrevDayBreakout_Trail_SELL";
+string   LEVEL_LINE_PREV_HIGH   = "PrevDayBreakout_Level_PrevHigh";
+string   LEVEL_LINE_PREV_LOW    = "PrevDayBreakout_Level_PrevLow";
+string   LEVEL_LABEL_PREV_HIGH  = "PrevDayBreakout_Label_PrevHigh";
+string   LEVEL_LABEL_PREV_LOW   = "PrevDayBreakout_Label_PrevLow";
+string   LEVEL_LINE_LDN_HIGH    = "PrevDayBreakout_Level_LondonHigh";
+string   LEVEL_LINE_LDN_LOW     = "PrevDayBreakout_Level_LondonLow";
+string   LEVEL_LABEL_LDN_HIGH   = "PrevDayBreakout_Label_LondonHigh";
+string   LEVEL_LABEL_LDN_LOW    = "PrevDayBreakout_Label_LondonLow";
+string   LDN_VLINE_START_NAME   = "PrevDayBreakout_LondonStart";
+string   LDN_VLINE_END_NAME     = "PrevDayBreakout_LondonEnd";
+string   CMT_PREV_BUY           = "PreviousDay_Buy";
+string   CMT_PREV_SELL          = "PreviousDay_Sell";
+string   CMT_LONDON_BUY         = "LondonSession_Buy";
+string   CMT_LONDON_SELL        = "LondonSession_Sell";
 datetime g_lastDailyBarTime     = 0;
 datetime g_lastPlacedDayStart   = 0;
 bool     g_dailyOrdersPlaced    = false;
@@ -37,9 +57,18 @@ bool     g_pendingDayReset      = false;
 datetime g_lastRetryAttemptTime = 0;
 int      g_retryIntervalSeconds = 30;
 bool     g_skipCurrentDaySignal = false;
+bool     g_prevDayBuyConsumed   = false;
+bool     g_prevDaySellConsumed  = false;
+bool     g_londonBuyConsumed    = false;
+bool     g_londonSellConsumed   = false;
 ulong    g_trailPosIds[];
 bool     g_trailWasActivated[];
 ulong    g_trailActivationLoggedPosIds[];
+datetime g_lastLondonSessionDayStart = 0;
+
+void ProcessLondonSessionCycle();
+void DrawOrUpdateLondonSessionTimeMarkers();
+
 
 bool GetLastCompletedWeekdayCandleOHLC(double &outHigh, double &outLow)
 {
@@ -61,6 +90,104 @@ bool GetLastCompletedWeekdayCandleOHLC(double &outHigh, double &outLow)
       {
          outHigh = barHigh;
          outLow = barLow;
+         return true;
+      }
+   }
+
+   return false;
+}
+
+bool GetLondonSessionHighLowForDay(datetime dayStart, double &outHigh, double &outLow)
+{
+   int startHour = MathMax(0, MathMin(23, InpLondonSessionStartHour));
+   int endHour = MathMax(0, MathMin(23, InpLondonSessionEndHour));
+
+   if(dayStart <= 0)
+      return false;
+
+   MqlDateTime dt;
+   TimeToStruct(dayStart, dt);
+   if(dt.day_of_week == 0 || dt.day_of_week == 6)
+      return false;
+
+   datetime sessionStart = dayStart + startHour * 3600;
+   datetime sessionEnd = dayStart + endHour * 3600;
+   if(sessionEnd <= sessionStart)
+      sessionEnd += 24 * 3600;
+
+   int firstBar = iBarShift(_Symbol, PERIOD_M5, sessionStart, false);
+   int lastBar  = iBarShift(_Symbol, PERIOD_M5, sessionEnd, false);
+   if(firstBar < 0 || lastBar < 0)
+      return false;
+
+   if(lastBar > firstBar)
+   {
+      int tmp = firstBar;
+      firstBar = lastBar;
+      lastBar = tmp;
+   }
+
+   bool found = false;
+   double hi = 0.0;
+   double lo = 0.0;
+   for(int bar = firstBar; bar >= lastBar; bar--)
+   {
+      double h = iHigh(_Symbol, PERIOD_M5, bar);
+      double l = iLow(_Symbol, PERIOD_M5, bar);
+      if(h <= 0.0 || l <= 0.0)
+         continue;
+
+      if(!found)
+      {
+         hi = h;
+         lo = l;
+         found = true;
+      }
+      else
+      {
+         if(h > hi) hi = h;
+         if(l < lo) lo = l;
+      }
+   }
+
+   if(!found)
+      return false;
+
+   outHigh = hi;
+   outLow = lo;
+   return true;
+}
+
+bool GetLatestCompletedLondonSessionDayStart(datetime &outDayStart)
+{
+   datetime nowTs = TimeCurrent();
+   if(nowTs <= 0)
+      nowTs = TimeTradeServer();
+   if(nowTs <= 0)
+      return false;
+
+   int startHour = MathMax(0, MathMin(23, InpLondonSessionStartHour));
+   int endHour = MathMax(0, MathMin(23, InpLondonSessionEndHour));
+
+   for(int shift = 0; shift <= 14; shift++)
+   {
+      datetime dayStart = iTime(_Symbol, PERIOD_D1, shift);
+      if(dayStart <= 0)
+         continue;
+
+      MqlDateTime dt;
+      TimeToStruct(dayStart, dt);
+      if(dt.day_of_week == 0 || dt.day_of_week == 6)
+         continue;
+
+      datetime sessionStart = dayStart + startHour * 3600;
+      datetime sessionEnd = dayStart + endHour * 3600;
+      if(sessionEnd <= sessionStart)
+         sessionEnd += 24 * 3600;
+
+      if(nowTs >= sessionEnd)
+      {
+         outDayStart = dayStart;
          return true;
       }
    }
@@ -93,6 +220,16 @@ void OnDeinit(const int reason)
 {
    ObjectDelete(0, TRAIL_LINE_BUY_NAME);
    ObjectDelete(0, TRAIL_LINE_SELL_NAME);
+   ObjectDelete(0, LEVEL_LINE_PREV_HIGH);
+   ObjectDelete(0, LEVEL_LINE_PREV_LOW);
+   ObjectDelete(0, LEVEL_LABEL_PREV_HIGH);
+   ObjectDelete(0, LEVEL_LABEL_PREV_LOW);
+   ObjectDelete(0, LEVEL_LINE_LDN_HIGH);
+   ObjectDelete(0, LEVEL_LINE_LDN_LOW);
+   ObjectDelete(0, LEVEL_LABEL_LDN_HIGH);
+   ObjectDelete(0, LEVEL_LABEL_LDN_LOW);
+   ObjectDelete(0, LDN_VLINE_START_NAME);
+   ObjectDelete(0, LDN_VLINE_END_NAME);
 }
 
 //+------------------------------------------------------------------+
@@ -100,8 +237,10 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   DrawOrUpdateLondonSessionTimeMarkers();
    DetectNewDayAndRefresh();
    TryProcessPendingDayReset();
+   ProcessLondonSessionCycle();
    EnforceMaxPositionLimit();
    EnsureDailyPendingOrdersPlaced();
    ManageTrailingStopsTickByTick();
@@ -128,6 +267,17 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
 
    if(entry == DEAL_ENTRY_IN)
    {
+      string dComment = HistoryDealGetString(trans.deal, DEAL_COMMENT);
+      long dType = HistoryDealGetInteger(trans.deal, DEAL_TYPE);
+      if(dComment == CMT_PREV_BUY && dType == DEAL_TYPE_BUY)
+         g_prevDayBuyConsumed = true;
+      else if(dComment == CMT_PREV_SELL && dType == DEAL_TYPE_SELL)
+         g_prevDaySellConsumed = true;
+      else if(dComment == CMT_LONDON_BUY && dType == DEAL_TYPE_BUY)
+         g_londonBuyConsumed = true;
+      else if(dComment == CMT_LONDON_SELL && dType == DEAL_TYPE_SELL)
+         g_londonSellConsumed = true;
+
       LogEntryRiskReward(trans.deal, posId);
       return;
    }
@@ -165,6 +315,11 @@ void DetectNewDayAndRefresh()
       g_pendingDayReset = true;
       g_dailyOrdersPlaced = false;
       g_skipCurrentDaySignal = false;
+      g_prevDayBuyConsumed = false;
+      g_prevDaySellConsumed = false;
+      // New day starts a fresh London cycle; old London pending orders are cleared in reset.
+      g_londonBuyConsumed = false;
+      g_londonSellConsumed = false;
       g_lastRetryAttemptTime = 0;
    }
 }
@@ -297,6 +452,14 @@ void ResetForNewDayAndPlaceOrders()
    DeleteAllEAOwnPendingOrders();
    ObjectDelete(0, TRAIL_LINE_BUY_NAME);
    ObjectDelete(0, TRAIL_LINE_SELL_NAME);
+   ObjectDelete(0, LEVEL_LINE_PREV_HIGH);
+   ObjectDelete(0, LEVEL_LINE_PREV_LOW);
+   ObjectDelete(0, LEVEL_LABEL_PREV_HIGH);
+   ObjectDelete(0, LEVEL_LABEL_PREV_LOW);
+   ObjectDelete(0, LEVEL_LINE_LDN_HIGH);
+   ObjectDelete(0, LEVEL_LINE_LDN_LOW);
+   ObjectDelete(0, LEVEL_LABEL_LDN_HIGH);
+   ObjectDelete(0, LEVEL_LABEL_LDN_LOW);
    g_dailyOrdersPlaced = false;
 
    double prevHigh = 0.0;
@@ -307,15 +470,22 @@ void ResetForNewDayAndPlaceOrders()
       return;
    }
 
-   // Try immediately; if market/session is closed this will be retried on next ticks.
-   PlaceBreakoutPendingOrders(prevHigh, prevLow);
+   if(InpEnablePrevDayBreakout)
+   {
+      DrawOrUpdateLevelWithLabel(LEVEL_LINE_PREV_HIGH, LEVEL_LABEL_PREV_HIGH, prevHigh, "Previous Day High", clrDodgerBlue);
+      DrawOrUpdateLevelWithLabel(LEVEL_LINE_PREV_LOW, LEVEL_LABEL_PREV_LOW, prevLow, "Previous Day Low", clrTomato);
+      PlaceBreakoutPendingOrders(prevHigh, prevLow, CMT_PREV_BUY, CMT_PREV_SELL, g_prevDayBuyConsumed, g_prevDaySellConsumed);
+   }
+
 }
 
 //+------------------------------------------------------------------+
 //| Place both buy stop and sell stop                                |
 //+------------------------------------------------------------------+
-bool HasPendingOrPositionSide(bool isBuySide)
+bool HasTaggedPendingOrPositionSide(bool isBuySide, string orderTag)
 {
+   if(orderTag == "")
+      return false;
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       ulong ticket = OrderGetTicket(i);
@@ -325,6 +495,10 @@ bool HasPendingOrPositionSide(bool isBuySide)
       string sym = OrderGetString(ORDER_SYMBOL);
       long magic = (long)OrderGetInteger(ORDER_MAGIC);
       if(sym != _Symbol || magic != InpMagicNumber)
+         continue;
+
+      string comment = OrderGetString(ORDER_COMMENT);
+      if(comment != orderTag)
          continue;
 
       ENUM_ORDER_TYPE type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
@@ -345,6 +519,10 @@ bool HasPendingOrPositionSide(bool isBuySide)
       if(sym != _Symbol || magic != InpMagicNumber)
          continue;
 
+      string posComment = PositionGetString(POSITION_COMMENT);
+      if(posComment != orderTag)
+         continue;
+
       long posType = PositionGetInteger(POSITION_TYPE);
       if(isBuySide && posType == POSITION_TYPE_BUY)
          return true;
@@ -358,23 +536,26 @@ bool HasPendingOrPositionSide(bool isBuySide)
 //+------------------------------------------------------------------+
 //| Place only missing side pending orders                           |
 //+------------------------------------------------------------------+
-void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice)
+void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice, string buyComment, string sellComment, bool &buyConsumed, bool &sellConsumed, bool updateDailyState = true)
 {
    if(g_skipCurrentDaySignal)
    {
-      g_dailyOrdersPlaced = true;
+      if(updateDailyState)
+         g_dailyOrdersPlaced = true;
       return;
    }
 
    if(IsMaxPositionLimitReached())
    {
-      g_dailyOrdersPlaced = true;
+      if(updateDailyState)
+         g_dailyOrdersPlaced = true;
       return;
    }
 
    if(!IsSymbolTradeOpenNow())
    {
-      g_dailyOrdersPlaced = false;
+      if(updateDailyState)
+         g_dailyOrdersPlaced = false;
       return;
    }
 
@@ -396,8 +577,8 @@ void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice)
 
    trade.SetExpertMagicNumber(InpMagicNumber);
 
-   bool hasBuySide = HasPendingOrPositionSide(true);
-   bool hasSellSide = HasPendingOrPositionSide(false);
+   bool hasBuySide = HasTaggedPendingOrPositionSide(true, buyComment);
+   bool hasSellSide = HasTaggedPendingOrPositionSide(false, sellComment);
 
    bool buyOk = hasBuySide;
    bool sellOk = hasSellSide;
@@ -409,12 +590,12 @@ void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice)
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
-   if(!hasBuySide)
+   if(!hasBuySide && !buyConsumed)
    {
       bool buyPriceValidNow = (buyPrice > ask + minGap);
       if(buyPriceValidNow)
       {
-         buyOk = trade.BuyStop(lotSize, buyPrice, _Symbol, slBuy, tpBuy, ORDER_TIME_DAY, 0, "PrevDayBuyBreakout");
+         buyOk = trade.BuyStop(lotSize, buyPrice, _Symbol, slBuy, tpBuy, ORDER_TIME_DAY, 0, buyComment);
          buyRetcode = trade.ResultRetcode();
          if(!buyOk && buyRetcode != TRADE_RETCODE_MARKET_CLOSED && buyRetcode != TRADE_RETCODE_INVALID_PRICE)
             Print("[", EA_TAG, "] BuyStop failed. Retcode=", buyRetcode, " ", trade.ResultRetcodeDescription());
@@ -425,12 +606,12 @@ void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice)
       }
    }
 
-   if(!hasSellSide)
+   if(!hasSellSide && !sellConsumed)
    {
       bool sellPriceValidNow = (sellPrice < bid - minGap);
       if(sellPriceValidNow)
       {
-         sellOk = trade.SellStop(lotSize, sellPrice, _Symbol, slSell, tpSell, ORDER_TIME_DAY, 0, "PrevDaySellBreakout");
+         sellOk = trade.SellStop(lotSize, sellPrice, _Symbol, slSell, tpSell, ORDER_TIME_DAY, 0, sellComment);
          sellRetcode = trade.ResultRetcode();
          if(!sellOk && sellRetcode != TRADE_RETCODE_MARKET_CLOSED && sellRetcode != TRADE_RETCODE_INVALID_PRICE)
             Print("[", EA_TAG, "] SellStop failed. Retcode=", sellRetcode, " ", trade.ResultRetcodeDescription());
@@ -443,12 +624,14 @@ void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice)
 
    if((buyOk || hasBuySide) && (sellOk || hasSellSide))
    {
-      g_dailyOrdersPlaced = true;
+      if(updateDailyState)
+         g_dailyOrdersPlaced = true;
       Print("[", EA_TAG, "] New day pending orders placed. Lot=", DoubleToString(lotSize, 2), " BuyStop=", buyPrice, " SellStop=", sellPrice);
    }
    else
    {
-      g_dailyOrdersPlaced = false;
+      if(updateDailyState)
+         g_dailyOrdersPlaced = false;
    }
 }
 
@@ -485,10 +668,27 @@ void EnsureDailyPendingOrdersPlaced()
    if(!IsSymbolTradeOpenNow())
       return;
 
-   bool hasBuySide = false;
-   bool hasSellSide = false;
+   if(InpEnablePrevDayBreakout)
+   {
+      double prevHigh = 0.0;
+      double prevLow  = 0.0;
+      if(GetLastCompletedWeekdayCandleOHLC(prevHigh, prevLow))
+      {
+         DrawOrUpdateLevelWithLabel(LEVEL_LINE_PREV_HIGH, LEVEL_LABEL_PREV_HIGH, prevHigh, "Previous Day High", clrDodgerBlue);
+         DrawOrUpdateLevelWithLabel(LEVEL_LINE_PREV_LOW, LEVEL_LABEL_PREV_LOW, prevLow, "Previous Day Low", clrTomato);
+         PlaceBreakoutPendingOrders(prevHigh, prevLow, CMT_PREV_BUY, CMT_PREV_SELL, g_prevDayBuyConsumed, g_prevDaySellConsumed);
+      }
+   }
 
-   // Check pending orders first.
+   bool prevReady = true;
+   if(InpEnablePrevDayBreakout)
+      prevReady = (HasTaggedPendingOrPositionSide(true, CMT_PREV_BUY) || g_prevDayBuyConsumed) &&
+                  (HasTaggedPendingOrPositionSide(false, CMT_PREV_SELL) || g_prevDaySellConsumed);
+   g_dailyOrdersPlaced = prevReady;
+}
+
+void DeleteTaggedPendingOrders(string buyComment, string sellComment)
+{
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
       ulong ticket = OrderGetTicket(i);
@@ -497,47 +697,64 @@ void EnsureDailyPendingOrdersPlaced()
 
       string sym = OrderGetString(ORDER_SYMBOL);
       long magic = (long)OrderGetInteger(ORDER_MAGIC);
+      string cmt = OrderGetString(ORDER_COMMENT);
+      if(sym != _Symbol || magic != InpMagicNumber)
+         continue;
+      if(cmt != buyComment && cmt != sellComment)
+         continue;
+
       ENUM_ORDER_TYPE type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
-      if(sym != _Symbol || magic != InpMagicNumber)
+      bool isPending = (type == ORDER_TYPE_BUY_LIMIT || type == ORDER_TYPE_SELL_LIMIT ||
+                        type == ORDER_TYPE_BUY_STOP  || type == ORDER_TYPE_SELL_STOP  ||
+                        type == ORDER_TYPE_BUY_STOP_LIMIT || type == ORDER_TYPE_SELL_STOP_LIMIT);
+      if(!isPending)
          continue;
 
-      if(type == ORDER_TYPE_BUY_STOP || type == ORDER_TYPE_BUY_LIMIT || type == ORDER_TYPE_BUY_STOP_LIMIT)
-         hasBuySide = true;
-      else if(type == ORDER_TYPE_SELL_STOP || type == ORDER_TYPE_SELL_LIMIT || type == ORDER_TYPE_SELL_STOP_LIMIT)
-         hasSellSide = true;
+      trade.OrderDelete(ticket);
    }
+}
 
-   // Also count already-triggered positions as side present.
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket == 0 || !PositionSelectByTicket(ticket))
-         continue;
-
-      string sym = PositionGetString(POSITION_SYMBOL);
-      long magic = (long)PositionGetInteger(POSITION_MAGIC);
-      if(sym != _Symbol || magic != InpMagicNumber)
-         continue;
-
-      long posType = PositionGetInteger(POSITION_TYPE);
-      if(posType == POSITION_TYPE_BUY)
-         hasBuySide = true;
-      else if(posType == POSITION_TYPE_SELL)
-         hasSellSide = true;
-   }
-
-   if(hasBuySide && hasSellSide)
-   {
-      g_dailyOrdersPlaced = true;
-      return;
-   }
-
-   double prevHigh = 0.0;
-   double prevLow  = 0.0;
-   if(!GetLastCompletedWeekdayCandleOHLC(prevHigh, prevLow))
+void ProcessLondonSessionCycle()
+{
+   if(!InpEnableLondonSessionBreakout)
       return;
 
-   PlaceBreakoutPendingOrders(prevHigh, prevLow);
+   datetime currentDayStart = iTime(_Symbol, PERIOD_D1, 0);
+   if(currentDayStart <= 0)
+      return;
+
+   datetime sessionDayStart = 0;
+   if(!GetLatestCompletedLondonSessionDayStart(sessionDayStart))
+      return;
+
+   // Keep chart/order state clean across day boundary:
+   // only trade London breakout for the current day once today's London session is complete.
+   if(sessionDayStart != currentDayStart)
+      return;
+
+   bool isNewSession = (sessionDayStart != g_lastLondonSessionDayStart);
+   if(isNewSession)
+   {
+      g_lastLondonSessionDayStart = sessionDayStart;
+      DeleteTaggedPendingOrders(CMT_LONDON_BUY, CMT_LONDON_SELL);
+      g_londonBuyConsumed = false;
+      g_londonSellConsumed = false;
+   }
+
+   double ldnHigh = 0.0;
+   double ldnLow  = 0.0;
+   if(!GetLondonSessionHighLowForDay(sessionDayStart, ldnHigh, ldnLow))
+      return;
+
+   DrawOrUpdateLevelWithLabel(LEVEL_LINE_LDN_HIGH, LEVEL_LABEL_LDN_HIGH, ldnHigh, "London High", clrDeepSkyBlue);
+   DrawOrUpdateLevelWithLabel(LEVEL_LINE_LDN_LOW, LEVEL_LABEL_LDN_LOW, ldnLow, "London Low", clrOrangeRed);
+
+   bool ready = HasTaggedPendingOrPositionSide(true, CMT_LONDON_BUY) &&
+                HasTaggedPendingOrPositionSide(false, CMT_LONDON_SELL);
+   if(ready || (g_londonBuyConsumed && g_londonSellConsumed))
+      return;
+
+   PlaceBreakoutPendingOrders(ldnHigh, ldnLow, CMT_LONDON_BUY, CMT_LONDON_SELL, g_londonBuyConsumed, g_londonSellConsumed, false);
 }
 
 //+------------------------------------------------------------------+
@@ -982,8 +1199,78 @@ void DrawOrUpdateTrailLine(string name, double price, color clr)
    }
 }
 
+void DrawOrUpdateLevelWithLabel(string lineName, string labelName, double price, string labelText, color clr)
+{
+   if(ObjectFind(0, lineName) < 0)
+      ObjectCreate(0, lineName, OBJ_HLINE, 0, 0, price);
+
+   ObjectSetDouble(0, lineName, OBJPROP_PRICE, price);
+   ObjectSetInteger(0, lineName, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, lineName, OBJPROP_STYLE, STYLE_DOT);
+   ObjectSetInteger(0, lineName, OBJPROP_WIDTH, 1);
+   ObjectSetInteger(0, lineName, OBJPROP_BACK, false);
+
+   datetime labelTime = TimeCurrent();
+   if(labelTime <= 0)
+      labelTime = iTime(_Symbol, PERIOD_CURRENT, 0);
+
+   if(ObjectFind(0, labelName) < 0)
+      ObjectCreate(0, labelName, OBJ_TEXT, 0, labelTime, price);
+
+   ObjectMove(0, labelName, 0, labelTime, price);
+   ObjectSetString(0, labelName, OBJPROP_TEXT, labelText + "  " + DoubleToString(price, _Digits));
+   ObjectSetInteger(0, labelName, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, labelName, OBJPROP_ANCHOR, ANCHOR_LEFT);
+}
+
+void DrawOrUpdateLondonSessionTimeMarkers()
+{
+   if(!InpEnableLondonSessionBreakout)
+   {
+      ObjectDelete(0, LDN_VLINE_START_NAME);
+      ObjectDelete(0, LDN_VLINE_END_NAME);
+      return;
+   }
+
+   datetime dayStart = iTime(_Symbol, PERIOD_D1, 0);
+   if(dayStart <= 0)
+      return;
+
+   int startHour = MathMax(0, MathMin(23, InpLondonSessionStartHour));
+   int endHour = MathMax(0, MathMin(23, InpLondonSessionEndHour));
+
+   datetime sessionStart = dayStart + startHour * 3600;
+   datetime sessionEnd = dayStart + endHour * 3600;
+   if(sessionEnd <= sessionStart)
+      sessionEnd += 24 * 3600;
+
+   if(ObjectFind(0, LDN_VLINE_START_NAME) < 0)
+      ObjectCreate(0, LDN_VLINE_START_NAME, OBJ_VLINE, 0, sessionStart, 0);
+   else
+      ObjectMove(0, LDN_VLINE_START_NAME, 0, sessionStart, 0);
+
+   ObjectSetInteger(0, LDN_VLINE_START_NAME, OBJPROP_COLOR, clrDeepSkyBlue);
+   ObjectSetInteger(0, LDN_VLINE_START_NAME, OBJPROP_STYLE, STYLE_DOT);
+   ObjectSetInteger(0, LDN_VLINE_START_NAME, OBJPROP_WIDTH, 1);
+   ObjectSetInteger(0, LDN_VLINE_START_NAME, OBJPROP_BACK, true);
+   ObjectSetString(0, LDN_VLINE_START_NAME, OBJPROP_TEXT, "London Start");
+
+   if(ObjectFind(0, LDN_VLINE_END_NAME) < 0)
+      ObjectCreate(0, LDN_VLINE_END_NAME, OBJ_VLINE, 0, sessionEnd, 0);
+   else
+      ObjectMove(0, LDN_VLINE_END_NAME, 0, sessionEnd, 0);
+
+   ObjectSetInteger(0, LDN_VLINE_END_NAME, OBJPROP_COLOR, clrOrangeRed);
+   ObjectSetInteger(0, LDN_VLINE_END_NAME, OBJPROP_STYLE, STYLE_DOT);
+   ObjectSetInteger(0, LDN_VLINE_END_NAME, OBJPROP_WIDTH, 1);
+   ObjectSetInteger(0, LDN_VLINE_END_NAME, OBJPROP_BACK, true);
+   ObjectSetString(0, LDN_VLINE_END_NAME, OBJPROP_TEXT, "London End");
+}
+
 //+------------------------------------------------------------------+
 //| Close all open positions for this EA + symbol                    |
+
 //+------------------------------------------------------------------+
 void CloseAllEAOwnPositions()
 {
