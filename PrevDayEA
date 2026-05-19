@@ -11,6 +11,19 @@ enum ENUM_RISK_MODE
    RISK_MODE_STARTING_BALANCE_PERCENT = 2
 };
 
+enum ENUM_LONDON_ORDER_EXPIRY_MODE
+{
+   LONDON_EXPIRY_EOD = 0,
+   LONDON_EXPIRY_NEXT_LONDON_START = 1
+};
+
+enum ENUM_TRADE_DIRECTION_MODE
+{
+   TRADE_DIRECTION_BOTH = 0,
+   TRADE_DIRECTION_BUY_ONLY = 1,
+   TRADE_DIRECTION_SELL_ONLY = 2
+};
+
 input long   InpMagicNumber            = 12345;
 input int    InpTakeProfitPoints       = 1000;
 input int    InpStopLossPoints         = 1000;
@@ -24,6 +37,14 @@ input bool   InpEnablePrevDayBreakout      = true;
 input bool   InpEnableLondonSessionBreakout= true;
 input int    InpLondonSessionStartHour     = 8;
 input int    InpLondonSessionEndHour       = 17;
+input ENUM_LONDON_ORDER_EXPIRY_MODE InpLondonOrderExpiryMode = LONDON_EXPIRY_EOD;
+input bool   InpEnableOpenGapPattern       = false;
+
+input group "Open Gap Pattern Settings"
+input ENUM_TRADE_DIRECTION_MODE InpOpenGapTradeDirection = TRADE_DIRECTION_BOTH;
+input double InpOpenGapMinPercent          = 0.0;
+input bool   InpOpenGapReverseDirection    = false;
+input bool   InpOpenGapOneTradeAtATime     = true;
 
 input group "Risk Settings"
 input ENUM_RISK_MODE InpRiskMode       = RISK_MODE_FIXED_LOT;
@@ -50,6 +71,8 @@ string   CMT_PREV_BUY           = "PreviousDay_Buy";
 string   CMT_PREV_SELL          = "PreviousDay_Sell";
 string   CMT_LONDON_BUY         = "LondonSession_Buy";
 string   CMT_LONDON_SELL        = "LondonSession_Sell";
+string   CMT_GAP_BUY            = "OpenGap_Buy";
+string   CMT_GAP_SELL           = "OpenGap_Sell";
 datetime g_lastDailyBarTime     = 0;
 datetime g_lastPlacedDayStart   = 0;
 bool     g_dailyOrdersPlaced    = false;
@@ -65,9 +88,18 @@ ulong    g_trailPosIds[];
 bool     g_trailWasActivated[];
 ulong    g_trailActivationLoggedPosIds[];
 datetime g_lastLondonSessionDayStart = 0;
+datetime g_lastGapBuyBarTime = 0;
+datetime g_lastGapSellBarTime = 0;
+datetime g_lastGapEvaluatedBarTime = 0;
 
 void ProcessLondonSessionCycle();
 void DrawOrUpdateLondonSessionTimeMarkers();
+void ProcessOpenGapPatternTick();
+bool IsBuyDirectionAllowed();
+bool IsSellDirectionAllowed();
+bool IsOpenGapBuyAllowed();
+bool IsOpenGapSellAllowed();
+bool HasOpenGapPosition();
 
 
 bool GetLastCompletedWeekdayCandleOHLC(double &outHigh, double &outLow)
@@ -195,6 +227,27 @@ bool GetLatestCompletedLondonSessionDayStart(datetime &outDayStart)
    return false;
 }
 
+datetime GetNextLondonSessionStart(datetime sessionDayStart)
+{
+   if(sessionDayStart <= 0)
+      return 0;
+
+   int startHour = MathMax(0, MathMin(23, InpLondonSessionStartHour));
+
+   datetime nextDayStart = sessionDayStart + 24 * 3600;
+   for(int i = 0; i < 7; i++)
+   {
+      MqlDateTime dt;
+      TimeToStruct(nextDayStart, dt);
+      if(dt.day_of_week != 0 && dt.day_of_week != 6) // Mon-Fri
+         return (nextDayStart + startHour * 3600);
+
+      nextDayStart += 24 * 3600;
+   }
+
+   return 0;
+}
+
 //+------------------------------------------------------------------+
 //| Expert initialization                                            |
 //+------------------------------------------------------------------+
@@ -242,6 +295,7 @@ void OnTick()
    TryProcessPendingDayReset();
    ProcessLondonSessionCycle();
    EnforceMaxPositionLimit();
+   ProcessOpenGapPatternTick();
    EnsureDailyPendingOrdersPlaced();
    ManageTrailingStopsTickByTick();
 }
@@ -320,8 +374,52 @@ void DetectNewDayAndRefresh()
       // New day starts a fresh London cycle; old London pending orders are cleared in reset.
       g_londonBuyConsumed = false;
       g_londonSellConsumed = false;
+      g_lastGapBuyBarTime = 0;
+      g_lastGapSellBarTime = 0;
+      g_lastGapEvaluatedBarTime = 0;
       g_lastRetryAttemptTime = 0;
    }
+}
+
+bool IsBuyDirectionAllowed()
+{
+   return true;
+}
+
+bool IsSellDirectionAllowed()
+{
+   return true;
+}
+
+bool IsOpenGapBuyAllowed()
+{
+   return (InpOpenGapTradeDirection == TRADE_DIRECTION_BOTH || InpOpenGapTradeDirection == TRADE_DIRECTION_BUY_ONLY);
+}
+
+bool IsOpenGapSellAllowed()
+{
+   return (InpOpenGapTradeDirection == TRADE_DIRECTION_BOTH || InpOpenGapTradeDirection == TRADE_DIRECTION_SELL_ONLY);
+}
+
+bool HasOpenGapPosition()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+
+      string sym = PositionGetString(POSITION_SYMBOL);
+      long magic = (long)PositionGetInteger(POSITION_MAGIC);
+      if(sym != _Symbol || magic != InpMagicNumber)
+         continue;
+
+      string cmt = PositionGetString(POSITION_COMMENT);
+      if(cmt == CMT_GAP_BUY || cmt == CMT_GAP_SELL)
+         return true;
+   }
+
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -536,7 +634,7 @@ bool HasTaggedPendingOrPositionSide(bool isBuySide, string orderTag)
 //+------------------------------------------------------------------+
 //| Place only missing side pending orders                           |
 //+------------------------------------------------------------------+
-void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice, string buyComment, string sellComment, bool &buyConsumed, bool &sellConsumed, bool updateDailyState = true)
+void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice, string buyComment, string sellComment, bool &buyConsumed, bool &sellConsumed, bool updateDailyState = true, ENUM_ORDER_TYPE_TIME orderExpiryType = ORDER_TIME_DAY, datetime expiryTime = 0)
 {
    if(g_skipCurrentDaySignal)
    {
@@ -579,9 +677,11 @@ void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice, string buyCom
 
    bool hasBuySide = HasTaggedPendingOrPositionSide(true, buyComment);
    bool hasSellSide = HasTaggedPendingOrPositionSide(false, sellComment);
+   bool allowBuy = IsBuyDirectionAllowed();
+   bool allowSell = IsSellDirectionAllowed();
 
-   bool buyOk = hasBuySide;
-   bool sellOk = hasSellSide;
+   bool buyOk = hasBuySide || !allowBuy;
+   bool sellOk = hasSellSide || !allowSell;
    uint buyRetcode = 0;
    uint sellRetcode = 0;
 
@@ -590,12 +690,12 @@ void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice, string buyCom
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
-   if(!hasBuySide && !buyConsumed)
+   if(allowBuy && !hasBuySide && !buyConsumed)
    {
       bool buyPriceValidNow = (buyPrice > ask + minGap);
       if(buyPriceValidNow)
       {
-         buyOk = trade.BuyStop(lotSize, buyPrice, _Symbol, slBuy, tpBuy, ORDER_TIME_DAY, 0, buyComment);
+         buyOk = trade.BuyStop(lotSize, buyPrice, _Symbol, slBuy, tpBuy, orderExpiryType, expiryTime, buyComment);
          buyRetcode = trade.ResultRetcode();
          if(!buyOk && buyRetcode != TRADE_RETCODE_MARKET_CLOSED && buyRetcode != TRADE_RETCODE_INVALID_PRICE)
             Print("[", EA_TAG, "] BuyStop failed. Retcode=", buyRetcode, " ", trade.ResultRetcodeDescription());
@@ -606,12 +706,12 @@ void PlaceBreakoutPendingOrders(double buyPrice, double sellPrice, string buyCom
       }
    }
 
-   if(!hasSellSide && !sellConsumed)
+   if(allowSell && !hasSellSide && !sellConsumed)
    {
       bool sellPriceValidNow = (sellPrice < bid - minGap);
       if(sellPriceValidNow)
       {
-         sellOk = trade.SellStop(lotSize, sellPrice, _Symbol, slSell, tpSell, ORDER_TIME_DAY, 0, sellComment);
+         sellOk = trade.SellStop(lotSize, sellPrice, _Symbol, slSell, tpSell, orderExpiryType, expiryTime, sellComment);
          sellRetcode = trade.ResultRetcode();
          if(!sellOk && sellRetcode != TRADE_RETCODE_MARKET_CLOSED && sellRetcode != TRADE_RETCODE_INVALID_PRICE)
             Print("[", EA_TAG, "] SellStop failed. Retcode=", sellRetcode, " ", trade.ResultRetcodeDescription());
@@ -682,8 +782,11 @@ void EnsureDailyPendingOrdersPlaced()
 
    bool prevReady = true;
    if(InpEnablePrevDayBreakout)
-      prevReady = (HasTaggedPendingOrPositionSide(true, CMT_PREV_BUY) || g_prevDayBuyConsumed) &&
-                  (HasTaggedPendingOrPositionSide(false, CMT_PREV_SELL) || g_prevDaySellConsumed);
+   {
+      bool buyReady = (!IsBuyDirectionAllowed()) || HasTaggedPendingOrPositionSide(true, CMT_PREV_BUY) || g_prevDayBuyConsumed;
+      bool sellReady = (!IsSellDirectionAllowed()) || HasTaggedPendingOrPositionSide(false, CMT_PREV_SELL) || g_prevDaySellConsumed;
+      prevReady = (buyReady && sellReady);
+   }
    g_dailyOrdersPlaced = prevReady;
 }
 
@@ -723,6 +826,25 @@ void ProcessLondonSessionCycle()
    if(currentDayStart <= 0)
       return;
 
+   datetime nowTs = TimeCurrent();
+   if(nowTs <= 0)
+      nowTs = TimeTradeServer();
+   if(nowTs <= 0)
+      return;
+
+   int startHour = MathMax(0, MathMin(23, InpLondonSessionStartHour));
+   datetime currentLondonStart = currentDayStart + startHour * 3600;
+
+   // Safety cleanup: if previous London pending orders survived expiry,
+   // force-remove them once the next London session opens.
+   if(InpLondonOrderExpiryMode == LONDON_EXPIRY_NEXT_LONDON_START &&
+      g_lastLondonSessionDayStart > 0 &&
+      g_lastLondonSessionDayStart < currentDayStart &&
+      nowTs >= currentLondonStart)
+   {
+      DeleteTaggedPendingOrders(CMT_LONDON_BUY, CMT_LONDON_SELL);
+   }
+
    datetime sessionDayStart = 0;
    if(!GetLatestCompletedLondonSessionDayStart(sessionDayStart))
       return;
@@ -749,12 +871,141 @@ void ProcessLondonSessionCycle()
    DrawOrUpdateLevelWithLabel(LEVEL_LINE_LDN_HIGH, LEVEL_LABEL_LDN_HIGH, ldnHigh, "London High", clrDeepSkyBlue);
    DrawOrUpdateLevelWithLabel(LEVEL_LINE_LDN_LOW, LEVEL_LABEL_LDN_LOW, ldnLow, "London Low", clrOrangeRed);
 
-   bool ready = HasTaggedPendingOrPositionSide(true, CMT_LONDON_BUY) &&
-                HasTaggedPendingOrPositionSide(false, CMT_LONDON_SELL);
-   if(ready || (g_londonBuyConsumed && g_londonSellConsumed))
+   bool buyReady = (!IsBuyDirectionAllowed()) || HasTaggedPendingOrPositionSide(true, CMT_LONDON_BUY) || g_londonBuyConsumed;
+   bool sellReady = (!IsSellDirectionAllowed()) || HasTaggedPendingOrPositionSide(false, CMT_LONDON_SELL) || g_londonSellConsumed;
+   bool ready = (buyReady && sellReady);
+   if(ready)
       return;
 
-   PlaceBreakoutPendingOrders(ldnHigh, ldnLow, CMT_LONDON_BUY, CMT_LONDON_SELL, g_londonBuyConsumed, g_londonSellConsumed, false);
+   ENUM_ORDER_TYPE_TIME londonExpiryType = ORDER_TIME_DAY;
+   datetime londonExpiryTime = 0;
+   if(InpLondonOrderExpiryMode == LONDON_EXPIRY_NEXT_LONDON_START)
+   {
+      datetime nextLondonStart = GetNextLondonSessionStart(sessionDayStart);
+      if(nextLondonStart > TimeCurrent())
+      {
+         londonExpiryType = ORDER_TIME_SPECIFIED;
+         londonExpiryTime = nextLondonStart;
+      }
+   }
+
+   PlaceBreakoutPendingOrders(ldnHigh, ldnLow, CMT_LONDON_BUY, CMT_LONDON_SELL, g_londonBuyConsumed, g_londonSellConsumed, false, londonExpiryType, londonExpiryTime);
+}
+
+void ProcessOpenGapPatternTick()
+{
+   if(!InpEnableOpenGapPattern)
+      return;
+   if(IsMaxPositionLimitReached())
+      return;
+   if(!IsSymbolTradeOpenNow())
+      return;
+   if(InpOpenGapOneTradeAtATime && HasOpenGapPosition())
+      return;
+
+   datetime currentBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
+   if(currentBarTime <= 0)
+      return;
+   if(g_lastGapEvaluatedBarTime == currentBarTime)
+      return;
+   g_lastGapEvaluatedBarTime = currentBarTime;
+
+   double currentOpen = iOpen(_Symbol, PERIOD_CURRENT, 0);
+   double prevHigh = iHigh(_Symbol, PERIOD_CURRENT, 1);
+   double prevLow = iLow(_Symbol, PERIOD_CURRENT, 1);
+   if(currentOpen <= 0.0 || prevHigh <= 0.0 || prevLow <= 0.0)
+      return;
+
+   double gapPercent = MathMax(0.0, InpOpenGapMinPercent);
+   double buyGapTrigger = prevHigh * (1.0 + gapPercent / 100.0);
+   double sellGapTrigger = prevLow * (1.0 - gapPercent / 100.0);
+
+   double lotSize = CalculateLotSizeByRiskMode();
+   if(lotSize <= 0.0)
+      return;
+
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(ask <= 0.0 || bid <= 0.0)
+      return;
+
+   trade.SetExpertMagicNumber(InpMagicNumber);
+
+   bool buySignal = (currentOpen > buyGapTrigger);
+   bool sellSignal = (currentOpen < sellGapTrigger);
+   bool reverseSignal = InpOpenGapReverseDirection;
+
+   if(reverseSignal)
+   {
+      if(IsOpenGapBuyAllowed() && sellSignal && g_lastGapBuyBarTime != currentBarTime)
+      {
+         double sl = NormalizeDouble(ask - InpStopLossPoints * _Point, _Digits);
+         double tp = NormalizeDouble(ask + InpTakeProfitPoints * _Point, _Digits);
+         if(trade.Buy(lotSize, _Symbol, 0.0, sl, tp, CMT_GAP_BUY))
+         {
+            g_lastGapBuyBarTime = currentBarTime;
+            Print("[", EA_TAG, "] Open-gap REVERSED BUY executed from SELL signal. Open=", DoubleToString(currentOpen, _Digits),
+                  " Trigger=", DoubleToString(sellGapTrigger, _Digits),
+                  " GapPercent=", DoubleToString(gapPercent, 2), "%");
+         }
+         else if(trade.ResultRetcode() != TRADE_RETCODE_MARKET_CLOSED)
+         {
+            Print("[", EA_TAG, "] Open-gap REVERSED BUY failed. Retcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+         }
+      }
+
+      if(IsOpenGapSellAllowed() && buySignal && g_lastGapSellBarTime != currentBarTime)
+      {
+         double sl = NormalizeDouble(bid + InpStopLossPoints * _Point, _Digits);
+         double tp = NormalizeDouble(bid - InpTakeProfitPoints * _Point, _Digits);
+         if(trade.Sell(lotSize, _Symbol, 0.0, sl, tp, CMT_GAP_SELL))
+         {
+            g_lastGapSellBarTime = currentBarTime;
+            Print("[", EA_TAG, "] Open-gap REVERSED SELL executed from BUY signal. Open=", DoubleToString(currentOpen, _Digits),
+                  " Trigger=", DoubleToString(buyGapTrigger, _Digits),
+                  " GapPercent=", DoubleToString(gapPercent, 2), "%");
+         }
+         else if(trade.ResultRetcode() != TRADE_RETCODE_MARKET_CLOSED)
+         {
+            Print("[", EA_TAG, "] Open-gap REVERSED SELL failed. Retcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+         }
+      }
+      return;
+   }
+
+   if(IsOpenGapBuyAllowed() && buySignal && g_lastGapBuyBarTime != currentBarTime)
+   {
+      double sl = NormalizeDouble(ask - InpStopLossPoints * _Point, _Digits);
+      double tp = NormalizeDouble(ask + InpTakeProfitPoints * _Point, _Digits);
+      if(trade.Buy(lotSize, _Symbol, 0.0, sl, tp, CMT_GAP_BUY))
+      {
+         g_lastGapBuyBarTime = currentBarTime;
+         Print("[", EA_TAG, "] Open-gap BUY executed. Open=", DoubleToString(currentOpen, _Digits),
+               " Trigger=", DoubleToString(buyGapTrigger, _Digits),
+               " GapPercent=", DoubleToString(gapPercent, 2), "%");
+      }
+      else if(trade.ResultRetcode() != TRADE_RETCODE_MARKET_CLOSED)
+      {
+         Print("[", EA_TAG, "] Open-gap BUY failed. Retcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+      }
+   }
+
+   if(IsOpenGapSellAllowed() && sellSignal && g_lastGapSellBarTime != currentBarTime)
+   {
+      double sl = NormalizeDouble(bid + InpStopLossPoints * _Point, _Digits);
+      double tp = NormalizeDouble(bid - InpTakeProfitPoints * _Point, _Digits);
+      if(trade.Sell(lotSize, _Symbol, 0.0, sl, tp, CMT_GAP_SELL))
+      {
+         g_lastGapSellBarTime = currentBarTime;
+         Print("[", EA_TAG, "] Open-gap SELL executed. Open=", DoubleToString(currentOpen, _Digits),
+               " Trigger=", DoubleToString(sellGapTrigger, _Digits),
+               " GapPercent=", DoubleToString(gapPercent, 2), "%");
+      }
+      else if(trade.ResultRetcode() != TRADE_RETCODE_MARKET_CLOSED)
+      {
+         Print("[", EA_TAG, "] Open-gap SELL failed. Retcode=", trade.ResultRetcode(), " ", trade.ResultRetcodeDescription());
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
