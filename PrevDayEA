@@ -27,6 +27,7 @@ enum ENUM_TRADE_DIRECTION_MODE
 input long   InpMagicNumber            = 12345;
 input int    InpTakeProfitPoints       = 1000;
 input int    InpStopLossPoints         = 1000;
+input bool   InpEnableTrailingSL       = true;
 input int    InpTrailingStartPoints    = 100;
 input int    InpTrailingDistancePoints = 50;
 input bool   InpTrailByThresholdSteps  = true;
@@ -1078,6 +1079,13 @@ double NormalizeLotToSymbol(double lot)
 //+------------------------------------------------------------------+
 void ManageTrailingStopsTickByTick()
 {
+   if(!InpEnableTrailingSL)
+   {
+      ObjectDelete(0, TRAIL_LINE_BUY_NAME);
+      ObjectDelete(0, TRAIL_LINE_SELL_NAME);
+      return;
+   }
+
    bool hasBuyPos = false;
    bool hasSellPos = false;
 
