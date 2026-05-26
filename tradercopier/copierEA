@@ -65,6 +65,8 @@ input bool CopyStopLossTakeProfit = true;
 input bool AdjustTakeProfitToCopiedRR = true;
 input ENUM_TP_ADJUST_MODE TakeProfitAdjustMode = TP_ADJUST_TARGET_RISK_MONEY;
 input bool PreventReEntryAfterCopiedExit = true;
+input bool EnforceOneTradePerSymbol = true;
+input bool SkipSenderTradesSeenWhileSymbolBusy = true;
 
 input group "Sender Exit Settings"
 input ENUM_SENDER_EXIT_ACTION SenderExitAction = SENDER_EXIT_SMART_PROTECT_PROFIT_CLOSE_LOSS;
@@ -256,16 +258,46 @@ void SyncOneSource(const SourcePosition &src)
    if(wrong_position_found)
       copied_volume = CurrentCopiedVolume(src.ticket, target_symbol, target_type);
 
-   if(IsPendingEntryMode())
-      pending_volume = SyncPendingOrdersForSource(src, target_symbol, target_type);
-   else
-      DeleteCopiedPendingOrdersForSource(src.ticket);
-
    double step = SymbolInfoDouble(target_symbol, SYMBOL_VOLUME_STEP);
    if(step <= 0.0)
       step = 0.01;
 
+   if(IsPendingEntryMode())
+      pending_volume = CurrentCopiedPendingVolume(src.ticket, target_symbol, PendingTypeForSource(src, target_symbol, target_type));
+   else
+      DeleteCopiedPendingOrdersForSource(src.ticket);
+
    double active_volume = copied_volume + pending_volume;
+
+   if(EnforceOneTradePerSymbol && SkippedSourceAlreadyMarked(src.ticket) && active_volume <= step / 2.0)
+   {
+      last_action = "Skipping stale source #" + (string)src.ticket + " on " + target_symbol +
+                    "; it appeared while another copied trade/order was still active. Waiting for a fresh sender ticket.";
+      return;
+   }
+
+   string busy_details = "";
+   if(EnforceOneTradePerSymbol &&
+      active_volume <= step / 2.0 &&
+      HasOtherCopiedExposureForSymbol(target_symbol, src.ticket, busy_details))
+   {
+      bool already_marked_stale = SkippedSourceAlreadyMarked(src.ticket);
+      if(SkipSenderTradesSeenWhileSymbolBusy)
+         MarkSourceSkippedWhileSymbolBusy(src.ticket);
+
+      last_action = "One-trade-per-symbol: source #" + (string)src.ticket + " " + src.symbol +
+                    " maps to " + target_symbol + " but " + busy_details +
+                    " is still active. Skipping this sender ticket as stale; copier will wait for a fresh trade after the symbol is free.";
+      if(!already_marked_stale)
+         Print(last_action);
+      return;
+   }
+
+   if(IsPendingEntryMode())
+      pending_volume = SyncPendingOrdersForSource(src, target_symbol, target_type);
+
+   active_volume = copied_volume + pending_volume;
+
    if(active_volume > step / 2.0)
       MarkSourceLifecycleStarted(src.ticket);
 
@@ -460,6 +492,20 @@ void MarkSourceExitProtected(const ulong source_ticket)
    GlobalVariableSet(SourceExitProtectedGlobalName(source_ticket), (double)TimeCurrent());
 }
 
+bool SkippedSourceAlreadyMarked(const ulong source_ticket)
+{
+   return GlobalVariableCheck(SourceSkippedGlobalName(source_ticket));
+}
+
+void MarkSourceSkippedWhileSymbolBusy(const ulong source_ticket)
+{
+   if(source_ticket == 0)
+      return;
+
+   if(!SkippedSourceAlreadyMarked(source_ticket))
+      GlobalVariableSet(SourceSkippedGlobalName(source_ticket), (double)TimeCurrent());
+}
+
 string SourceLifecycleGlobalName(const ulong source_ticket)
 {
    return "MTC1_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket;
@@ -468,6 +514,11 @@ string SourceLifecycleGlobalName(const ulong source_ticket)
 string SourceExitProtectedGlobalName(const ulong source_ticket)
 {
    return "MTC1_PROT_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket;
+}
+
+string SourceSkippedGlobalName(const ulong source_ticket)
+{
+   return "MTC1_SKIP_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket;
 }
 
 string ShortSafeKey(const string value, const int max_length)
@@ -502,6 +553,68 @@ double CurrentCopiedVolume(const ulong source_ticket, const string symbol, const
    }
 
    return volume;
+}
+
+double CurrentCopiedPendingVolume(const ulong source_ticket, const string symbol, const ENUM_ORDER_TYPE type)
+{
+   double volume = 0.0;
+   string wanted_comment = CopyComment(source_ticket);
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0 || !IsOurCopiedOrder())
+         continue;
+
+      if(OrderGetString(ORDER_COMMENT) == wanted_comment &&
+         OrderGetString(ORDER_SYMBOL) == symbol &&
+         (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE) == type)
+      {
+         volume += OrderGetDouble(ORDER_VOLUME_CURRENT);
+      }
+   }
+
+   return volume;
+}
+
+bool HasOtherCopiedExposureForSymbol(const string symbol, const ulong source_ticket, string &details)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !IsOurCopiedPosition())
+         continue;
+
+      if(PositionGetString(POSITION_SYMBOL) != symbol)
+         continue;
+
+      ulong other_source = SourceTicketFromComment(PositionGetString(POSITION_COMMENT));
+      if(other_source == source_ticket)
+         continue;
+
+      details = "copied position #" + (string)ticket + " from source #" + (string)other_source;
+      return true;
+   }
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0 || !IsOurCopiedOrder())
+         continue;
+
+      if(OrderGetString(ORDER_SYMBOL) != symbol)
+         continue;
+
+      ulong other_source = SourceTicketFromComment(OrderGetString(ORDER_COMMENT));
+      if(other_source == source_ticket)
+         continue;
+
+      details = "copied pending order #" + (string)ticket + " from source #" + (string)other_source;
+      return true;
+   }
+
+   details = "";
+   return false;
 }
 
 void ReduceCopiedVolume(const ulong source_ticket, const string symbol, const long type, double volume_to_close)
@@ -1588,6 +1701,7 @@ void UpdateDashboard()
        LotSizingStatusLine() +
        "Copy SL/TP: " + (CopyStopLossTakeProfit ? "yes" : "no") + "\n" +
        "TP RR adjust: " + (AdjustTakeProfitToCopiedRR ? "yes" : "no") + "\n" +
+       "One trade per symbol: " + OneTradePerSymbolStatusLine() + "\n" +
        "Symbol mapping: " + SymbolMappingStatusLine() + "\n" +
        "Sender account: " + (string)source_login + "\n" +
        "Sender open trades: " + (string)ArraySize(sources) + "\n" +
@@ -1628,6 +1742,24 @@ string SenderExitActionStatusLine()
       return ProfitLockStatusLine();
 
    return "smart: protect profit, close loss";
+}
+
+string OneTradePerSymbolStatusLine()
+{
+   if(!EnforceOneTradePerSymbol)
+      return "off";
+
+   string text = "on";
+   if(SkipSenderTradesSeenWhileSymbolBusy)
+      text += ", skip stale busy-ticket signals";
+   else
+      text += ", wait while busy";
+
+   int skipped = CountSkippedSourcesInCurrentSignal();
+   if(skipped > 0)
+      text += " (" + (string)skipped + " current skipped)";
+
+   return text;
 }
 
 string SymbolMappingStatusLine()
@@ -1677,6 +1809,19 @@ string LotSizingStatusLine()
    }
 
    return "Lot multiplier: " + DoubleToString(LotMultiplier, 2) + "\n";
+}
+
+int CountSkippedSourcesInCurrentSignal()
+{
+   int count = 0;
+   int total = ArraySize(sources);
+   for(int i = 0; i < total; i++)
+   {
+      if(SkippedSourceAlreadyMarked(sources[i].ticket))
+         count++;
+   }
+
+   return count;
 }
 
 int CountOurCopiedPositions()
