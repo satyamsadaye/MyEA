@@ -1,0 +1,102 @@
+#property strict
+#property version   "1.00"
+
+// Minimal MT5 trade sender.
+// Attach this EA to any chart on the source/client terminal.
+// It publishes all open positions to the MetaTrader common files folder
+// so another MT5 terminal on the same VPS can read them.
+
+#define COPIER_FILE_PREFIX "minimal_trade_copier_"
+
+input string CopierKey = "client1";
+
+void OnInit()
+{
+   EventSetMillisecondTimer(500);
+   WriteSnapshot();
+}
+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+   WriteSnapshot();
+}
+
+void OnTick()
+{
+   WriteSnapshot();
+}
+
+void OnTimer()
+{
+   WriteSnapshot();
+}
+
+void WriteSnapshot()
+{
+   int handle = FileOpen(CopierFileName(),
+                         FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
+                         ';');
+   if(handle == INVALID_HANDLE)
+      return;
+
+   FileWrite(handle, "MT5_MINIMAL_TRADE_COPIER_V1", (long)AccountInfoInteger(ACCOUNT_LOGIN), (long)TimeCurrent());
+
+   int total = PositionsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      long type = PositionGetInteger(POSITION_TYPE);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      double price_open = PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl = PositionGetDouble(POSITION_SL);
+      double tp = PositionGetDouble(POSITION_TP);
+
+      FileWrite(handle,
+                (string)ticket,
+                symbol,
+                (string)type,
+                DoubleToString(volume, 8),
+                DoubleToString(price_open, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)),
+                DoubleToString(sl, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)),
+                DoubleToString(tp, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)));
+   }
+
+   FileClose(handle);
+}
+
+string CopierFileName()
+{
+   string key = SafeKey(CopierKey);
+   if(key == "")
+      key = "default";
+
+   return COPIER_FILE_PREFIX + key + ".csv";
+}
+
+string SafeKey(string value)
+{
+   StringTrimLeft(value);
+   StringTrimRight(value);
+
+   string clean = "";
+   int length = StringLen(value);
+   for(int i = 0; i < length; i++)
+   {
+      ushort ch = StringGetCharacter(value, i);
+      bool allowed = (ch >= '0' && ch <= '9') ||
+                     (ch >= 'A' && ch <= 'Z') ||
+                     (ch >= 'a' && ch <= 'z') ||
+                     ch == '_' ||
+                     ch == '-';
+
+      if(allowed)
+         clean += ShortToString(ch);
+   }
+
+   return clean;
+}
