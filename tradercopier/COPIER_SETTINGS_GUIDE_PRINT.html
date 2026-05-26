@@ -1,0 +1,655 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Minimal Trade Copier Settings Guide</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 20mm; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: #1f2933;
+    background: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    font-size: 10.8pt;
+    line-height: 1.48;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 {
+    margin: 0 0 12px;
+    padding-bottom: 12px;
+    color: #111827;
+    font-size: 28pt;
+    line-height: 1.08;
+    border-bottom: 3px solid #2563eb;
+  }
+  h2 {
+    margin: 28px 0 10px;
+    padding-top: 6px;
+    color: #111827;
+    font-size: 16pt;
+    line-height: 1.2;
+    break-after: avoid;
+  }
+  h3 {
+    margin: 20px 0 8px;
+    color: #1f2937;
+    font-size: 12.5pt;
+    line-height: 1.25;
+    break-after: avoid;
+  }
+  p { margin: 7px 0; }
+  ul, ol { margin: 7px 0 11px 23px; padding: 0; }
+  li { margin: 3px 0; }
+  code {
+    color: #0f172a;
+    background: #eef2f7;
+    border: 1px solid #d7dee8;
+    border-radius: 4px;
+    padding: 1px 4px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 9.4pt;
+  }
+  pre {
+    margin: 10px 0 14px;
+    padding: 10px 12px;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    color: #111827;
+    background: #f5f7fb;
+    border: 1px solid #d8e0eb;
+    border-left: 4px solid #2563eb;
+    border-radius: 6px;
+    break-inside: avoid;
+  }
+  pre code {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: 9pt;
+  }
+  blockquote {
+    margin: 10px 0;
+    padding: 8px 12px;
+    border-left: 4px solid #94a3b8;
+    background: #f8fafc;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    break-inside: avoid;
+  }
+  th, td {
+    border: 1px solid #d8e0eb;
+    padding: 7px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #eef2f7; }
+  a { color: #1d4ed8; text-decoration: none; }
+  strong { color: #111827; }
+  hr { border: 0; border-top: 1px solid #d8e0eb; margin: 22px 0; }
+  h2:nth-of-type(1), h2:nth-of-type(3), h2:nth-of-type(6), h2:nth-of-type(10) { break-before: page; }
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    h1, h2, h3, pre { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<main>
+<h1>Minimal Trade Copier Settings Guide</h1>
+<p>This document explains every setting in the <code>copier</code> EA, with practical examples for live use.</p>
+<p>The copier reads open trades from the sender through the MetaTrader common files folder. Each sender position has a source ticket. The copier uses that source ticket in the copied trade comment, for example <code>TC#53677970</code>, so each copied trade can be managed separately.</p>
+<h2>Important Live Notes</h2>
+<ul>
+<li>Attach this EA on the receiving terminal only.</li>
+<li>One attached copier can manage multiple mapped symbols when <code>SymbolMode = SYMBOL_MULTI_PAIR</code>.</li>
+<li>The EA manages only trades with its own <code>MagicNumber</code> and comments starting with <code>TC#</code>.</li>
+<li>If you change the source code, compile it again in MetaEditor and reload the EA on the chart.</li>
+<li>If MT5 still shows old inputs like <code>TakeProfitAdjustMode</code>, or logs old text like <code>risk money target</code>, the terminal is still running an old compiled EA.</li>
+<li>For live trading, test first on demo with the same broker symbols, account type, and lot step.</li>
+</ul>
+<h2>Recommended Live Starting Point</h2>
+<p>For your current style, a safer live starting setup is:</p>
+<pre><code class="language-ini">CopierKey=satyam
+CopyMode=1
+SymbolMode=1
+CustomSymbol=
+SenderSymbol1=XAUUSD
+CopierSymbol1=XAUUSDm
+SenderSymbol2=EURUSD
+CopierSymbol2=EURUSDm
+SenderSymbol3=
+CopierSymbol3=
+
+EntryMode=0
+CopyStopLossTakeProfit=true
+AdjustTakeProfitToCopiedRR=true
+
+SenderExitAction=2
+SenderExitProfitLockPercent=0.0
+
+LotMultiplier=1.0
+LotMode=1
+RiskStartingBalance=5000.0
+RiskPerTradePercent=2.0
+MaxFixedRiskLot=0.50
+LogRiskSizingDetails=true
+
+MagicNumber=991
+SlippagePoints=30
+PollMilliseconds=500
+TradeRetries=5
+RetryDelayMilliseconds=250
+ShowChartStatus=true
+</code></pre>
+<p><code>MaxFixedRiskLot=10.0</code> is very high for live. It allows the EA to open a very large lot if the stop distance becomes tiny. A tighter cap such as <code>0.30</code>, <code>0.50</code>, or <code>1.00</code> is usually safer until you have enough live data.</p>
+<h2>Signal Settings</h2>
+<h3><code>CopierKey</code></h3>
+<p>Default: <code>client1</code></p>
+<p>This key chooses which sender file the copier reads.</p>
+<p>The file name is:</p>
+<pre><code class="language-text">minimal_trade_copier_&lt;CopierKey&gt;.csv
+</code></pre>
+<p>Example:</p>
+<pre><code class="language-ini">CopierKey=satyam
+</code></pre>
+<p>The copier reads:</p>
+<pre><code class="language-text">minimal_trade_copier_satyam.csv
+</code></pre>
+<p>Use the same key on the sender and copier. If the keys do not match, the copier will not see the sender trades.</p>
+<p>Allowed characters are letters, numbers, <code>_</code>, and <code>-</code>. Spaces and special characters are removed internally.</p>
+<h3><code>CopyMode</code></h3>
+<p>Values:</p>
+<pre><code class="language-text">0 = COPY_EXACT_SAME
+1 = COPY_EXACT_OPPOSITE
+</code></pre>
+<p><code>COPY_EXACT_SAME</code> copies the same direction.</p>
+<p>Example:</p>
+<pre><code class="language-text">Sender BUY XAUUSD
+Copier BUY XAUUSDm
+</code></pre>
+<p><code>COPY_EXACT_OPPOSITE</code> flips the direction.</p>
+<p>Example:</p>
+<pre><code class="language-text">Sender BUY XAUUSD
+Copier SELL XAUUSDm
+</code></pre>
+<p>With opposite copy, SL and TP are also reversed:</p>
+<pre><code class="language-text">Sender BUY entry 4532.00
+Sender SL 4529.00
+Sender TP 4538.00
+
+Copied SELL entry around market price
+Copied SL = sender TP = 4538.00
+Copied TP = sender SL = 4529.00
+</code></pre>
+<h3><code>SymbolMode</code></h3>
+<p>Values:</p>
+<pre><code class="language-text">0 = SYMBOL_SINGLE_PAIR
+1 = SYMBOL_MULTI_PAIR
+</code></pre>
+<p>Use <code>SYMBOL_SINGLE_PAIR</code> when all sender signals should copy to one symbol or to the same symbol name.</p>
+<p>Use <code>SYMBOL_MULTI_PAIR</code> when you want different sender symbols mapped to different copier symbols, for example <code>XAUUSD -&gt; XAUUSDm</code> and <code>EURUSD -&gt; EURUSDm</code>.</p>
+<h3><code>CustomSymbol</code></h3>
+<p>Used only when:</p>
+<pre><code class="language-ini">SymbolMode=0
+</code></pre>
+<p>If <code>CustomSymbol</code> is filled, every sender trade copies to that one symbol.</p>
+<p>Example:</p>
+<pre><code class="language-ini">SymbolMode=0
+CustomSymbol=XAUUSDm
+</code></pre>
+<p>Result:</p>
+<pre><code class="language-text">Sender XAUUSD -&gt; Copier XAUUSDm
+Sender GOLD -&gt; Copier XAUUSDm
+Sender EURUSD -&gt; Copier XAUUSDm
+</code></pre>
+<p>If <code>CustomSymbol</code> is empty, the copier uses the sender symbol name directly.</p>
+<p>Example:</p>
+<pre><code class="language-ini">SymbolMode=0
+CustomSymbol=
+</code></pre>
+<p>Result:</p>
+<pre><code class="language-text">Sender EURUSD -&gt; Copier EURUSD
+Sender XAUUSD -&gt; Copier XAUUSD
+</code></pre>
+<p>When <code>SymbolMode=1</code>, <code>CustomSymbol</code> is ignored. For clarity, leave it empty in multi-pair mode.</p>
+<h3><code>SenderSymbol1</code>, <code>CopierSymbol1</code></h3>
+<p>First symbol mapping pair. Used only when <code>SymbolMode=1</code>.</p>
+<p>Example:</p>
+<pre><code class="language-ini">SenderSymbol1=XAUUSD
+CopierSymbol1=XAUUSDm
+</code></pre>
+<p>Result:</p>
+<pre><code class="language-text">Sender XAUUSD trades are copied to XAUUSDm.
+</code></pre>
+<h3><code>SenderSymbol2</code>, <code>CopierSymbol2</code></h3>
+<p>Second symbol mapping pair.</p>
+<p>Example:</p>
+<pre><code class="language-ini">SenderSymbol2=EURUSD
+CopierSymbol2=EURUSDm
+</code></pre>
+<p>Result:</p>
+<pre><code class="language-text">Sender EURUSD trades are copied to EURUSDm.
+</code></pre>
+<h3><code>SenderSymbol3</code>, <code>CopierSymbol3</code></h3>
+<p>Third symbol mapping pair.</p>
+<p>Leave both empty if you do not need a third pair.</p>
+<p>Example:</p>
+<pre><code class="language-ini">SenderSymbol3=
+CopierSymbol3=
+</code></pre>
+<p>If the sender sends a symbol that is not configured in multi-pair mode, the copier skips it and shows a message like:</p>
+<pre><code class="language-text">Skipping source #123456 because sender symbol GBPUSD is not configured
+</code></pre>
+<h2>Entry Settings</h2>
+<h3><code>EntryMode</code></h3>
+<p>Values:</p>
+<pre><code class="language-text">0 = COPIER_ENTRY_MARKET_ORDER
+1 = COPIER_ENTRY_PENDING_ORDER
+</code></pre>
+<p><code>COPIER_ENTRY_MARKET_ORDER</code> opens immediately at current copier market price.</p>
+<p>Example:</p>
+<pre><code class="language-text">Sender BUY opens at 4532.00
+Copier sees signal at current price 4532.48
+Copier opens immediately at 4532.48
+</code></pre>
+<p><code>COPIER_ENTRY_PENDING_ORDER</code> places a pending order at the sender entry price.</p>
+<p>Example:</p>
+<pre><code class="language-text">Sender entry = 4532.00
+Copier current price = 4535.00
+Copier places pending order around 4532.00 if broker rules allow it.
+</code></pre>
+<p>For live copying, market mode is simpler. Pending mode can be useful when you want the copier to enter closer to the sender price, but the order may not be valid if the price is too close to current market price or on the wrong side for the pending type.</p>
+<h3><code>CopyStopLossTakeProfit</code></h3>
+<p>Values:</p>
+<pre><code class="language-text">false = do not copy SL/TP
+true = copy SL/TP
+</code></pre>
+<p>When true, the copier sends SL and TP with the copied trade.</p>
+<p>In same copy:</p>
+<pre><code class="language-text">Copied SL = sender SL
+Copied TP = sender TP
+</code></pre>
+<p>In opposite copy:</p>
+<pre><code class="language-text">Copied SL = sender TP
+Copied TP = sender SL
+</code></pre>
+<p>For fixed-risk lot sizing, this should normally stay <code>true</code>, because the EA needs an SL distance to calculate lot size.</p>
+<h3><code>AdjustTakeProfitToCopiedRR</code></h3>
+<p>Values:</p>
+<pre><code class="language-text">false = keep copied TP as directly mapped
+true = adjust TP after fill to preserve copied RR
+</code></pre>
+<p>When true, the copier recalculates TP after the actual copied entry price is known.</p>
+<p>This matters because market entry may not match the sender entry exactly. If the copied trade enters at a slightly different price, the original copied TP may no longer represent the intended risk/reward.</p>
+<p>Current behavior:</p>
+<pre><code class="language-text">The EA preserves copied RR.
+It does not force 1:1.
+It does not target fixed money profit.
+</code></pre>
+<p>Example, opposite copy:</p>
+<pre><code class="language-text">Sender BUY
+Entry 4532.72
+SL 4529.41
+TP 4539.23
+</code></pre>
+<p>Sender risk:</p>
+<pre><code class="language-text">4532.72 - 4529.41 = 3.31
+</code></pre>
+<p>Sender reward:</p>
+<pre><code class="language-text">4539.23 - 4532.72 = 6.51
+</code></pre>
+<p>Sender RR is about:</p>
+<pre><code class="language-text">6.51 / 3.31 = 1.97R
+</code></pre>
+<p>With opposite copy:</p>
+<pre><code class="language-text">Copied SELL
+Copied SL = 4539.23
+Copied TP = 4529.41
+</code></pre>
+<p>Copied risk distance:</p>
+<pre><code class="language-text">4539.23 - 4532.72 = 6.51
+</code></pre>
+<p>Copied reward distance:</p>
+<pre><code class="language-text">4532.72 - 4529.41 = 3.31
+</code></pre>
+<p>Copied RR is:</p>
+<pre><code class="language-text">3.31 / 6.51 = 0.51R
+</code></pre>
+<p>So if fixed risk is about <code>$100</code>, the opposite copied target is about:</p>
+<pre><code class="language-text">$100 * 0.51 = $51
+</code></pre>
+<p>That is correct for exact opposite copied RR. It is not a bug. If sender has 2R win and 1R loss, the opposite trade naturally has about 0.5R reward against 1R risk.</p>
+<h2>Sender Exit Settings</h2>
+<h3><code>SenderExitAction</code></h3>
+<p>Values:</p>
+<pre><code class="language-text">0 = SENDER_EXIT_CLOSE_ALWAYS
+1 = SENDER_EXIT_PROTECT_ALWAYS
+2 = SENDER_EXIT_SMART_PROTECT_PROFIT_CLOSE_LOSS
+</code></pre>
+<p>The sender file contains currently open sender trades. When a sender trade disappears from the file, the copier treats that as sender exit.</p>
+<h3><code>SENDER_EXIT_CLOSE_ALWAYS</code></h3>
+<p>Always closes the copied trade when the sender trade closes.</p>
+<p>Example:</p>
+<pre><code class="language-text">Sender trade closes
+Copied trade closes immediately
+</code></pre>
+<p>Use this if you want the copied trade to never continue after sender exit.</p>
+<h3><code>SENDER_EXIT_PROTECT_ALWAYS</code></h3>
+<p>When sender exits, the copier tries to move SL to breakeven or profit lock.</p>
+<p>If protection is not possible, it closes the copied trade.</p>
+<p>Example:</p>
+<pre><code class="language-text">Copied SELL entry 4532.00
+Current price 4528.00
+Sender exits
+Copier moves SL to breakeven or profit lock if broker allows it
+</code></pre>
+<h3><code>SENDER_EXIT_SMART_PROTECT_PROFIT_CLOSE_LOSS</code></h3>
+<p>This is your current smart mode.</p>
+<p>Behavior:</p>
+<pre><code class="language-text">If copied trade is profitable when sender exits: protect it.
+If copied trade is not profitable when sender exits: close it.
+</code></pre>
+<p>This is useful for opposite copying.</p>
+<p>Example with opposite copy:</p>
+<pre><code class="language-text">Sender BUY hits SL.
+Copied SELL is likely profitable.
+Copier protects the profitable SELL.
+</code></pre>
+<p>Example:</p>
+<pre><code class="language-text">Sender BUY hits TP.
+Copied SELL is likely losing.
+Copier closes the losing SELL.
+</code></pre>
+<p>Important limitation:</p>
+<p>The copier does not know the exact reason the sender closed unless the sender publishes closed-history information. It infers from the copied trade&#39;s current profit/loss.</p>
+<h3><code>SenderExitProfitLockPercent</code></h3>
+<p>Range used by the EA:</p>
+<pre><code class="language-text">0 to 100
+</code></pre>
+<p><code>0.0</code> means move SL to breakeven.</p>
+<p>Example:</p>
+<pre><code class="language-ini">SenderExitProfitLockPercent=0.0
+</code></pre>
+<p>If copied SELL entry is <code>4532.00</code> and current price is <code>4528.00</code>, the EA tries to move SL near <code>4532.00</code>.</p>
+<p><code>50.0</code> means lock 50 percent of open profit.</p>
+<p>Example:</p>
+<pre><code class="language-text">Copied SELL entry 4532.00
+Current price 4528.00
+Open profit distance = 4.00
+50 percent lock = 2.00
+New SL = 4530.00
+</code></pre>
+<p>Broker stop limits may prevent the EA from moving SL exactly where requested.</p>
+<h2>Lot Sizing</h2>
+<h3><code>LotMultiplier</code></h3>
+<p>Used only when:</p>
+<pre><code class="language-ini">LotMode=0
+</code></pre>
+<p>Formula:</p>
+<pre><code class="language-text">Copied lot = sender lot * LotMultiplier
+</code></pre>
+<p>Example:</p>
+<pre><code class="language-ini">LotMode=0
+LotMultiplier=2.0
+</code></pre>
+<p>If sender opens <code>0.10</code>, copier opens:</p>
+<pre><code class="language-text">0.10 * 2.0 = 0.20
+</code></pre>
+<h3><code>LotMode</code></h3>
+<p>Values:</p>
+<pre><code class="language-text">0 = COPIER_LOT_EXACT
+1 = COPIER_LOT_FIXED_STARTING_BALANCE_RISK
+</code></pre>
+<p><code>COPIER_LOT_EXACT</code> copies sender volume using <code>LotMultiplier</code>.</p>
+<p><code>COPIER_LOT_FIXED_STARTING_BALANCE_RISK</code> calculates lot from a fixed account size and risk percent.</p>
+<h3><code>RiskStartingBalance</code></h3>
+<p>Used only when:</p>
+<pre><code class="language-ini">LotMode=1
+</code></pre>
+<p>This is the balance used for risk calculation. It does not automatically change with account equity.</p>
+<p>Example:</p>
+<pre><code class="language-ini">RiskStartingBalance=5000.0
+</code></pre>
+<h3><code>RiskPerTradePercent</code></h3>
+<p>Used only when:</p>
+<pre><code class="language-ini">LotMode=1
+</code></pre>
+<p>Formula:</p>
+<pre><code class="language-text">Risk money = RiskStartingBalance * RiskPerTradePercent / 100
+</code></pre>
+<p>Example:</p>
+<pre><code class="language-ini">RiskStartingBalance=5000.0
+RiskPerTradePercent=2.0
+</code></pre>
+<p>Risk money:</p>
+<pre><code class="language-text">5000 * 2 / 100 = 100
+</code></pre>
+<p>The EA then calculates the lot size that should lose about <code>$100</code> if the copied SL is hit.</p>
+<h3>Fixed Risk Example</h3>
+<p>Log example:</p>
+<pre><code class="language-text">Risk Sizing: Entry=4532.63300 | SL=4539.23000
+LossPer1Lot=659.70
+RawLot=0.15158405
+NormalizedLot=0.15
+ExpectedRisk=98.95
+</code></pre>
+<p>Meaning:</p>
+<pre><code class="language-text">Risk money target = $100
+If 1.00 lot hits SL, loss is about $659.70
+Raw lot = 100 / 659.70 = 0.1515
+Broker lot step rounds it to 0.15
+Expected risk = about $98.95
+</code></pre>
+<h3><code>MaxFixedRiskLot</code></h3>
+<p>Used only when:</p>
+<pre><code class="language-ini">LotMode=1
+</code></pre>
+<p>This is a safety cap. If calculated fixed-risk lot is above this value, the EA skips the trade.</p>
+<p>Example:</p>
+<pre><code class="language-ini">MaxFixedRiskLot=0.50
+</code></pre>
+<p>If fixed-risk calculation says <code>0.80</code>, the EA skips the trade.</p>
+<p>Why this matters:</p>
+<p>If SL distance is very small, the calculated lot can become very large. This setting prevents oversized live trades.</p>
+<h3><code>LogRiskSizingDetails</code></h3>
+<p>Values:</p>
+<pre><code class="language-text">false = do not print detailed risk sizing logs
+true = print detailed risk sizing logs
+</code></pre>
+<p>Recommended for testing and early live use:</p>
+<pre><code class="language-ini">LogRiskSizingDetails=true
+</code></pre>
+<p>The logs help confirm entry price, SL, risk money, raw lot, normalized lot, and expected risk.</p>
+<h2>Trade Execution</h2>
+<h3><code>MagicNumber</code></h3>
+<p>The EA manages only positions and pending orders with this magic number and <code>TC#</code> comments.</p>
+<p>Example:</p>
+<pre><code class="language-ini">MagicNumber=991
+</code></pre>
+<p>Use a different magic number if you run multiple copier instances on the same terminal.</p>
+<p>Do not use the same magic number for unrelated EAs.</p>
+<h3><code>SlippagePoints</code></h3>
+<p>Maximum allowed slippage/deviation in points for market trade actions.</p>
+<p>Example:</p>
+<pre><code class="language-ini">SlippagePoints=30
+</code></pre>
+<p>Higher value means the broker has more room to fill during fast movement. Lower value means more rejected trades.</p>
+<h3><code>PollMilliseconds</code></h3>
+<p>How often the copier checks the sender file.</p>
+<p>Example:</p>
+<pre><code class="language-ini">PollMilliseconds=500
+</code></pre>
+<p>This checks about twice per second.</p>
+<p>Very low values can make the terminal busier. The EA enforces a minimum of <code>100</code>.</p>
+<h3><code>TradeRetries</code></h3>
+<p>Number of retries for trade operations.</p>
+<p>Example:</p>
+<pre><code class="language-ini">TradeRetries=5
+</code></pre>
+<p>If a close, open, modify, or delete fails temporarily, the EA retries.</p>
+<h3><code>RetryDelayMilliseconds</code></h3>
+<p>Delay between retry attempts.</p>
+<p>Example:</p>
+<pre><code class="language-ini">RetryDelayMilliseconds=250
+</code></pre>
+<p>With <code>TradeRetries=5</code>, the EA may spend about one second retrying a failing operation.</p>
+<h2>Display</h2>
+<h3><code>ShowChartStatus</code></h3>
+<p>Values:</p>
+<pre><code class="language-text">false = do not show chart dashboard
+true = show chart dashboard
+</code></pre>
+<p>Recommended:</p>
+<pre><code class="language-ini">ShowChartStatus=true
+</code></pre>
+<p>The dashboard shows:</p>
+<pre><code class="language-text">Key
+Copy mode
+Entry mode
+Sender exit behavior
+Lot sizing mode
+Symbol mapping
+Sender account
+Sender open trades
+Copied trades managed here
+Copied pending orders here
+Sender signal age
+Last action
+Last error
+</code></pre>
+<h2>Multi-Symbol Management</h2>
+<p>Yes, the copier can manage two symbols without conflict when configured correctly.</p>
+<p>Example:</p>
+<pre><code class="language-ini">SymbolMode=1
+SenderSymbol1=XAUUSD
+CopierSymbol1=XAUUSDm
+SenderSymbol2=EURUSD
+CopierSymbol2=EURUSDm
+</code></pre>
+<p>If sender sends:</p>
+<pre><code class="language-text">Ticket 1001 XAUUSD BUY
+Ticket 1002 EURUSD SELL
+</code></pre>
+<p>The copier manages:</p>
+<pre><code class="language-text">TC#1001 on XAUUSDm
+TC#1002 on EURUSDm
+</code></pre>
+<p>It separates trades by:</p>
+<pre><code class="language-text">source ticket
+symbol
+direction
+magic number
+comment
+</code></pre>
+<p>So the XAUUSDm trade will not be treated as the EURUSDm trade.</p>
+<h2>Duplicate Re-Entry Protection</h2>
+<p>The EA records when a source ticket has already started a copied lifecycle.</p>
+<p>If the copied trade closes while the sender trade is still open, the EA will not reopen that same source ticket again.</p>
+<p>Example:</p>
+<pre><code class="language-text">Sender ticket #53677970 is still open.
+Copier opens TC#53677970.
+Copied trade hits SL.
+Sender is still open.
+Copier sees #53677970 again.
+Copier does not re-enter.
+</code></pre>
+<p>This prevents repeated entries from the same sender trade.</p>
+<p>The lifecycle marker is stored in MT5 terminal Global Variables using a name like:</p>
+<pre><code class="language-text">MTC1_&lt;MagicNumber&gt;_&lt;CopierKey&gt;_&lt;SenderLogin&gt;_&lt;SourceTicket&gt;
+</code></pre>
+<p>For testing the exact same sender ticket again, you may need to delete that global variable manually in MetaTrader.</p>
+<h2>Frozen Trade Handling</h2>
+<p>Sometimes MT5 returns:</p>
+<pre><code class="language-text">retcode 10029 frozen
+</code></pre>
+<p>This means the broker temporarily refuses to close or modify that position, often because price is too close to stop/freeze levels or the symbol is in a restricted state.</p>
+<p>Current EA behavior:</p>
+<pre><code class="language-text">If an old orphan copied trade cannot close/protect, the EA waits.
+It does not open new sender signals until that old copied trade is handled.
+</code></pre>
+<p>This prevents stacked exposure when an old copied trade is stuck.</p>
+<h2>Your Current Scenario Explained</h2>
+<p>Settings:</p>
+<pre><code class="language-ini">CopierKey=satyam
+CopyMode=1
+SymbolMode=1
+CustomSymbol=XAUUSDm
+SenderSymbol1=XAUUSD
+CopierSymbol1=XAUUSDm
+SenderSymbol2=EURUSD
+CopierSymbol2=EURUSDm
+EntryMode=0
+CopyStopLossTakeProfit=true
+AdjustTakeProfitToCopiedRR=true
+SenderExitAction=2
+SenderExitProfitLockPercent=0.0
+LotMode=1
+RiskStartingBalance=5000.0
+RiskPerTradePercent=2.0
+MaxFixedRiskLot=10.0
+MagicNumber=991
+</code></pre>
+<p>Actual behavior:</p>
+<pre><code class="language-text">Reads sender file for key satyam.
+Copies opposite direction.
+Maps XAUUSD to XAUUSDm.
+Maps EURUSD to EURUSDm.
+Ignores CustomSymbol because SymbolMode=1.
+Opens immediately at market.
+Copies SL/TP using opposite mapping.
+Uses fixed risk from $5000 at 2%, so about $100 risk per trade.
+Adjusts TP to preserve the copied RR after actual fill.
+If sender exits and copied trade is profitable, it protects.
+If sender exits and copied trade is losing, it closes.
+</code></pre>
+<p>Cleaner version of those settings:</p>
+<pre><code class="language-ini">CustomSymbol=
+MaxFixedRiskLot=0.50
+</code></pre>
+<p>Everything else can stay the same for testing.</p>
+<h2>Common Log Lines</h2>
+<h3>Risk sizing</h3>
+<pre><code class="language-text">RiskMoney=100.00
+LossPer1Lot=659.70
+RawLot=0.15158405
+NormalizedLot=0.15
+ExpectedRisk=98.95
+</code></pre>
+<p>The EA wanted to risk <code>$100</code>, but broker lot step rounded the lot to <code>0.15</code>, so expected risk became about <code>$98.95</code>.</p>
+<h3>TP adjusted for copied RR</h3>
+<pre><code class="language-text">Adjusted copied trade #4109192335 TP to 4529.279 for copied RR 0.51
+</code></pre>
+<p>This means the copied opposite trade has about <code>0.51R</code> reward relative to its SL risk.</p>
+<p>For about <code>$99</code> risk:</p>
+<pre><code class="language-text">$99 * 0.51 = about $50 profit target
+</code></pre>
+<p>That is expected when the sender setup is roughly 2R and the copier is taking the exact opposite side.</p>
+<h3>Old compiled EA warning</h3>
+<p>If you see:</p>
+<pre><code class="language-text">target $99.64
+risk money target
+TakeProfitAdjustMode
+</code></pre>
+<p>you are not running the current saved code. Recompile and reload the EA.</p>
+<h2>Before Going Live Checklist</h2>
+<ol>
+<li>Confirm the sender and copier use the same <code>CopierKey</code>.</li>
+<li>Confirm exact broker symbol names, for example <code>XAUUSDm</code>, <code>EURUSDm</code>.</li>
+<li>Use <code>SymbolMode=1</code> for multiple symbols.</li>
+<li>Leave <code>CustomSymbol</code> empty in multi-pair mode.</li>
+<li>Use a conservative <code>MaxFixedRiskLot</code>.</li>
+<li>Keep <code>LogRiskSizingDetails=true</code> during first live tests.</li>
+<li>Confirm chart dashboard shows correct key, mapping, and magic number.</li>
+<li>Confirm copied trade comments are <code>TC#&lt;sender ticket&gt;</code>.</li>
+<li>Confirm logs say <code>for copied RR</code>, not old <code>risk money target</code>.</li>
+<li>Test one small trade first before normal live size.</li>
+</ol>
+
+
+</main>
+</body>
+</html>
