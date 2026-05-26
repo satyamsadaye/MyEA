@@ -9,6 +9,7 @@
 
 #define COPIER_FILE_PREFIX "minimal_trade_copier_"
 #define COPY_COMMENT_PREFIX "TC#"
+#define STATS_DASHBOARD_OBJECT "MTC1_STATS_DASHBOARD"
 
 enum ENUM_COPY_MODE
 {
@@ -71,6 +72,7 @@ input bool SkipSenderTradesSeenWhileSymbolBusy = true;
 input group "Sender Exit Settings"
 input ENUM_SENDER_EXIT_ACTION SenderExitAction = SENDER_EXIT_SMART_PROTECT_PROFIT_CLOSE_LOSS;
 input double SenderExitProfitLockPercent = 0.0;
+input bool UseClosestLegalStopWhenBreakevenTooClose = true;
 
 input group "Lot Sizing"
 input double LotMultiplier = 1.0;
@@ -89,6 +91,7 @@ input int RetryDelayMilliseconds = 250;
 
 input group "Display"
 input bool ShowChartStatus = true;
+input bool ShowStatsDashboard = true;
 
 struct SourcePosition
 {
@@ -99,6 +102,17 @@ struct SourcePosition
    double price_open;
    double sl;
    double tp;
+};
+
+struct TradeStats
+{
+   string symbol;
+   int trades;
+   int wins;
+   int losses;
+   double net_profit;
+   double gross_profit;
+   double gross_loss;
 };
 
 CTrade trade;
@@ -126,6 +140,7 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    EventKillTimer();
+   ObjectDelete(0, STATS_DASHBOARD_OBJECT);
 }
 
 void OnTick()
@@ -155,6 +170,7 @@ void SyncPositions()
       SyncOneSource(sources[i]);
 
    UpdateDashboard();
+   UpdateStatsDashboard();
 }
 
 bool ReadSources()
@@ -415,6 +431,11 @@ bool CopiedPositionIsProfitable(const ulong ticket)
 {
    if(!PositionSelectByTicket(ticket))
       return false;
+
+   double floating_profit = PositionGetDouble(POSITION_PROFIT) +
+                            PositionGetDouble(POSITION_SWAP);
+   if(floating_profit > 0.0)
+      return true;
 
    string symbol = PositionGetString(POSITION_SYMBOL);
    long type = PositionGetInteger(POSITION_TYPE);
@@ -1198,11 +1219,13 @@ bool LockProfitAfterSenderExit(const ulong ticket)
    }
 
    double new_sl = 0.0;
+   double desired_sl = 0.0;
    if(type == POSITION_TYPE_BUY)
-      new_sl = entry + ((current - entry) * (percent / 100.0));
+      desired_sl = entry + ((current - entry) * (percent / 100.0));
    else
-      new_sl = entry - ((entry - current) * (percent / 100.0));
+      desired_sl = entry - ((entry - current) * (percent / 100.0));
 
+   new_sl = desired_sl;
    new_sl = FitStopToBrokerLimits(symbol, type, new_sl);
    new_sl = NormalizePrice(symbol, new_sl);
 
@@ -1211,14 +1234,20 @@ bool LockProfitAfterSenderExit(const ulong ticket)
 
    if(type == POSITION_TYPE_BUY && new_sl < entry)
    {
-      last_action = "Sender exited but breakeven/profit lock is too close for broker stop limits #" + (string)ticket;
-      return false;
+      if(!UseClosestLegalStopWhenBreakevenTooClose)
+      {
+         last_action = "Sender exited but breakeven/profit lock is too close for broker stop limits #" + (string)ticket;
+         return false;
+      }
    }
 
    if(type == POSITION_TYPE_SELL && new_sl > entry)
    {
-      last_action = "Sender exited but breakeven/profit lock is too close for broker stop limits #" + (string)ticket;
-      return false;
+      if(!UseClosestLegalStopWhenBreakevenTooClose)
+      {
+         last_action = "Sender exited but breakeven/profit lock is too close for broker stop limits #" + (string)ticket;
+         return false;
+      }
    }
 
    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
@@ -1240,9 +1269,16 @@ bool LockProfitAfterSenderExit(const ulong ticket)
    ResetLastError();
    if(trade.PositionModify(ticket, new_sl, tp))
    {
+      int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
       last_action = "Moved copied trade #" + (string)ticket + " SL to " +
-                    DoubleToString(new_sl, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)) +
+                    DoubleToString(new_sl, digits) +
                     " after sender exit";
+      if((type == POSITION_TYPE_BUY && new_sl < entry) || (type == POSITION_TYPE_SELL && new_sl > entry))
+      {
+         last_action += " (closest legal stop; target " +
+                        DoubleToString(NormalizePrice(symbol, desired_sl), digits) +
+                        " is inside broker stop limits)";
+      }
       last_error = "";
       Print(last_action);
       return true;
@@ -1676,6 +1712,95 @@ string Trim(string value)
    StringTrimLeft(value);
    StringTrimRight(value);
    return value;
+}
+
+void UpdateStatsDashboard()
+{
+   if(!ShowStatsDashboard)
+   {
+      ObjectDelete(0, STATS_DASHBOARD_OBJECT);
+      return;
+   }
+
+   TradeStats stats[];
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !IsOurCopiedPosition())
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      int index = FindTradeStatsIndex(stats, symbol);
+      if(index < 0)
+      {
+         int size = ArraySize(stats);
+         ArrayResize(stats, size + 1);
+         index = size;
+         stats[index].symbol = symbol;
+         stats[index].trades = 0;
+         stats[index].wins = 0;
+         stats[index].losses = 0;
+         stats[index].net_profit = 0.0;
+         stats[index].gross_profit = 0.0;
+         stats[index].gross_loss = 0.0;
+      }
+
+      double profit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      stats[index].trades++;
+      stats[index].net_profit += profit;
+      if(profit >= 0.0)
+      {
+         stats[index].wins++;
+         stats[index].gross_profit += profit;
+      }
+      else
+      {
+         stats[index].losses++;
+         stats[index].gross_loss += profit;
+      }
+   }
+
+   string text = "Copied Open Stats\n";
+   int total = ArraySize(stats);
+   if(total <= 0)
+   {
+      text += "No copied open trades";
+   }
+   else
+   {
+      for(int i = 0; i < total; i++)
+      {
+         text += stats[i].symbol + ": " +
+                 (string)stats[i].trades +
+                 " open, P/L " +
+                 DoubleToString(stats[i].net_profit, 2) + "\n";
+      }
+   }
+
+   if(ObjectFind(0, STATS_DASHBOARD_OBJECT) < 0)
+   {
+      ObjectCreate(0, STATS_DASHBOARD_OBJECT, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, STATS_DASHBOARD_OBJECT, OBJPROP_CORNER, CORNER_RIGHT_UPPER);
+      ObjectSetInteger(0, STATS_DASHBOARD_OBJECT, OBJPROP_XDISTANCE, 20);
+      ObjectSetInteger(0, STATS_DASHBOARD_OBJECT, OBJPROP_YDISTANCE, 20);
+      ObjectSetInteger(0, STATS_DASHBOARD_OBJECT, OBJPROP_FONTSIZE, 10);
+      ObjectSetInteger(0, STATS_DASHBOARD_OBJECT, OBJPROP_COLOR, clrWhite);
+   }
+
+   ObjectSetString(0, STATS_DASHBOARD_OBJECT, OBJPROP_TEXT, text);
+}
+
+int FindTradeStatsIndex(const TradeStats &stats[], const string symbol)
+{
+   int total = ArraySize(stats);
+   for(int i = 0; i < total; i++)
+   {
+      if(stats[i].symbol == symbol)
+         return i;
+   }
+
+   return -1;
 }
 
 void UpdateDashboard()
