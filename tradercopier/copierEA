@@ -64,6 +64,7 @@ input ENUM_COPIER_ENTRY_MODE EntryMode = COPIER_ENTRY_MARKET_ORDER;
 input bool CopyStopLossTakeProfit = true;
 input bool AdjustTakeProfitToCopiedRR = true;
 input ENUM_TP_ADJUST_MODE TakeProfitAdjustMode = TP_ADJUST_TARGET_RISK_MONEY;
+input bool PreventReEntryAfterCopiedExit = true;
 
 input group "Sender Exit Settings"
 input ENUM_SENDER_EXIT_ACTION SenderExitAction = SENDER_EXIT_SMART_PROTECT_PROFIT_CLOSE_LOSS;
@@ -268,9 +269,10 @@ void SyncOneSource(const SourcePosition &src)
    if(active_volume > step / 2.0)
       MarkSourceLifecycleStarted(src.ticket);
 
-   if(active_volume <= step / 2.0 && SourceLifecycleAlreadyStarted(src.ticket))
+   if(PreventReEntryAfterCopiedExit && active_volume <= step / 2.0 && SourceLifecycleAlreadyStarted(src.ticket))
    {
       last_action = "Source #" + (string)src.ticket + " was already copied and exited; no re-entry";
+      Print(last_action);
       return;
    }
 
@@ -335,6 +337,15 @@ void CloseOrphanCopiedPositions()
 
 void HandleCopiedPositionAfterSenderExit(const ulong ticket, const ulong source_ticket)
 {
+   if(SourceExitAlreadyProtected(source_ticket))
+   {
+      if(CopiedPositionIsProfitable(ticket))
+         LockProfitAfterSenderExit(ticket);
+
+      last_action = "Copied trade for source #" + (string)source_ticket + " is already in sender-exit protection";
+      return;
+   }
+
    if(SenderExitAction == SENDER_EXIT_CLOSE_ALWAYS)
    {
       last_action = "Closing copied trade because source #" + (string)source_ticket + " exited";
@@ -345,10 +356,10 @@ void HandleCopiedPositionAfterSenderExit(const ulong ticket, const ulong source_
    if(SenderExitAction == SENDER_EXIT_PROTECT_ALWAYS)
    {
       last_action = "Protecting copied trade because source #" + (string)source_ticket + " exited";
+      MarkSourceExitProtected(source_ticket);
       if(!LockProfitAfterSenderExit(ticket))
       {
-         last_action = "Closing copied trade because source #" + (string)source_ticket + " exited and profit lock was not possible";
-         ClosePosition(ticket);
+         last_action = "Profit lock could not be modified yet for source #" + (string)source_ticket + "; leaving copied trade open";
       }
       return;
    }
@@ -356,10 +367,10 @@ void HandleCopiedPositionAfterSenderExit(const ulong ticket, const ulong source_
    if(CopiedPositionIsProfitable(ticket))
    {
       last_action = "Sender source #" + (string)source_ticket + " exited while copied trade is profitable; applying protection";
+      MarkSourceExitProtected(source_ticket);
       if(!LockProfitAfterSenderExit(ticket))
       {
-         last_action = "Closing profitable copied trade because source #" + (string)source_ticket + " exited and protection was not possible";
-         ClosePosition(ticket);
+         last_action = "Profit lock could not be modified yet for source #" + (string)source_ticket + "; leaving profitable copied trade open";
       }
       return;
    }
@@ -436,9 +447,27 @@ void MarkSourceLifecycleStarted(const ulong source_ticket)
    GlobalVariableSet(SourceLifecycleGlobalName(source_ticket), (double)TimeCurrent());
 }
 
+bool SourceExitAlreadyProtected(const ulong source_ticket)
+{
+   return GlobalVariableCheck(SourceExitProtectedGlobalName(source_ticket));
+}
+
+void MarkSourceExitProtected(const ulong source_ticket)
+{
+   if(source_ticket == 0)
+      return;
+
+   GlobalVariableSet(SourceExitProtectedGlobalName(source_ticket), (double)TimeCurrent());
+}
+
 string SourceLifecycleGlobalName(const ulong source_ticket)
 {
    return "MTC1_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket;
+}
+
+string SourceExitProtectedGlobalName(const ulong source_ticket)
+{
+   return "MTC1_PROT_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket;
 }
 
 string ShortSafeKey(const string value, const int max_length)
@@ -552,6 +581,9 @@ bool OpenCopiedPosition(const SourcePosition &src, const string symbol, const lo
 
    if(ok && CopyStopLossTakeProfit && AdjustTakeProfitToCopiedRR)
       AdjustTakeProfitToCopiedRRMoney(src, symbol, type, comment);
+
+   if(ok)
+      MarkSourceLifecycleStarted(src.ticket);
 
    return ok;
 }
@@ -822,6 +854,9 @@ bool OpenCopiedPendingOrder(const SourcePosition &src, const string symbol, cons
       last_action = "Retrying source #" + (string)src.ticket + " pending order without copied SL/TP";
       ok = SendPendingOrderWithRetries(pending_type, volume, symbol, price, 0.0, 0.0, comment);
    }
+
+   if(ok)
+      MarkSourceLifecycleStarted(src.ticket);
 
    return ok;
 }
