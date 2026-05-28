@@ -494,29 +494,36 @@ string BuildReportMessage(string report_label, datetime from_time, datetime to_t
    {
       msg += "<b>Closed Trades</b>\n";
       msg += "<pre>";
+      msg += PadRight("Entry", 16) + " ";
       msg += PadRight("Close", 16) + " ";
-      msg += PadRight("Symbol", 10) + " ";
+      msg += PadLeft("Mins", 5) + " ";
+      msg += PadRight("Symbol", 8) + " ";
       msg += PadRight("Side", 4) + " ";
-      msg += PadLeft("P&amp;L", 12) + " ";
-      msg += PadLeft("RR", 7) + " ";
+      msg += PadLeft("P&amp;L", 11) + " ";
+      msg += PadLeft("RR", 6) + " ";
       msg += "Result\n";
       msg += PadRight("----------------", 16) + " ";
-      msg += PadRight("----------", 10) + " ";
+      msg += PadRight("----------------", 16) + " ";
+      msg += PadLeft("-----", 5) + " ";
+      msg += PadRight("--------", 8) + " ";
       msg += PadRight("----", 4) + " ";
-      msg += PadLeft("------------", 12) + " ";
-      msg += PadLeft("-------", 7) + " ";
+      msg += PadLeft("-----------", 11) + " ";
+      msg += PadLeft("------", 6) + " ";
       msg += "------\n";
       for(int i = 0; i < count; i++)
       {
          string side = TradeSideText(trades[i].type);
          string result = (trades[i].net >= 0.0 ? "WIN" : "LOSS");
          string rr_text = (trades[i].risk_money > 0.0 ? DoubleToString(trades[i].rr, 2) + "R" : "n/a");
+         long duration_minutes = TradeDurationMinutes(trades[i]);
 
+         msg += PadRight(TimeText(trades[i].open_time), 16) + " ";
          msg += PadRight(TimeToString(trades[i].close_time, TIME_DATE | TIME_MINUTES), 16) + " ";
-         msg += PadRight(trades[i].symbol, 10) + " ";
+         msg += PadLeft((string)duration_minutes, 5) + " ";
+         msg += PadRight(trades[i].symbol, 8) + " ";
          msg += PadRight(side, 4) + " ";
-         msg += PadLeft(MoneyTextNoCurrency(trades[i].net), 12) + " ";
-         msg += PadLeft(rr_text, 7) + " ";
+         msg += PadLeft(MoneyTextNoCurrency(trades[i].net), 11) + " ";
+         msg += PadLeft(rr_text, 6) + " ";
          msg += result + "\n";
 
          total_net += trades[i].net;
@@ -546,6 +553,8 @@ string BuildReportMessage(string report_label, datetime from_time, datetime to_t
    double net_loss_ratio = (gross_loss > 0.0 ? total_net / gross_loss : (total_net > 0.0 ? 999.0 : 0.0));
    double average_pnl = (count > 0 ? total_net / count : 0.0);
 
+   msg += BuildBalanceSummaryText(from_time, to_time, trades, count, total_net);
+
    msg += "\n\n<b>Performance Summary</b>\n";
    msg += "Outcome: <b>" + ResultStatusText(total_net) + "</b>\n";
    msg += "Net P&amp;L: <b>" + MoneyText(total_net) + "</b>\n";
@@ -564,6 +573,121 @@ string BuildReportMessage(string report_label, datetime from_time, datetime to_t
       msg += BuildOpenPositionsText();
 
    return msg;
+}
+
+string BuildBalanceSummaryText(datetime from_time, datetime to_time, const ClosedTrade &trades[], int count, double report_net)
+{
+   datetime sequence_start = FirstTradeOpenTime(trades);
+   if(sequence_start <= 0 && from_time > 0)
+      sequence_start = from_time;
+
+   double current_balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double floating_profit = AccountInfoDouble(ACCOUNT_PROFIT);
+   double starting_balance = current_balance;
+   bool has_starting_balance = false;
+
+   if(sequence_start > 0)
+      has_starting_balance = BalanceAtTime(sequence_start, starting_balance);
+
+   string text = "\n\n<b>Account Balance</b>\n";
+   if(has_starting_balance)
+   {
+      double balance_change = current_balance - starting_balance;
+      double return_percent = (MathAbs(starting_balance) > 0.0000001 ? 100.0 * balance_change / starting_balance : 0.0);
+
+      text += "Sequence start: " + EscapeHtml(TimeToString(sequence_start, TIME_DATE | TIME_MINUTES)) + "\n";
+      text += "Starting balance: <b>" + MoneyAmountText(starting_balance) + "</b>\n";
+      text += "Current balance: <b>" + MoneyAmountText(current_balance) + "</b>\n";
+      text += "Balance change: <b>" + MoneyText(balance_change) + " (" + DoubleToString(return_percent, 2) + "%)</b>\n";
+   }
+   else
+   {
+      text += "Starting balance: n/a\n";
+      text += "Current balance: <b>" + MoneyAmountText(current_balance) + "</b>\n";
+   }
+
+   text += "Current equity: <b>" + MoneyAmountText(current_equity) + "</b>\n";
+   text += "Floating P&amp;L: <b>" + MoneyText(floating_profit) + "</b>\n";
+   text += "Closed P&amp;L in report: <b>" + MoneyText(report_net) + "</b>\n";
+   return text;
+}
+
+datetime FirstTradeOpenTime(const ClosedTrade &trades[])
+{
+   datetime first_time = 0;
+   int count = ArraySize(trades);
+
+   for(int i = 0; i < count; i++)
+   {
+      if(trades[i].open_time <= 0)
+         continue;
+
+      if(first_time <= 0 || trades[i].open_time < first_time)
+         first_time = trades[i].open_time;
+   }
+
+   return first_time;
+}
+
+bool BalanceAtTime(datetime balance_time, double &balance)
+{
+   if(balance_time <= 0)
+      return false;
+
+   datetime now = TimeCurrent();
+   if(!HistorySelect(0, now))
+   {
+      Log("BalanceAtTime HistorySelect failed: " + (string)GetLastError());
+      return false;
+   }
+
+   double later_balance_changes = 0.0;
+   int deals_total = HistoryDealsTotal();
+   for(int i = 0; i < deals_total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      datetime deal_time = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      if(deal_time < balance_time || deal_time > now)
+         continue;
+
+      later_balance_changes += DealBalanceChange(deal_ticket);
+   }
+
+   balance = AccountInfoDouble(ACCOUNT_BALANCE) - later_balance_changes;
+   return true;
+}
+
+double DealBalanceChange(ulong deal_ticket)
+{
+   double profit = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+   double commission = HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION);
+   double swap = HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
+   return profit + commission + swap;
+}
+
+long TradeDurationMinutes(const ClosedTrade &trade)
+{
+   if(trade.open_time <= 0 || trade.close_time <= 0 || trade.close_time < trade.open_time)
+      return 0;
+
+   long seconds = (long)(trade.close_time - trade.open_time);
+   long minutes = seconds / 60;
+   if(seconds > 0 && minutes == 0)
+      return 1;
+
+   return minutes;
+}
+
+string TimeText(datetime value)
+{
+   if(value <= 0)
+      return "n/a";
+
+   return TimeToString(value, TIME_DATE | TIME_MINUTES);
 }
 
 string BuildOpenPositionsText()
@@ -843,6 +967,11 @@ string MoneyText(double value)
    string currency = AccountInfoString(ACCOUNT_CURRENCY);
    string sign = (value >= 0.0 ? "+" : "");
    return sign + DoubleToString(value, 2) + " " + currency;
+}
+
+string MoneyAmountText(double value)
+{
+   return DoubleToString(value, 2) + " " + AccountInfoString(ACCOUNT_CURRENCY);
 }
 
 string MoneyTextNoCurrency(double value)
