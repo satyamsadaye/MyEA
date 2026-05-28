@@ -1,0 +1,1003 @@
+#property strict
+#property version   "1.00"
+#property description "Sends closed-trade history reports and summary stats to Telegram on a timer."
+
+enum ENUM_REPORT_PERIOD
+{
+   REPORT_HOURLY = 0,
+   REPORT_TODAY = 1,
+   REPORT_WEEKLY = 2,
+   REPORT_MONTHLY = 3,
+   REPORT_OVERALL = 4
+};
+
+input group "Telegram"
+input string InpBotToken = "";                 // Telegram bot token
+input string InpChatId = "";                   // Telegram chat/channel ID
+input bool InpAutoDetectChatId = true;         // Auto-detect chat ID from getUpdates if empty
+input bool InpSendStartupTest = false;         // Send a test message on EA start
+
+input group "Report"
+input int InpLookbackHours = 1;                // Closed trades to include per report
+input bool InpOnlyCurrentSymbol = false;       // Report only this chart symbol
+input bool InpUseMagicNumberFilter = false;    // Only report this magic number
+input long InpMagicNumberFilter = 26052601;    // Magic number to report
+input bool InpIncludeOpenPositions = true;     // Include open-position snapshot
+
+enum ENUM_AUTO_REPORT_MODE
+{
+   AUTO_REPORT_EVERY_MINUTES = 0,              // Send every X minutes
+   AUTO_REPORT_DAILY_IST_TIME = 1              // Send once daily at IST time
+};
+
+input group "Auto Send Schedule"
+input ENUM_AUTO_REPORT_MODE InpAutoReportMode = AUTO_REPORT_EVERY_MINUTES; // Auto report schedule
+input ENUM_REPORT_PERIOD InpAutoReportPeriod = REPORT_HOURLY; // Which report auto-send uses
+input int InpReportEveryMinutes = 60;          // Every-minutes interval
+input int InpDailyIstHour = 23;                // Daily IST hour, 0-23
+input int InpDailyIstMinute = 59;              // Daily IST minute, 0-59
+
+input group "Display"
+input bool InpShowChartStatus = true;          // Show reporter status on chart
+input bool InpShowSendNowButton = true;        // Show Send Report Now button
+input bool InpPrintDebugLogs = true;           // Print report debug logs in Experts tab
+
+#define SEND_NOW_BUTTON_NAME "TTR_SEND_REPORT_NOW"
+#define SEND_TODAY_BUTTON_NAME "TTR_SEND_TODAY_REPORT"
+#define SEND_WEEKLY_BUTTON_NAME "TTR_SEND_WEEKLY_REPORT"
+#define SEND_MONTHLY_BUTTON_NAME "TTR_SEND_MONTHLY_REPORT"
+#define SEND_OVERALL_BUTTON_NAME "TTR_SEND_OVERALL_REPORT"
+
+struct ClosedTrade
+{
+   ulong position_id;
+   datetime open_time;
+   datetime close_time;
+   string symbol;
+   long type;
+   long magic;
+   double volume;
+   double open_price;
+   double close_price;
+   double entry_sl;
+   double profit;
+   double commission;
+   double swap;
+   double net;
+   double risk_money;
+   double rr;
+};
+
+datetime g_next_report_time = 0;
+string g_last_status = "Waiting";
+string g_last_error = "";
+string g_detected_chat_id = "";
+
+int OnInit()
+{
+   EventSetTimer(1);
+   g_next_report_time = ComputeNextAutoReportTime(TimeCurrent());
+   CreateReportButtons();
+   Log("EA initialized. Buttons=" + (InpShowSendNowButton ? "on" : "off") +
+       ", next auto report=" + TimeToString(g_next_report_time, TIME_DATE | TIME_SECONDS) +
+       ", schedule=" + AutoScheduleText());
+
+   if(InpSendStartupTest)
+      SendTelegram("MT5 Telegram trade reporter started for account " + (string)AccountInfoInteger(ACCOUNT_LOGIN) + ".");
+
+   UpdateStatus();
+   return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason)
+{
+   Log("EA deinitialized. reason=" + (string)reason);
+   EventKillTimer();
+   DeleteReportButtons();
+   Comment("");
+}
+
+void OnChartEvent(const int id,
+                  const long &lparam,
+                  const double &dparam,
+                  const string &sparam)
+{
+   if(id == CHARTEVENT_OBJECT_CLICK)
+      Log("Chart object clicked: " + sparam);
+
+   if(id != CHARTEVENT_OBJECT_CLICK)
+      return;
+
+   if(sparam == SEND_NOW_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_NOW_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Hourly report button accepted.");
+      SendReport(REPORT_HOURLY);
+   }
+   else if(sparam == SEND_TODAY_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_TODAY_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Today report button accepted.");
+      SendReport(REPORT_TODAY);
+   }
+   else if(sparam == SEND_WEEKLY_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_WEEKLY_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Weekly report button accepted.");
+      SendReport(REPORT_WEEKLY);
+   }
+   else if(sparam == SEND_MONTHLY_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_MONTHLY_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Monthly report button accepted.");
+      SendReport(REPORT_MONTHLY);
+   }
+   else if(sparam == SEND_OVERALL_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_OVERALL_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Overall report button accepted.");
+      SendReport(REPORT_OVERALL);
+   }
+   else
+   {
+      Log("Clicked object is not a reporter button.");
+   }
+}
+
+void OnTimer()
+{
+   datetime now = TimeCurrent();
+   if(g_next_report_time <= 0)
+      g_next_report_time = ComputeNextAutoReportTime(now);
+
+   if(now >= g_next_report_time)
+   {
+      SendReport(InpAutoReportPeriod);
+      g_next_report_time = ComputeNextAutoReportTime(TimeCurrent());
+      Log("Next auto report scheduled for " + TimeToString(g_next_report_time, TIME_DATE | TIME_SECONDS) +
+          ". schedule=" + AutoScheduleText());
+   }
+
+   UpdateStatus();
+}
+
+datetime ComputeNextAutoReportTime(datetime now)
+{
+   if(InpAutoReportMode == AUTO_REPORT_DAILY_IST_TIME)
+      return ComputeNextDailyIstServerTime(now);
+
+   return now + MathMax(1, InpReportEveryMinutes) * 60;
+}
+
+datetime ComputeNextDailyIstServerTime(datetime now_server)
+{
+   datetime now_gmt = TimeGMT();
+   int server_gmt_offset = (int)(now_server - now_gmt);
+   datetime now_ist = now_gmt + 19800;
+
+   MqlDateTime ist_struct;
+   TimeToStruct(now_ist, ist_struct);
+   ist_struct.hour = ClampInt(InpDailyIstHour, 0, 23);
+   ist_struct.min = ClampInt(InpDailyIstMinute, 0, 59);
+   ist_struct.sec = 0;
+
+   datetime target_ist = StructToTime(ist_struct);
+   if(now_ist >= target_ist)
+      target_ist += 24 * 3600;
+
+   datetime target_gmt = target_ist - 19800;
+   return target_gmt + server_gmt_offset;
+}
+
+int ClampInt(int value, int min_value, int max_value)
+{
+   if(value < min_value)
+      return min_value;
+   if(value > max_value)
+      return max_value;
+   return value;
+}
+
+string AutoScheduleText()
+{
+   if(InpAutoReportMode == AUTO_REPORT_DAILY_IST_TIME)
+   {
+      return "daily " +
+             TwoDigits(ClampInt(InpDailyIstHour, 0, 23)) + ":" +
+             TwoDigits(ClampInt(InpDailyIstMinute, 0, 59)) +
+             " IST, " + ReportLabel(InpAutoReportPeriod) + " report";
+   }
+
+   return "every " + (string)MathMax(1, InpReportEveryMinutes) +
+          " minute(s), " + ReportLabel(InpAutoReportPeriod) + " report";
+}
+
+string TwoDigits(int value)
+{
+   if(value < 10)
+      return "0" + (string)value;
+
+   return (string)value;
+}
+
+void SendReport(ENUM_REPORT_PERIOD period)
+{
+   datetime to_time = TimeCurrent();
+   datetime from_time = ReportFromTime(period, to_time);
+   string label = ReportLabel(period);
+   g_last_status = "Sending " + label + " report...";
+   g_last_error = "";
+   UpdateStatus();
+   Log("Building " + label + " report. Window=" + WindowText(from_time, to_time));
+
+   ClosedTrade trades[];
+   int count = BuildClosedTrades(from_time, to_time, trades);
+   SortTradesByCloseTimeDesc(trades);
+   string message = BuildReportMessage(label, from_time, to_time, trades, count);
+   Log("Built " + label + " report. Closed trades=" + (string)count +
+       ", message chars=" + (string)StringLen(message));
+
+   if(SendTelegram(message))
+   {
+      g_last_status = "Last " + label + " report sent at " + TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES);
+      Log("Telegram " + label + " report sent successfully.");
+   }
+   else
+   {
+      g_last_status = "Failed to send " + label + " report";
+      Log("Telegram " + label + " report failed. " + g_last_error);
+   }
+
+   UpdateStatus();
+}
+
+datetime ReportFromTime(ENUM_REPORT_PERIOD period, datetime to_time)
+{
+   if(period == REPORT_TODAY)
+      return IstDayStartServerTime(to_time);
+   if(period == REPORT_WEEKLY)
+      return to_time - 7 * 24 * 3600;
+   if(period == REPORT_MONTHLY)
+      return to_time - 30 * 24 * 3600;
+   if(period == REPORT_OVERALL)
+      return 0;
+
+   return to_time - MathMax(1, InpLookbackHours) * 3600;
+}
+
+datetime IstDayStartServerTime(datetime now_server)
+{
+   datetime now_gmt = TimeGMT();
+   int server_gmt_offset = (int)(now_server - now_gmt);
+   datetime now_ist = now_gmt + 19800;
+
+   MqlDateTime ist_struct;
+   TimeToStruct(now_ist, ist_struct);
+   ist_struct.hour = 0;
+   ist_struct.min = 0;
+   ist_struct.sec = 0;
+
+   datetime day_start_ist = StructToTime(ist_struct);
+   datetime day_start_gmt = day_start_ist - 19800;
+   return day_start_gmt + server_gmt_offset;
+}
+
+string ReportLabel(ENUM_REPORT_PERIOD period)
+{
+   if(period == REPORT_TODAY)
+      return "today";
+   if(period == REPORT_WEEKLY)
+      return "weekly";
+   if(period == REPORT_MONTHLY)
+      return "monthly";
+   if(period == REPORT_OVERALL)
+      return "overall";
+
+   return "hourly";
+}
+
+string WindowText(datetime from_time, datetime to_time)
+{
+   if(from_time <= 0)
+      return "full available history - " + TimeToString(to_time, TIME_DATE | TIME_MINUTES);
+
+   return TimeToString(from_time, TIME_DATE | TIME_MINUTES) + " - " + TimeToString(to_time, TIME_DATE | TIME_MINUTES);
+}
+
+void SortTradesByCloseTimeDesc(ClosedTrade &trades[])
+{
+   int count = ArraySize(trades);
+   for(int i = 0; i < count - 1; i++)
+   {
+      for(int j = i + 1; j < count; j++)
+      {
+         if(trades[j].close_time > trades[i].close_time)
+         {
+            ClosedTrade temp = trades[i];
+            trades[i] = trades[j];
+            trades[j] = temp;
+         }
+      }
+   }
+}
+
+int BuildClosedTrades(datetime from_time, datetime to_time, ClosedTrade &trades[])
+{
+   ArrayResize(trades, 0);
+
+   if(!HistorySelect(0, to_time))
+   {
+      g_last_error = "HistorySelect failed: " + (string)GetLastError();
+      Log(g_last_error);
+      return 0;
+   }
+
+   int deals_total = HistoryDealsTotal();
+   Log("History selected. Deals available=" + (string)deals_total);
+   for(int i = 0; i < deals_total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      datetime close_time = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      if(close_time < from_time || close_time > to_time)
+         continue;
+
+      string symbol = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+      if(InpOnlyCurrentSymbol && symbol != _Symbol)
+         continue;
+
+      ulong position_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
+      if(position_id == 0)
+         continue;
+
+      int index = FindTradeIndex(trades, position_id);
+      if(index < 0)
+      {
+         index = ArraySize(trades);
+         ArrayResize(trades, index + 1);
+         InitClosedTrade(trades[index], position_id);
+      }
+
+      trades[index].symbol = symbol;
+      trades[index].close_time = close_time;
+      trades[index].close_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+      trades[index].profit += HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+      trades[index].commission += HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION);
+      trades[index].swap += HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
+   }
+
+   int count = ArraySize(trades);
+   int kept = 0;
+   for(int t = 0; t < count; t++)
+   {
+      FillEntryDetails(trades[t]);
+      if(!MagicNumberAllowed(trades[t].magic))
+         continue;
+
+      trades[t].net = trades[t].profit + trades[t].commission + trades[t].swap;
+      trades[t].risk_money = EstimateRiskMoney(trades[t]);
+      trades[t].rr = (trades[t].risk_money > 0.0 ? trades[t].net / trades[t].risk_money : 0.0);
+
+      if(kept != t)
+         trades[kept] = trades[t];
+      kept++;
+   }
+
+   ArrayResize(trades, kept);
+   return kept;
+}
+
+void InitClosedTrade(ClosedTrade &trade, ulong position_id)
+{
+   trade.position_id = position_id;
+   trade.open_time = 0;
+   trade.close_time = 0;
+   trade.symbol = "";
+   trade.type = -1;
+   trade.magic = 0;
+   trade.volume = 0.0;
+   trade.open_price = 0.0;
+   trade.close_price = 0.0;
+   trade.entry_sl = 0.0;
+   trade.profit = 0.0;
+   trade.commission = 0.0;
+   trade.swap = 0.0;
+   trade.net = 0.0;
+   trade.risk_money = 0.0;
+   trade.rr = 0.0;
+}
+
+int FindTradeIndex(const ClosedTrade &trades[], ulong position_id)
+{
+   int count = ArraySize(trades);
+   for(int i = 0; i < count; i++)
+   {
+      if(trades[i].position_id == position_id)
+         return i;
+   }
+
+   return -1;
+}
+
+void FillEntryDetails(ClosedTrade &trade)
+{
+   int deals_total = HistoryDealsTotal();
+   for(int i = 0; i < deals_total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      ulong position_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
+      if(position_id != trade.position_id)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_IN && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      trade.open_time = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      trade.symbol = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+      trade.type = HistoryDealGetInteger(deal_ticket, DEAL_TYPE);
+      trade.magic = HistoryDealGetInteger(deal_ticket, DEAL_MAGIC);
+      trade.volume = HistoryDealGetDouble(deal_ticket, DEAL_VOLUME);
+      trade.open_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+      trade.entry_sl = HistoryDealGetDouble(deal_ticket, DEAL_SL);
+      return;
+   }
+}
+
+double EstimateRiskMoney(const ClosedTrade &trade)
+{
+   if(trade.entry_sl <= 0.0 || trade.open_price <= 0.0 || trade.volume <= 0.0)
+      return 0.0;
+
+   double tick_size = SymbolInfoDouble(trade.symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tick_value = SymbolInfoDouble(trade.symbol, SYMBOL_TRADE_TICK_VALUE);
+   if(tick_size <= 0.0 || tick_value <= 0.0)
+      return 0.0;
+
+   double price_risk = MathAbs(trade.open_price - trade.entry_sl);
+   return (price_risk / tick_size) * tick_value * trade.volume;
+}
+
+string BuildReportMessage(string report_label, datetime from_time, datetime to_time, const ClosedTrade &trades[], int count)
+{
+   double total_net = 0.0;
+   double gross_profit = 0.0;
+   double gross_loss = 0.0;
+   double rr_sum = 0.0;
+   int rr_count = 0;
+   int wins = 0;
+   int losses = 0;
+
+   string msg = "<b>MT5 " + EscapeHtml(CapitalizeFirst(report_label)) + " Trade Report</b>\n";
+   msg += "Account: <b>" + EscapeHtml(AccountInfoString(ACCOUNT_NAME)) + "</b>\n";
+   msg += "Login: <code>" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "</code>\n";
+   msg += "Server: " + EscapeHtml(AccountInfoString(ACCOUNT_SERVER)) + "\n";
+   msg += "Currency: " + EscapeHtml(AccountInfoString(ACCOUNT_CURRENCY)) + "\n";
+   msg += "Period: " + EscapeHtml(WindowText(from_time, to_time)) + "\n";
+   msg += "\n";
+
+   if(count == 0)
+   {
+      msg += "<b>Closed Trades</b>\n";
+      msg += "No closed trades in this period.\n";
+   }
+   else
+   {
+      msg += "<b>Closed Trades</b>\n";
+      msg += "<pre>";
+      msg += PadRight("Close", 16) + " ";
+      msg += PadRight("Symbol", 10) + " ";
+      msg += PadRight("Side", 4) + " ";
+      msg += PadLeft("P&amp;L", 12) + " ";
+      msg += PadLeft("RR", 7) + " ";
+      msg += "Result\n";
+      msg += PadRight("----------------", 16) + " ";
+      msg += PadRight("----------", 10) + " ";
+      msg += PadRight("----", 4) + " ";
+      msg += PadLeft("------------", 12) + " ";
+      msg += PadLeft("-------", 7) + " ";
+      msg += "------\n";
+      for(int i = 0; i < count; i++)
+      {
+         string side = TradeSideText(trades[i].type);
+         string result = (trades[i].net >= 0.0 ? "WIN" : "LOSS");
+         string rr_text = (trades[i].risk_money > 0.0 ? DoubleToString(trades[i].rr, 2) + "R" : "n/a");
+
+         msg += PadRight(TimeToString(trades[i].close_time, TIME_DATE | TIME_MINUTES), 16) + " ";
+         msg += PadRight(trades[i].symbol, 10) + " ";
+         msg += PadRight(side, 4) + " ";
+         msg += PadLeft(MoneyTextNoCurrency(trades[i].net), 12) + " ";
+         msg += PadLeft(rr_text, 7) + " ";
+         msg += result + "\n";
+
+         total_net += trades[i].net;
+         if(trades[i].net >= 0.0)
+         {
+            wins++;
+            gross_profit += trades[i].net;
+         }
+         else
+         {
+            losses++;
+            gross_loss += MathAbs(trades[i].net);
+         }
+
+         if(trades[i].risk_money > 0.0)
+         {
+            rr_sum += trades[i].rr;
+            rr_count++;
+         }
+      }
+      msg += "</pre>\n";
+   }
+
+   double win_rate = (count > 0 ? 100.0 * wins / count : 0.0);
+   double profit_factor = (gross_loss > 0.0 ? gross_profit / gross_loss : (gross_profit > 0.0 ? 999.0 : 0.0));
+   double average_rr = (rr_count > 0 ? rr_sum / rr_count : 0.0);
+   double net_loss_ratio = (gross_loss > 0.0 ? total_net / gross_loss : (total_net > 0.0 ? 999.0 : 0.0));
+   double average_pnl = (count > 0 ? total_net / count : 0.0);
+
+   msg += "\n\n<b>Performance Summary</b>\n";
+   msg += "Outcome: <b>" + ResultStatusText(total_net) + "</b>\n";
+   msg += "Net P&amp;L: <b>" + MoneyText(total_net) + "</b>\n";
+   msg += "Trades: <b>" + (string)count + "</b> closed | <b>" + (string)wins + "</b> wins | <b>" + (string)losses + "</b> losses\n";
+   msg += "Win rate: <b>" + DoubleToString(win_rate, 1) + "%</b>\n";
+   msg += "Average P&amp;L/trade: <b>" + MoneyText(average_pnl) + "</b>\n";
+
+   msg += "\n<b>Risk &amp; Quality</b>\n";
+   msg += "Average RR: <b>" + (rr_count > 0 ? DoubleToString(average_rr, 2) + "R" : "n/a") + "</b>\n";
+   msg += "Overall RR: <b>" + (net_loss_ratio >= 999.0 ? "infinite" : DoubleToString(net_loss_ratio, 2) + "R") + "</b>\n";
+   msg += "Profit factor: <b>" + (profit_factor >= 999.0 ? "infinite" : DoubleToString(profit_factor, 2)) + "</b>\n";
+   msg += "Gross profit: " + MoneyText(gross_profit) + "\n";
+   msg += "Gross loss: -" + DoubleToString(gross_loss, 2) + " " + AccountInfoString(ACCOUNT_CURRENCY) + "\n";
+
+   if(InpIncludeOpenPositions)
+      msg += BuildOpenPositionsText();
+
+   return msg;
+}
+
+string BuildOpenPositionsText()
+{
+   int total = PositionsTotal();
+   int included = 0;
+   double floating = 0.0;
+   string text = "\n\n<b>Open Positions</b>\n";
+
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      if(InpOnlyCurrentSymbol && symbol != _Symbol)
+         continue;
+
+      long magic = PositionGetInteger(POSITION_MAGIC);
+      if(!MagicNumberAllowed(magic))
+         continue;
+
+      long type = PositionGetInteger(POSITION_TYPE);
+      double profit = PositionGetDouble(POSITION_PROFIT);
+      floating += profit;
+      included++;
+
+      text += "\n";
+      text += "<b>" + EscapeHtml(symbol) + " " + PositionSideText(type) + "</b>\n";
+      text += "Volume: " + DoubleToString(PositionGetDouble(POSITION_VOLUME), 2) + " lots\n";
+      text += "Floating P&amp;L: <b>" + MoneyText(profit) + "</b>\n";
+   }
+
+   if(included == 0)
+      text += "No open positions.\n";
+
+   text += "\nTotal floating P&amp;L: <b>" + MoneyText(floating) + "</b>\n";
+   return text;
+}
+
+bool SendTelegram(string text)
+{
+   string bot_token = CleanBotToken(InpBotToken);
+   string chat_id = GetEffectiveChatId(bot_token);
+
+   if(bot_token == "" || chat_id == "")
+   {
+      g_last_error = "Set InpBotToken and InpChatId, or send /start to the bot and keep InpAutoDetectChatId=true.";
+      Log(g_last_error);
+      return false;
+   }
+
+   int max_chunk = 3500;
+   int length = StringLen(text);
+   if(length <= max_chunk)
+   {
+      Log("Sending Telegram message in 1 chunk. chars=" + (string)length);
+      return SendTelegramChunk(text, bot_token, chat_id);
+   }
+
+   string plain_text = StripTelegramHtml(text);
+   length = StringLen(plain_text);
+   Log("Telegram message too long. Sending split chunks. plain chars=" + (string)length);
+   int offset = 0;
+   int chunk_number = 1;
+   while(offset < length)
+   {
+      int take = (int)MathMin((double)max_chunk, (double)(length - offset));
+      string chunk = "<pre>" + EscapeHtml(StringSubstr(plain_text, offset, take)) + "</pre>";
+      Log("Sending Telegram chunk " + (string)chunk_number + ". chars=" + (string)StringLen(chunk));
+      if(!SendTelegramChunk(chunk, bot_token, chat_id))
+         return false;
+
+      offset += take;
+      chunk_number++;
+      Sleep(250);
+   }
+
+   return true;
+}
+
+bool SendTelegramChunk(string text, string bot_token, string chat_id)
+{
+   string url = "https://api.telegram.org/bot" + bot_token + "/sendMessage";
+   string body = "chat_id=" + UrlEncode(chat_id) + "&parse_mode=HTML&text=" + UrlEncode(text);
+   char data[];
+   char result[];
+   string headers = "Content-Type: application/x-www-form-urlencoded\r\n";
+   string result_headers = "";
+
+   StringToCharArray(body, data, 0, WHOLE_ARRAY, CP_UTF8);
+   int data_size = ArraySize(data);
+   if(data_size > 0 && data[data_size - 1] == 0)
+      ArrayResize(data, data_size - 1);
+
+   ResetLastError();
+   Log("Calling Telegram WebRequest. body chars=" + (string)StringLen(body));
+   int code = WebRequest("POST", url, headers, 10000, data, result, result_headers);
+   string response = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   Log("Telegram WebRequest returned HTTP=" + (string)code +
+       ", terminal error=" + (string)GetLastError() +
+       ", response=" + response);
+
+   if(code != 200)
+   {
+      g_last_error = "Telegram WebRequest failed. HTTP=" + (string)code +
+                     " err=" + (string)GetLastError() +
+                     " response=" + response;
+      if(code == 404)
+         g_last_error += " | Check bot token. 404 usually means the token is wrong, revoked, or pasted with extra URL/text.";
+      return false;
+   }
+
+   g_last_error = "";
+   return true;
+}
+
+string GetEffectiveChatId(string bot_token)
+{
+   string chat_id = CleanInput(InpChatId);
+   if(chat_id != "")
+      return chat_id;
+
+   if(g_detected_chat_id != "")
+      return g_detected_chat_id;
+
+   if(!InpAutoDetectChatId)
+      return "";
+
+   g_detected_chat_id = DetectChatIdFromUpdates(bot_token);
+   return g_detected_chat_id;
+}
+
+string DetectChatIdFromUpdates(string bot_token)
+{
+   if(bot_token == "")
+      return "";
+
+   string url = "https://api.telegram.org/bot" + bot_token + "/getUpdates";
+   char data[];
+   char result[];
+   string headers = "";
+   string result_headers = "";
+
+   ResetLastError();
+   Log("InpChatId is empty. Trying Telegram getUpdates to auto-detect chat id.");
+   int code = WebRequest("GET", url, headers, 10000, data, result, result_headers);
+   string response = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   Log("getUpdates returned HTTP=" + (string)code +
+       ", terminal error=" + (string)GetLastError() +
+       ", response=" + response);
+
+   if(code != 200)
+   {
+      g_last_error = "getUpdates failed. HTTP=" + (string)code +
+                     " err=" + (string)GetLastError() +
+                     " response=" + response;
+      return "";
+   }
+
+   string chat_id = ExtractLastChatId(response);
+   if(chat_id == "")
+   {
+      g_last_error = "Could not auto-detect chat id. Send /start or any text to the bot, stop other polling code, then click report again.";
+      Log(g_last_error);
+      return "";
+   }
+
+   Log("Auto-detected Telegram chat id: " + chat_id);
+   return chat_id;
+}
+
+string ExtractLastChatId(string json)
+{
+   string marker = "\"chat\":{\"id\":";
+   int search_from = 0;
+   string last_id = "";
+
+   while(true)
+   {
+      int pos = StringFind(json, marker, search_from);
+      if(pos < 0)
+         break;
+
+      int id_start = pos + StringLen(marker);
+      int id_end = id_start;
+      while(id_end < StringLen(json))
+      {
+         ushort ch = StringGetCharacter(json, id_end);
+         if(!((ch >= '0' && ch <= '9') || ch == '-'))
+            break;
+         id_end++;
+      }
+
+      if(id_end > id_start)
+         last_id = StringSubstr(json, id_start, id_end - id_start);
+
+      search_from = id_end;
+   }
+
+   return last_id;
+}
+
+string UrlEncode(string value)
+{
+   uchar bytes[];
+   StringToCharArray(value, bytes, 0, WHOLE_ARRAY, CP_UTF8);
+
+   string encoded = "";
+   int count = ArraySize(bytes);
+   for(int i = 0; i < count; i++)
+   {
+      uchar ch = bytes[i];
+      if(ch == 0)
+         break;
+
+      bool safe = (ch >= 'A' && ch <= 'Z') ||
+                  (ch >= 'a' && ch <= 'z') ||
+                  (ch >= '0' && ch <= '9') ||
+                  ch == '-' || ch == '_' || ch == '.' || ch == '~';
+
+      if(safe)
+         encoded += CharToString(ch);
+      else if(ch == ' ')
+         encoded += "+";
+      else
+         encoded += "%" + StringFormat("%02X", ch);
+   }
+
+   return encoded;
+}
+
+string CleanInput(string value)
+{
+   string clean = value;
+   StringTrimLeft(clean);
+   StringTrimRight(clean);
+   return clean;
+}
+
+string CleanBotToken(string value)
+{
+   string clean = CleanInput(value);
+   string prefix = "https://api.telegram.org/bot";
+   int prefix_pos = StringFind(clean, prefix);
+   if(prefix_pos >= 0)
+      clean = StringSubstr(clean, prefix_pos + StringLen(prefix));
+
+   int slash_pos = StringFind(clean, "/");
+   if(slash_pos >= 0)
+      clean = StringSubstr(clean, 0, slash_pos);
+
+   return CleanInput(clean);
+}
+
+string TradeSideText(long deal_type)
+{
+   if(deal_type == DEAL_TYPE_BUY)
+      return "BUY";
+   if(deal_type == DEAL_TYPE_SELL)
+      return "SELL";
+   return "UNKNOWN";
+}
+
+string PositionSideText(long position_type)
+{
+   if(position_type == POSITION_TYPE_BUY)
+      return "BUY";
+   if(position_type == POSITION_TYPE_SELL)
+      return "SELL";
+   return "UNKNOWN";
+}
+
+string MoneyText(double value)
+{
+   string currency = AccountInfoString(ACCOUNT_CURRENCY);
+   string sign = (value >= 0.0 ? "+" : "");
+   return sign + DoubleToString(value, 2) + " " + currency;
+}
+
+string MoneyTextNoCurrency(double value)
+{
+   string sign = (value >= 0.0 ? "+" : "");
+   return sign + DoubleToString(value, 2);
+}
+
+string ResultStatusText(double value)
+{
+   if(value > 0.0)
+      return "Net profitable";
+   if(value < 0.0)
+      return "Net loss";
+
+   return "Break-even";
+}
+
+string CapitalizeFirst(string value)
+{
+   if(StringLen(value) <= 0)
+      return value;
+
+   ushort first = StringGetCharacter(value, 0);
+   if(first >= 'a' && first <= 'z')
+      first -= 32;
+
+   return ShortToString(first) + StringSubstr(value, 1);
+}
+
+string PadRight(string value, int width)
+{
+   string result = value;
+   while(StringLen(result) < width)
+      result += " ";
+
+   if(StringLen(result) > width)
+      result = StringSubstr(result, 0, width);
+
+   return result;
+}
+
+string PadLeft(string value, int width)
+{
+   string result = value;
+   while(StringLen(result) < width)
+      result = " " + result;
+
+   if(StringLen(result) > width)
+      result = StringSubstr(result, 0, width);
+
+   return result;
+}
+
+string EscapeHtml(string value)
+{
+   string result = value;
+   StringReplace(result, "&", "&amp;");
+   StringReplace(result, "<", "&lt;");
+   StringReplace(result, ">", "&gt;");
+   return result;
+}
+
+string StripTelegramHtml(string value)
+{
+   string result = value;
+   StringReplace(result, "<b>", "");
+   StringReplace(result, "</b>", "");
+   StringReplace(result, "<code>", "");
+   StringReplace(result, "</code>", "");
+   StringReplace(result, "<pre>", "");
+   StringReplace(result, "</pre>", "");
+   StringReplace(result, "&amp;", "&");
+   StringReplace(result, "&lt;", "<");
+   StringReplace(result, "&gt;", ">");
+   return result;
+}
+
+bool MagicNumberAllowed(long magic)
+{
+   if(!InpUseMagicNumberFilter)
+      return true;
+
+   return magic == InpMagicNumberFilter;
+}
+
+void DeleteReportButtons()
+{
+   ObjectDelete(0, SEND_NOW_BUTTON_NAME);
+   ObjectDelete(0, SEND_TODAY_BUTTON_NAME);
+   ObjectDelete(0, SEND_WEEKLY_BUTTON_NAME);
+   ObjectDelete(0, SEND_MONTHLY_BUTTON_NAME);
+   ObjectDelete(0, SEND_OVERALL_BUTTON_NAME);
+}
+
+void CreateReportButtons()
+{
+   DeleteReportButtons();
+   if(!InpShowSendNowButton)
+   {
+      Log("Report buttons disabled by input.");
+      return;
+   }
+
+   CreateReportButton(SEND_NOW_BUTTON_NAME, "Send Hourly Now", 28, clrSeaGreen, clrDarkGreen);
+   CreateReportButton(SEND_TODAY_BUTTON_NAME, "Send Today", 58, clrDarkOliveGreen, clrDarkGreen);
+   CreateReportButton(SEND_WEEKLY_BUTTON_NAME, "Send Weekly", 88, clrSteelBlue, clrMidnightBlue);
+   CreateReportButton(SEND_MONTHLY_BUTTON_NAME, "Send Monthly", 118, clrDarkSlateGray, clrBlack);
+   CreateReportButton(SEND_OVERALL_BUTTON_NAME, "Send Overall", 148, clrSaddleBrown, clrMaroon);
+}
+
+void CreateReportButton(string name, string label, int y_distance, color background, color border)
+{
+   if(!ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0))
+   {
+      g_last_error = "Could not create report button: " + (string)GetLastError();
+      Log(g_last_error + " name=" + name);
+      return;
+   }
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 12);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y_distance);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, 150);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, 24);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, background);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, border);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetString(0, name, OBJPROP_TEXT, label);
+   Log("Created report button: " + label + " (" + name + ")");
+}
+
+void UpdateStatus()
+{
+   if(!InpShowChartStatus)
+      return;
+
+   string text = "Telegram Trade Reporter\n";
+   text += g_last_status + "\n";
+   text += "Magic filter: " + (InpUseMagicNumberFilter ? (string)InpMagicNumberFilter : "off") + "\n";
+   text += "Auto schedule: " + AutoScheduleText() + "\n";
+   text += "Next auto report: " + TimeToString(g_next_report_time, TIME_DATE | TIME_SECONDS) + "\n";
+   if(g_last_error != "")
+      text += "Error: " + g_last_error + "\n";
+
+   Comment(text);
+}
+
+void Log(string message)
+{
+   if(!InpPrintDebugLogs)
+      return;
+
+   Print("TelegramTradeReporter: " + message);
+}
