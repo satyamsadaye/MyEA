@@ -48,6 +48,14 @@ enum ENUM_TP_ADJUST_MODE
    TP_ADJUST_TARGET_RISK_MONEY = 1
 };
 
+enum ENUM_SENDER_EXIT_REASON
+{
+   SENDER_EXIT_REASON_UNKNOWN = 0,
+   SENDER_EXIT_REASON_SOURCE_TP = 1,
+   SENDER_EXIT_REASON_SOURCE_SL = 2,
+   SENDER_EXIT_REASON_RANDOM_OR_MANUAL = 3
+};
+
 input group "Signal Settings"
 input string CopierKey = "client1";
 input ENUM_COPY_MODE CopyMode = COPY_EXACT_OPPOSITE;
@@ -73,6 +81,11 @@ input group "Sender Exit Settings"
 input ENUM_SENDER_EXIT_ACTION SenderExitAction = SENDER_EXIT_SMART_PROTECT_PROFIT_CLOSE_LOSS;
 input double SenderExitProfitLockPercent = 0.0;
 input bool UseClosestLegalStopWhenBreakevenTooClose = true;
+
+input group "Bad Behaviour Sender Handling"
+input bool BadBehaviourSenderExitDetection = false;
+input double BadBehaviourTpExitProgressPercent = 50.0;
+input double BadBehaviourSlExitProgressPercent = 40.0;
 
 input group "Lot Sizing"
 input double LotMultiplier = 1.0;
@@ -117,6 +130,10 @@ struct TradeStats
 
 CTrade trade;
 SourcePosition sources[];
+SourcePosition last_seen_sources[];
+SourcePosition remembered_source_stops[];
+ulong logged_missing_sltp_rr_adjust_sources[];
+ulong logged_incomplete_sltp_rr_adjust_sources[];
 long source_login = 0;
 datetime source_time = 0;
 datetime last_successful_read = 0;
@@ -162,6 +179,7 @@ void SyncPositions()
       return;
    }
 
+   RememberOriginalSourceStops();
    RememberActiveCopiedSourceLifecycles();
    CloseOrphanCopiedPositions();
 
@@ -171,6 +189,7 @@ void SyncPositions()
 
    UpdateDashboard();
    UpdateStatsDashboard();
+   RememberLastSeenSources();
 }
 
 bool ReadSources()
@@ -394,6 +413,9 @@ void HandleCopiedPositionAfterSenderExit(const ulong ticket, const ulong source_
       return;
    }
 
+   if(BadBehaviourSenderExitDetection && HandleCopiedPositionByDetectedSenderExit(ticket, source_ticket))
+      return;
+
    if(SenderExitAction == SENDER_EXIT_CLOSE_ALWAYS)
    {
       last_action = "Closing copied trade because source #" + (string)source_ticket + " exited";
@@ -425,6 +447,51 @@ void HandleCopiedPositionAfterSenderExit(const ulong ticket, const ulong source_
 
    last_action = "Closing copied trade because source #" + (string)source_ticket + " exited while copied trade is not profitable";
    ClosePosition(ticket);
+}
+
+bool HandleCopiedPositionByDetectedSenderExit(const ulong ticket, const ulong source_ticket)
+{
+   SourcePosition last_src;
+   if(!FindLastSeenSource(source_ticket, last_src))
+      return false;
+
+   ENUM_SENDER_EXIT_REASON reason = DetectSourceExitReason(last_src);
+   if(reason == SENDER_EXIT_REASON_UNKNOWN)
+      return false;
+
+   if(reason == SENDER_EXIT_REASON_SOURCE_TP)
+   {
+      last_action = "Closing copied trade because sender source #" + (string)source_ticket +
+                    " appears to have exited at TP";
+      Print(last_action);
+      ClosePosition(ticket);
+      return true;
+   }
+
+   if(reason == SENDER_EXIT_REASON_SOURCE_SL)
+   {
+      last_action = "Protecting copied trade because sender source #" + (string)source_ticket +
+                    " appears to have exited at SL";
+      Print(last_action);
+      MarkSourceExitProtected(source_ticket);
+      if(!LockProfitAfterSenderExit(ticket))
+      {
+         last_action = "Sender source #" + (string)source_ticket +
+                       " appears to have hit SL, but breakeven/profit lock could not be placed yet";
+      }
+      return true;
+   }
+
+   if(reason == SENDER_EXIT_REASON_RANDOM_OR_MANUAL)
+   {
+      last_action = "Closing copied trade because sender source #" + (string)source_ticket +
+                    " exited away from TP/SL, likely random/manual exit";
+      Print(last_action);
+      ClosePosition(ticket);
+      return true;
+   }
+
+   return false;
 }
 
 bool CopiedPositionIsProfitable(const ulong ticket)
@@ -460,6 +527,211 @@ bool SourceExists(const ulong source_ticket)
          return true;
    }
    return false;
+}
+
+void RememberLastSeenSources()
+{
+   int total = ArraySize(sources);
+   ArrayResize(last_seen_sources, total);
+
+   for(int i = 0; i < total; i++)
+      last_seen_sources[i] = sources[i];
+}
+
+void RememberOriginalSourceStops()
+{
+   int total = ArraySize(sources);
+   for(int i = 0; i < total; i++)
+   {
+      int index = FindRememberedSourceStopIndex(sources[i].ticket);
+      if(index < 0)
+      {
+         int size = ArraySize(remembered_source_stops);
+         ArrayResize(remembered_source_stops, size + 1);
+         remembered_source_stops[size] = sources[i];
+         continue;
+      }
+
+      if(remembered_source_stops[index].price_open <= 0.0 && sources[i].price_open > 0.0)
+         remembered_source_stops[index].price_open = sources[i].price_open;
+      if(remembered_source_stops[index].sl <= 0.0 && sources[i].sl > 0.0)
+         remembered_source_stops[index].sl = sources[i].sl;
+      if(remembered_source_stops[index].tp <= 0.0 && sources[i].tp > 0.0)
+         remembered_source_stops[index].tp = sources[i].tp;
+   }
+}
+
+int FindRememberedSourceStopIndex(const ulong source_ticket)
+{
+   int total = ArraySize(remembered_source_stops);
+   for(int i = 0; i < total; i++)
+   {
+      if(remembered_source_stops[i].ticket == source_ticket)
+         return i;
+   }
+
+   return -1;
+}
+
+bool ApplyRememberedSourceStops(SourcePosition &src)
+{
+   int index = FindRememberedSourceStopIndex(src.ticket);
+   if(index < 0)
+      return false;
+
+   bool changed = false;
+   if(src.price_open <= 0.0 && remembered_source_stops[index].price_open > 0.0)
+   {
+      src.price_open = remembered_source_stops[index].price_open;
+      changed = true;
+   }
+   if(src.sl <= 0.0 && remembered_source_stops[index].sl > 0.0)
+   {
+      src.sl = remembered_source_stops[index].sl;
+      changed = true;
+   }
+   if(src.tp <= 0.0 && remembered_source_stops[index].tp > 0.0)
+   {
+      src.tp = remembered_source_stops[index].tp;
+      changed = true;
+   }
+
+   return changed;
+}
+
+bool MarkSourceLoggedOnce(ulong &logged_sources[], const ulong source_ticket)
+{
+   if(source_ticket == 0)
+      return false;
+
+   int total = ArraySize(logged_sources);
+   for(int i = 0; i < total; i++)
+   {
+      if(logged_sources[i] == source_ticket)
+         return false;
+   }
+
+   ArrayResize(logged_sources, total + 1);
+   logged_sources[total] = source_ticket;
+   return true;
+}
+
+bool FindLastSeenSource(const ulong source_ticket, SourcePosition &src)
+{
+   int total = ArraySize(last_seen_sources);
+   for(int i = 0; i < total; i++)
+   {
+      if(last_seen_sources[i].ticket == source_ticket)
+      {
+         src = last_seen_sources[i];
+         return true;
+      }
+   }
+
+   return false;
+}
+
+ENUM_SENDER_EXIT_REASON DetectSourceExitReason(const SourcePosition &src)
+{
+   double current_price = SourceExitReferencePrice(src);
+   if(current_price <= 0.0)
+   {
+      Print("Copier sender-exit detection | Source #" + (string)src.ticket +
+            " disappeared, but current source price is unavailable");
+      return SENDER_EXIT_REASON_UNKNOWN;
+   }
+
+   SourcePosition reference_src = src;
+   bool used_remembered_stops = ApplyRememberedSourceStops(reference_src);
+   double tp_progress = SourceTpProgressPercent(reference_src, current_price);
+   double sl_progress = SourceSlProgressPercent(reference_src, current_price);
+   double tp_threshold = MathMax(0.0, MathMin(100.0, BadBehaviourTpExitProgressPercent));
+   double sl_threshold = MathMax(0.0, MathMin(100.0, BadBehaviourSlExitProgressPercent));
+   string remembered_text = (used_remembered_stops ? "yes" : "no");
+
+   PrintFormat("Copier sender-exit detection | Source #%I64u disappeared | LastType=%s | CurrentPrice=%.5f | Entry=%.5f | LastSL=%.5f | LastTP=%.5f | RememberedStops=%s | SLProgress=%.1f%%/%.1f%% | TPProgress=%.1f%%/%.1f%%",
+               reference_src.ticket,
+               PositionTypeName(reference_src.type),
+               current_price,
+               reference_src.price_open,
+               reference_src.sl,
+               reference_src.tp,
+               remembered_text,
+               sl_progress,
+               sl_threshold,
+               tp_progress,
+               tp_threshold);
+
+   if(tp_progress >= tp_threshold && tp_threshold > 0.0)
+      return SENDER_EXIT_REASON_SOURCE_TP;
+
+   if(sl_progress >= sl_threshold && sl_threshold > 0.0)
+      return SENDER_EXIT_REASON_SOURCE_SL;
+
+   return SENDER_EXIT_REASON_RANDOM_OR_MANUAL;
+}
+
+double SourceTpProgressPercent(const SourcePosition &src, const double current_price)
+{
+   if(src.price_open <= 0.0 || src.tp <= 0.0 || current_price <= 0.0)
+      return 0.0;
+
+   double full_distance = MathAbs(src.tp - src.price_open);
+   if(full_distance <= 0.0)
+      return 0.0;
+
+   double moved = 0.0;
+   if(src.type == POSITION_TYPE_BUY)
+      moved = current_price - src.price_open;
+   else
+      moved = src.price_open - current_price;
+
+   return MathMax(0.0, MathMin(100.0, (moved / full_distance) * 100.0));
+}
+
+double SourceSlProgressPercent(const SourcePosition &src, const double current_price)
+{
+   if(src.price_open <= 0.0 || src.sl <= 0.0 || current_price <= 0.0)
+      return 0.0;
+
+   double full_distance = MathAbs(src.price_open - src.sl);
+   if(full_distance <= 0.0)
+      return 0.0;
+
+   double moved = 0.0;
+   if(src.type == POSITION_TYPE_BUY)
+      moved = src.price_open - current_price;
+   else
+      moved = current_price - src.price_open;
+
+   return MathMax(0.0, MathMin(100.0, (moved / full_distance) * 100.0));
+}
+
+double SourceExitReferencePrice(const SourcePosition &src)
+{
+   string symbol = SourceExitReferenceSymbol(src);
+   if(symbol == "")
+      return 0.0;
+
+   if(!SymbolSelect(symbol, true))
+      return 0.0;
+
+   if(src.type == POSITION_TYPE_BUY)
+      return SymbolInfoDouble(symbol, SYMBOL_BID);
+
+   return SymbolInfoDouble(symbol, SYMBOL_ASK);
+}
+
+string SourceExitReferenceSymbol(const SourcePosition &src)
+{
+   if(src.symbol != "" && SymbolInfoDouble(src.symbol, SYMBOL_POINT) > 0.0)
+      return src.symbol;
+
+   string target_symbol = TargetSymbol(src.symbol);
+   if(target_symbol != "")
+      return target_symbol;
+
+   return src.symbol;
 }
 
 void RememberActiveCopiedSourceLifecycles()
@@ -759,9 +1031,26 @@ bool AdjustTakeProfitToCopiedRRMoney(const SourcePosition &src,
 
    if(TakeProfitAdjustMode == TP_ADJUST_PRESERVE_COPIED_RR)
    {
+      if(src.sl <= 0.0 || src.tp <= 0.0)
+      {
+         last_action = "Skipped copied RR TP adjust for " + comment +
+                       " because sender SL/TP is missing";
+         if(MarkSourceLoggedOnce(logged_missing_sltp_rr_adjust_sources, src.ticket))
+            Print(last_action);
+         return false;
+      }
+
       double copied_sl = 0.0;
       double copied_tp = 0.0;
       StopsForCopiedTrade(src, type, copied_sl, copied_tp);
+      if(copied_sl <= 0.0 || copied_tp <= 0.0)
+      {
+         last_action = "Skipped copied RR TP adjust for " + comment +
+                       " because copied SL/TP mapping is incomplete";
+         if(MarkSourceLoggedOnce(logged_incomplete_sltp_rr_adjust_sources, src.ticket))
+            Print(last_action);
+         return false;
+      }
 
       double intended_risk_distance = MathAbs(copied_sl - src.price_open);
       double intended_reward_distance = MathAbs(copied_tp - src.price_open);
@@ -1823,6 +2112,7 @@ void UpdateDashboard()
        "Mode: " + mode + "\n" +
        "Entry: " + EntryModeStatusLine() + "\n" +
        "Sender exit: " + SenderExitActionStatusLine() + "\n" +
+       "Bad behaviour exits: " + BadBehaviourSenderHandlingStatusLine() + "\n" +
        LotSizingStatusLine() +
        "Copy SL/TP: " + (CopyStopLossTakeProfit ? "yes" : "no") + "\n" +
        "TP RR adjust: " + (AdjustTakeProfitToCopiedRR ? "yes" : "no") + "\n" +
@@ -1867,6 +2157,15 @@ string SenderExitActionStatusLine()
       return ProfitLockStatusLine();
 
    return "smart: protect profit, close loss";
+}
+
+string BadBehaviourSenderHandlingStatusLine()
+{
+   if(!BadBehaviourSenderExitDetection)
+      return "off";
+
+   return "on, TP progress " + DoubleToString(MathMax(0.0, MathMin(100.0, BadBehaviourTpExitProgressPercent)), 1) +
+          "% / SL progress " + DoubleToString(MathMax(0.0, MathMin(100.0, BadBehaviourSlExitProgressPercent)), 1) + "%";
 }
 
 string OneTradePerSymbolStatusLine()
