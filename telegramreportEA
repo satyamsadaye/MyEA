@@ -476,6 +476,9 @@ string BuildReportMessage(string report_label, datetime from_time, datetime to_t
    int rr_count = 0;
    int wins = 0;
    int losses = 0;
+   int breakevens = 0;
+   int best_trade_index = -1;
+   int worst_trade_index = -1;
 
    string msg = "<b>MT5 " + EscapeHtml(CapitalizeFirst(report_label)) + " Trade Report</b>\n";
    msg += "Account: <b>" + EscapeHtml(AccountInfoString(ACCOUNT_NAME)) + "</b>\n";
@@ -494,40 +497,28 @@ string BuildReportMessage(string report_label, datetime from_time, datetime to_t
    {
       msg += "<b>Closed Trades</b>\n";
       msg += "<pre>";
-      msg += PadRight("Entry", 16) + " ";
-      msg += PadRight("Close", 16) + " ";
-      msg += PadLeft("Mins", 5) + " ";
-      msg += PadRight("Symbol", 8) + " ";
-      msg += PadRight("Side", 4) + " ";
-      msg += PadLeft("P&amp;L", 11) + " ";
-      msg += PadLeft("RR", 6) + " ";
-      msg += "Result\n";
-      msg += PadRight("----------------", 16) + " ";
-      msg += PadRight("----------------", 16) + " ";
-      msg += PadLeft("-----", 5) + " ";
-      msg += PadRight("--------", 8) + " ";
-      msg += PadRight("----", 4) + " ";
-      msg += PadLeft("-----------", 11) + " ";
-      msg += PadLeft("------", 6) + " ";
-      msg += "------\n";
+      msg += "  Time        Symbol   Side      P/L\n";
       for(int i = 0; i < count; i++)
       {
-         string side = TradeSideText(trades[i].type);
-         string result = (trades[i].net >= 0.0 ? "WIN" : "LOSS");
-         string rr_text = (trades[i].risk_money > 0.0 ? DoubleToString(trades[i].rr, 2) + "R" : "n/a");
-         long duration_minutes = TradeDurationMinutes(trades[i]);
+         string side = ShortTradeSideText(trades[i].type);
 
-         msg += PadRight(TimeText(trades[i].open_time), 16) + " ";
-         msg += PadRight(TimeToString(trades[i].close_time, TIME_DATE | TIME_MINUTES), 16) + " ";
-         msg += PadLeft((string)duration_minutes, 5) + " ";
-         msg += PadRight(trades[i].symbol, 8) + " ";
-         msg += PadRight(side, 4) + " ";
-         msg += PadLeft(MoneyTextNoCurrency(trades[i].net), 11) + " ";
-         msg += PadLeft(rr_text, 6) + " ";
-         msg += result + "\n";
+         msg += TradeStatusDot(trades[i].net) + " " +
+                PadRightKeep(ShortDateTimeText(trades[i].close_time), 11) + " " +
+                PadRightKeep(EscapeHtml(trades[i].symbol), 8) + " " +
+                PadRightKeep(side, 4) + " " +
+                PadLeftKeep(EscapeHtml(MoneyTextNoCurrency(trades[i].net)), 8) + "\n";
+
+         if(best_trade_index < 0 || trades[i].net > trades[best_trade_index].net)
+            best_trade_index = i;
+         if(worst_trade_index < 0 || trades[i].net < trades[worst_trade_index].net)
+            worst_trade_index = i;
 
          total_net += trades[i].net;
-         if(trades[i].net >= 0.0)
+         if(IsBreakEvenTrade(trades[i].net))
+         {
+            breakevens++;
+         }
+         else if(trades[i].net > 0.0)
          {
             wins++;
             gross_profit += trades[i].net;
@@ -552,15 +543,27 @@ string BuildReportMessage(string report_label, datetime from_time, datetime to_t
    double average_rr = (rr_count > 0 ? rr_sum / rr_count : 0.0);
    double net_loss_ratio = (gross_loss > 0.0 ? total_net / gross_loss : (total_net > 0.0 ? 999.0 : 0.0));
    double average_pnl = (count > 0 ? total_net / count : 0.0);
+   int decisive_trades = wins + losses;
+   double be_adjusted_win_rate = (decisive_trades > 0 ? 100.0 * wins / decisive_trades : 0.0);
+   double average_win = (wins > 0 ? gross_profit / wins : 0.0);
+   double average_loss = (losses > 0 ? gross_loss / losses : 0.0);
+   double expectancy = 0.0;
+   if(decisive_trades > 0)
+      expectancy = (gross_profit - gross_loss) / decisive_trades;
 
    msg += BuildBalanceSummaryText(from_time, to_time, trades, count, total_net);
 
    msg += "\n\n<b>Performance Summary</b>\n";
    msg += "Outcome: <b>" + ResultStatusText(total_net) + "</b>\n";
    msg += "Net P&amp;L: <b>" + MoneyText(total_net) + "</b>\n";
-   msg += "Trades: <b>" + (string)count + "</b> closed | <b>" + (string)wins + "</b> wins | <b>" + (string)losses + "</b> losses\n";
+   msg += "Trades: <b>" + (string)count + "</b> closed | <b>" + (string)wins + "</b> wins | <b>" + (string)losses + "</b> losses | <b>" + (string)breakevens + "</b> BE\n";
    msg += "Win rate: <b>" + DoubleToString(win_rate, 1) + "%</b>\n";
+   msg += "Win rate excl BE: <b>" + DoubleToString(be_adjusted_win_rate, 1) + "%</b>\n";
    msg += "Average P&amp;L/trade: <b>" + MoneyText(average_pnl) + "</b>\n";
+   msg += "Avg win / loss: <b>" + MoneyText(average_win) + "</b> / <b>" + MoneyText(-average_loss) + "</b>\n";
+   msg += "Expectancy excl BE: <b>" + MoneyText(expectancy) + "/trade</b>\n";
+   msg += BuildBestWorstTradeText(trades, best_trade_index, worst_trade_index);
+   msg += BuildStreakAnalysisText(trades, count);
 
    msg += "\n<b>Risk &amp; Quality</b>\n";
    msg += "Average RR: <b>" + (rr_count > 0 ? DoubleToString(average_rr, 2) + "R" : "n/a") + "</b>\n";
@@ -611,6 +614,128 @@ string BuildBalanceSummaryText(datetime from_time, datetime to_time, const Close
    text += "Floating P&amp;L: <b>" + MoneyText(floating_profit) + "</b>\n";
    text += "Closed P&amp;L in report: <b>" + MoneyText(report_net) + "</b>\n";
    return text;
+}
+
+string BuildBestWorstTradeText(const ClosedTrade &trades[], int best_trade_index, int worst_trade_index)
+{
+   string text = "";
+
+   if(best_trade_index >= 0)
+      text += "Best trade: <b>" + MoneyText(trades[best_trade_index].net) + "</b> " +
+              EscapeHtml(trades[best_trade_index].symbol) + " " +
+              EscapeHtml(ShortTradeSideText(trades[best_trade_index].type)) + " " +
+              EscapeHtml(ShortDateTimeText(trades[best_trade_index].close_time)) + "\n";
+
+   if(worst_trade_index >= 0)
+      text += "Worst trade: <b>" + MoneyText(trades[worst_trade_index].net) + "</b> " +
+              EscapeHtml(trades[worst_trade_index].symbol) + " " +
+              EscapeHtml(ShortTradeSideText(trades[worst_trade_index].type)) + " " +
+              EscapeHtml(ShortDateTimeText(trades[worst_trade_index].close_time)) + "\n";
+
+   return text;
+}
+
+string BuildStreakAnalysisText(const ClosedTrade &trades[], int count)
+{
+   int current_type = 0;
+   int current_len = 0;
+   int max_win_streak = 0;
+   int max_loss_streak = 0;
+   int win_streak_count = 0;
+   int loss_streak_count = 0;
+   int win_streak_sum = 0;
+   int loss_streak_sum = 0;
+
+   for(int i = count - 1; i >= 0; i--)
+   {
+      int outcome = TradeOutcomeCode(trades[i].net);
+      if(outcome == 0)
+      {
+         FinishStreak(current_type, current_len,
+                      max_win_streak, max_loss_streak,
+                      win_streak_count, loss_streak_count,
+                      win_streak_sum, loss_streak_sum);
+         current_type = 0;
+         current_len = 0;
+         continue;
+      }
+
+      if(current_type == outcome)
+      {
+         current_len++;
+      }
+      else
+      {
+         FinishStreak(current_type, current_len,
+                      max_win_streak, max_loss_streak,
+                      win_streak_count, loss_streak_count,
+                      win_streak_sum, loss_streak_sum);
+         current_type = outcome;
+         current_len = 1;
+      }
+   }
+
+   int active_type = current_type;
+   int active_len = current_len;
+   FinishStreak(current_type, current_len,
+                max_win_streak, max_loss_streak,
+                win_streak_count, loss_streak_count,
+                win_streak_sum, loss_streak_sum);
+
+   double average_win_streak = (win_streak_count > 0 ? (double)win_streak_sum / win_streak_count : 0.0);
+   double average_loss_streak = (loss_streak_count > 0 ? (double)loss_streak_sum / loss_streak_count : 0.0);
+
+   string text = "\n<b>Streak Analysis</b>\n";
+   text += "Current streak: <b>" + StreakText(active_type, active_len) + "</b>\n";
+   text += "Win streaks: <b>" + (string)win_streak_count + "</b> | max <b>" + (string)max_win_streak + "</b> | avg <b>" + DoubleToString(average_win_streak, 1) + "</b>\n";
+   text += "Loss streaks: <b>" + (string)loss_streak_count + "</b> | max <b>" + (string)max_loss_streak + "</b> | avg <b>" + DoubleToString(average_loss_streak, 1) + "</b>\n";
+   return text;
+}
+
+void FinishStreak(int streak_type,
+                  int streak_len,
+                  int &max_win_streak,
+                  int &max_loss_streak,
+                  int &win_streak_count,
+                  int &loss_streak_count,
+                  int &win_streak_sum,
+                  int &loss_streak_sum)
+{
+   if(streak_len <= 0)
+      return;
+
+   if(streak_type > 0)
+   {
+      win_streak_count++;
+      win_streak_sum += streak_len;
+      if(streak_len > max_win_streak)
+         max_win_streak = streak_len;
+   }
+   else if(streak_type < 0)
+   {
+      loss_streak_count++;
+      loss_streak_sum += streak_len;
+      if(streak_len > max_loss_streak)
+         max_loss_streak = streak_len;
+   }
+}
+
+int TradeOutcomeCode(double value)
+{
+   if(IsBreakEvenTrade(value))
+      return 0;
+   if(value > 0.0)
+      return 1;
+   return -1;
+}
+
+string StreakText(int streak_type, int streak_len)
+{
+   if(streak_len <= 0 || streak_type == 0)
+      return "BE/none";
+   if(streak_type > 0)
+      return (string)streak_len + " wins";
+   return (string)streak_len + " losses";
 }
 
 datetime FirstTradeOpenTime(const ClosedTrade &trades[])
@@ -757,6 +882,13 @@ bool SendTelegram(string text)
    while(offset < length)
    {
       int take = (int)MathMin((double)max_chunk, (double)(length - offset));
+      if(offset + take < length)
+      {
+         int newline_pos = LastNewlineBefore(plain_text, offset + take, offset);
+         if(newline_pos > offset)
+            take = newline_pos - offset + 1;
+      }
+
       string chunk = "<pre>" + EscapeHtml(StringSubstr(plain_text, offset, take)) + "</pre>";
       Log("Sending Telegram chunk " + (string)chunk_number + ". chars=" + (string)StringLen(chunk));
       if(!SendTelegramChunk(chunk, bot_token, chat_id))
@@ -768,6 +900,24 @@ bool SendTelegram(string text)
    }
 
    return true;
+}
+
+int LastNewlineBefore(string value, int before_pos, int min_pos)
+{
+   int result = -1;
+   int search_from = min_pos;
+
+   while(true)
+   {
+      int pos = StringFind(value, "\n", search_from);
+      if(pos < 0 || pos >= before_pos)
+         break;
+
+      result = pos;
+      search_from = pos + 1;
+   }
+
+   return result;
 }
 
 bool SendTelegramChunk(string text, string bot_token, string chat_id)
@@ -953,6 +1103,15 @@ string TradeSideText(long deal_type)
    return "UNKNOWN";
 }
 
+string ShortTradeSideText(long deal_type)
+{
+   if(deal_type == DEAL_TYPE_BUY)
+      return "Buy";
+   if(deal_type == DEAL_TYPE_SELL)
+      return "Sell";
+   return "?";
+}
+
 string PositionSideText(long position_type)
 {
    if(position_type == POSITION_TYPE_BUY)
@@ -980,6 +1139,20 @@ string MoneyTextNoCurrency(double value)
    return sign + DoubleToString(value, 2);
 }
 
+string TradeStatusDot(double value)
+{
+   if(IsBreakEvenTrade(value))
+      return "⚪";
+   if(value > 0.0)
+      return "🟢";
+   return "🔴";
+}
+
+bool IsBreakEvenTrade(double value)
+{
+   return MathAbs(value) <= 1.0;
+}
+
 string ResultStatusText(double value)
 {
    if(value > 0.0)
@@ -1002,6 +1175,19 @@ string CapitalizeFirst(string value)
    return ShortToString(first) + StringSubstr(value, 1);
 }
 
+string ShortDateTimeText(datetime value)
+{
+   if(value <= 0)
+      return "n/a";
+
+   MqlDateTime parts;
+   TimeToStruct(value, parts);
+   return TwoDigits(parts.mon) + "/" +
+          TwoDigits(parts.day) + " " +
+          TwoDigits(parts.hour) + ":" +
+          TwoDigits(parts.min);
+}
+
 string PadRight(string value, int width)
 {
    string result = value;
@@ -1022,6 +1208,24 @@ string PadLeft(string value, int width)
 
    if(StringLen(result) > width)
       result = StringSubstr(result, 0, width);
+
+   return result;
+}
+
+string PadRightKeep(string value, int width)
+{
+   string result = value;
+   while(StringLen(result) < width)
+      result += " ";
+
+   return result;
+}
+
+string PadLeftKeep(string value, int width)
+{
+   string result = value;
+   while(StringLen(result) < width)
+      result = " " + result;
 
    return result;
 }
