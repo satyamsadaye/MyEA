@@ -47,6 +47,14 @@ input bool InpPrintDebugLogs = true;           // Print report debug logs in Exp
 #define SEND_WEEKLY_BUTTON_NAME "TTR_SEND_WEEKLY_REPORT"
 #define SEND_MONTHLY_BUTTON_NAME "TTR_SEND_MONTHLY_REPORT"
 #define SEND_OVERALL_BUTTON_NAME "TTR_SEND_OVERALL_REPORT"
+#define SEND_CUSTOM_BUTTON_NAME "TTR_SEND_CUSTOM_REPORT"
+#define SET_TO_LATEST_BUTTON_NAME "TTR_SET_TO_LATEST_TRADE"
+#define CUSTOM_FROM_EDIT_NAME "TTR_CUSTOM_FROM_EDIT"
+#define CUSTOM_TO_EDIT_NAME "TTR_CUSTOM_TO_EDIT"
+#define CUSTOM_MAGIC_EDIT_NAME "TTR_CUSTOM_MAGIC_EDIT"
+#define CUSTOM_FROM_LABEL_NAME "TTR_CUSTOM_FROM_LABEL"
+#define CUSTOM_TO_LABEL_NAME "TTR_CUSTOM_TO_LABEL"
+#define CUSTOM_MAGIC_LABEL_NAME "TTR_CUSTOM_MAGIC_LABEL"
 
 struct ClosedTrade
 {
@@ -72,12 +80,15 @@ datetime g_next_report_time = 0;
 string g_last_status = "Waiting";
 string g_last_error = "";
 string g_detected_chat_id = "";
+bool g_effective_magic_filter_enabled = false;
+long g_effective_magic_filter = 0;
 
 int OnInit()
 {
    EventSetTimer(1);
    g_next_report_time = ComputeNextAutoReportTime(TimeCurrent());
    CreateReportButtons();
+   RefreshEffectiveMagicFilterFromChart();
    Log("EA initialized. Buttons=" + (InpShowSendNowButton ? "on" : "off") +
        ", next auto report=" + TimeToString(g_next_report_time, TIME_DATE | TIME_SECONDS) +
        ", schedule=" + AutoScheduleText());
@@ -137,6 +148,18 @@ void OnChartEvent(const int id,
       ObjectSetInteger(0, SEND_OVERALL_BUTTON_NAME, OBJPROP_STATE, false);
       Log("Overall report button accepted.");
       SendReport(REPORT_OVERALL);
+   }
+   else if(sparam == SEND_CUSTOM_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_CUSTOM_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Custom report button accepted.");
+      SendCustomReport();
+   }
+   else if(sparam == SET_TO_LATEST_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SET_TO_LATEST_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Latest trade button accepted.");
+      SetCustomToLatestTrade();
    }
    else
    {
@@ -225,6 +248,52 @@ void SendReport(ENUM_REPORT_PERIOD period)
    datetime to_time = TimeCurrent();
    datetime from_time = ReportFromTime(period, to_time);
    string label = ReportLabel(period);
+   RefreshEffectiveMagicFilterFromChart();
+   SendReportWindow(label, from_time, to_time);
+}
+
+void SendCustomReport()
+{
+   RefreshEffectiveMagicFilterFromChart();
+
+   datetime from_time = 0;
+   datetime to_time = 0;
+   string from_text = CustomEditText(CUSTOM_FROM_EDIT_NAME);
+   string to_text = CustomEditText(CUSTOM_TO_EDIT_NAME);
+
+   if(!ParseDashboardDateTime(from_text, from_time))
+   {
+      g_last_error = "Custom From time is invalid. Use YYYY.MM.DD HH:MI or YYYY.MM.DD HH:MI:SS.";
+      g_last_status = "Custom report not sent";
+      Log(g_last_error + " value=" + from_text);
+      UpdateStatus();
+      return;
+   }
+
+   if(!ParseDashboardDateTime(to_text, to_time))
+   {
+      g_last_error = "Custom To time is invalid. Use YYYY.MM.DD HH:MI, YYYY.MM.DD HH:MI:SS, now, or latest.";
+      g_last_status = "Custom report not sent";
+      Log(g_last_error + " value=" + to_text);
+      UpdateStatus();
+      return;
+   }
+
+   if(from_time <= 0 || to_time <= 0 || from_time >= to_time)
+   {
+      g_last_error = "Custom report needs From before To.";
+      g_last_status = "Custom report not sent";
+      Log(g_last_error + " from=" + TimeToString(from_time, TIME_DATE | TIME_SECONDS) +
+          " to=" + TimeToString(to_time, TIME_DATE | TIME_SECONDS));
+      UpdateStatus();
+      return;
+   }
+
+   SendReportWindow("custom", from_time, to_time);
+}
+
+void SendReportWindow(string label, datetime from_time, datetime to_time)
+{
    g_last_status = "Sending " + label + " report...";
    g_last_error = "";
    UpdateStatus();
@@ -302,6 +371,137 @@ string WindowText(datetime from_time, datetime to_time)
       return "full available history - " + TimeToString(to_time, TIME_DATE | TIME_MINUTES);
 
    return TimeToString(from_time, TIME_DATE | TIME_MINUTES) + " - " + TimeToString(to_time, TIME_DATE | TIME_MINUTES);
+}
+
+bool ParseDashboardDateTime(string value, datetime &parsed_time)
+{
+   string clean = CleanInput(value);
+   string lower = ToLowerText(clean);
+
+   if(lower == "now")
+   {
+      parsed_time = TimeCurrent();
+      return true;
+   }
+
+   if(lower == "latest" || lower == "last")
+      return LatestClosedTradeTime(parsed_time);
+
+   parsed_time = StringToTime(clean);
+   return parsed_time > 0;
+}
+
+string ToLowerText(string value)
+{
+   string result = value;
+   StringToLower(result);
+   return result;
+}
+
+void SetCustomToLatestTrade()
+{
+   RefreshEffectiveMagicFilterFromChart();
+
+   datetime latest_time = 0;
+   if(!LatestClosedTradeTime(latest_time))
+   {
+      g_last_error = "No latest closed trade found for current symbol/magic filters.";
+      g_last_status = "Latest trade not selected";
+      Log(g_last_error);
+      UpdateStatus();
+      return;
+   }
+
+   ObjectSetString(0, CUSTOM_TO_EDIT_NAME, OBJPROP_TEXT, TimeToString(latest_time, TIME_DATE | TIME_SECONDS));
+   g_last_error = "";
+   g_last_status = "Custom To set to latest closed trade at " + TimeToString(latest_time, TIME_DATE | TIME_SECONDS);
+   Log(g_last_status);
+   UpdateStatus();
+}
+
+bool LatestClosedTradeTime(datetime &latest_time)
+{
+   latest_time = 0;
+   datetime now = TimeCurrent();
+   if(!HistorySelect(0, now))
+   {
+      g_last_error = "HistorySelect failed while finding latest trade: " + (string)GetLastError();
+      Log(g_last_error);
+      return false;
+   }
+
+   datetime from_limit = 0;
+   ParseOptionalFromLimit(from_limit);
+
+   int deals_total = HistoryDealsTotal();
+   for(int i = 0; i < deals_total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      datetime close_time = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      if(close_time < from_limit)
+         continue;
+
+      string symbol = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+      if(InpOnlyCurrentSymbol && symbol != _Symbol)
+         continue;
+
+      long magic = FindPositionEntryMagic((ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID));
+      if(!MagicNumberAllowed(magic))
+         continue;
+
+      if(close_time > latest_time)
+         latest_time = close_time;
+   }
+
+   return latest_time > 0;
+}
+
+void ParseOptionalFromLimit(datetime &from_limit)
+{
+   from_limit = 0;
+   string from_text = CustomEditText(CUSTOM_FROM_EDIT_NAME);
+   if(from_text == "")
+      return;
+
+   string lower = ToLowerText(from_text);
+   if(lower == "latest" || lower == "last")
+      return;
+
+   datetime parsed = 0;
+   if(ParseDashboardDateTime(from_text, parsed))
+      from_limit = parsed;
+}
+
+long FindPositionEntryMagic(const ulong position_id)
+{
+   if(position_id == 0)
+      return 0;
+
+   int deals_total = HistoryDealsTotal();
+   for(int i = 0; i < deals_total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      if((ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID) != position_id)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_IN && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      return HistoryDealGetInteger(deal_ticket, DEAL_MAGIC);
+   }
+
+   return 0;
 }
 
 void SortTradesByCloseTimeDesc(ClosedTrade &trades[])
@@ -486,6 +686,9 @@ string BuildReportMessage(string report_label, datetime from_time, datetime to_t
    msg += "Server: " + EscapeHtml(AccountInfoString(ACCOUNT_SERVER)) + "\n";
    msg += "Currency: " + EscapeHtml(AccountInfoString(ACCOUNT_CURRENCY)) + "\n";
    msg += "Period: " + EscapeHtml(WindowText(from_time, to_time)) + "\n";
+   msg += "Magic filter: " + (g_effective_magic_filter_enabled ? "<code>" + (string)g_effective_magic_filter + "</code>" : "off") + "\n";
+   if(InpOnlyCurrentSymbol)
+      msg += "Symbol filter: <b>" + EscapeHtml(_Symbol) + "</b>\n";
    msg += "\n";
 
    if(count == 0)
@@ -1256,10 +1459,40 @@ string StripTelegramHtml(string value)
 
 bool MagicNumberAllowed(long magic)
 {
-   if(!InpUseMagicNumberFilter)
+   if(!g_effective_magic_filter_enabled)
       return true;
 
-   return magic == InpMagicNumberFilter;
+   return magic == g_effective_magic_filter;
+}
+
+void RefreshEffectiveMagicFilterFromChart()
+{
+   g_effective_magic_filter_enabled = InpUseMagicNumberFilter;
+   g_effective_magic_filter = InpMagicNumberFilter;
+
+   if(ObjectFind(0, CUSTOM_MAGIC_EDIT_NAME) < 0)
+      return;
+
+   string magic_text = CustomEditText(CUSTOM_MAGIC_EDIT_NAME);
+   string clean = CleanInput(magic_text);
+   string lower = ToLowerText(clean);
+
+   if(clean == "" || lower == "all" || lower == "off" || lower == "any")
+   {
+      g_effective_magic_filter_enabled = false;
+      return;
+   }
+
+   g_effective_magic_filter = (long)StringToInteger(clean);
+   g_effective_magic_filter_enabled = true;
+}
+
+string CustomEditText(const string object_name)
+{
+   if(ObjectFind(0, object_name) < 0)
+      return "";
+
+   return CleanInput(ObjectGetString(0, object_name, OBJPROP_TEXT));
 }
 
 void DeleteReportButtons()
@@ -1269,6 +1502,14 @@ void DeleteReportButtons()
    ObjectDelete(0, SEND_WEEKLY_BUTTON_NAME);
    ObjectDelete(0, SEND_MONTHLY_BUTTON_NAME);
    ObjectDelete(0, SEND_OVERALL_BUTTON_NAME);
+   ObjectDelete(0, SEND_CUSTOM_BUTTON_NAME);
+   ObjectDelete(0, SET_TO_LATEST_BUTTON_NAME);
+   ObjectDelete(0, CUSTOM_FROM_EDIT_NAME);
+   ObjectDelete(0, CUSTOM_TO_EDIT_NAME);
+   ObjectDelete(0, CUSTOM_MAGIC_EDIT_NAME);
+   ObjectDelete(0, CUSTOM_FROM_LABEL_NAME);
+   ObjectDelete(0, CUSTOM_TO_LABEL_NAME);
+   ObjectDelete(0, CUSTOM_MAGIC_LABEL_NAME);
 }
 
 void CreateReportButtons()
@@ -1285,6 +1526,14 @@ void CreateReportButtons()
    CreateReportButton(SEND_WEEKLY_BUTTON_NAME, "Send Weekly", 88, clrSteelBlue, clrMidnightBlue);
    CreateReportButton(SEND_MONTHLY_BUTTON_NAME, "Send Monthly", 118, clrDarkSlateGray, clrBlack);
    CreateReportButton(SEND_OVERALL_BUTTON_NAME, "Send Overall", 148, clrSaddleBrown, clrMaroon);
+   CreateReportLabel(CUSTOM_FROM_LABEL_NAME, "From", 184);
+   CreateReportEdit(CUSTOM_FROM_EDIT_NAME, TimeToString(TimeCurrent() - MathMax(1, InpLookbackHours) * 3600, TIME_DATE | TIME_SECONDS), 180);
+   CreateReportLabel(CUSTOM_TO_LABEL_NAME, "To", 212);
+   CreateReportEdit(CUSTOM_TO_EDIT_NAME, "now", 208);
+   CreateReportButton(SET_TO_LATEST_BUTTON_NAME, "Use Latest Trade", 236, clrDimGray, clrBlack);
+   CreateReportLabel(CUSTOM_MAGIC_LABEL_NAME, "Magic", 272);
+   CreateReportEdit(CUSTOM_MAGIC_EDIT_NAME, InpUseMagicNumberFilter ? (string)InpMagicNumberFilter : "all", 268);
+   CreateReportButton(SEND_CUSTOM_BUTTON_NAME, "Send Custom", 296, clrDarkCyan, clrTeal);
 }
 
 void CreateReportButton(string name, string label, int y_distance, color background, color border)
@@ -1311,14 +1560,60 @@ void CreateReportButton(string name, string label, int y_distance, color backgro
    Log("Created report button: " + label + " (" + name + ")");
 }
 
+void CreateReportLabel(string name, string label, int y_distance)
+{
+   if(!ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0))
+   {
+      g_last_error = "Could not create report label: " + (string)GetLastError();
+      Log(g_last_error + " name=" + name);
+      return;
+   }
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 12);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y_distance);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetString(0, name, OBJPROP_TEXT, label);
+}
+
+void CreateReportEdit(string name, string value, int y_distance)
+{
+   if(!ObjectCreate(0, name, OBJ_EDIT, 0, 0, 0))
+   {
+      g_last_error = "Could not create report edit field: " + (string)GetLastError();
+      Log(g_last_error + " name=" + name);
+      return;
+   }
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 54);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y_distance);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, 150);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, 22);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 8);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clrBlack);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, clrWhite);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, clrDimGray);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetString(0, name, OBJPROP_TEXT, value);
+}
+
 void UpdateStatus()
 {
    if(!InpShowChartStatus)
       return;
 
+   RefreshEffectiveMagicFilterFromChart();
+
    string text = "Telegram Trade Reporter\n";
    text += g_last_status + "\n";
-   text += "Magic filter: " + (InpUseMagicNumberFilter ? (string)InpMagicNumberFilter : "off") + "\n";
+   text += "Magic filter: " + (g_effective_magic_filter_enabled ? (string)g_effective_magic_filter : "off") + "\n";
+   text += "Custom From: " + CustomEditText(CUSTOM_FROM_EDIT_NAME) + "\n";
+   text += "Custom To: " + CustomEditText(CUSTOM_TO_EDIT_NAME) + "\n";
    text += "Auto schedule: " + AutoScheduleText() + "\n";
    text += "Next auto report: " + TimeToString(g_next_report_time, TIME_DATE | TIME_SECONDS) + "\n";
    if(g_last_error != "")
