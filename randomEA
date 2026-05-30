@@ -18,6 +18,12 @@ enum ENUM_RANDOM_LOT_MODE
    RANDOM_LOT_CURRENT_BALANCE_RISK = 2    // Risk percent of current balance
 };
 
+enum ENUM_RANDOM_DISTANCE_MODE
+{
+   RANDOM_DISTANCE_FIXED_POINTS = 0,       // Fixed points
+   RANDOM_DISTANCE_ATR_MULTIPLIER = 1      // ATR multiplier
+};
+
 enum ENUM_RANDOM_TRADE_PATTERN
 {
    RANDOM_PATTERN_RANDOM = 0,                  // 1. Random trades
@@ -63,8 +69,13 @@ input int InpSlippagePoints = 30;                      // Max slippage in points
 input int InpRsiPeriod = 14;                           // RSI period for RSI cross pattern
 
 input group "Stop Loss / Take Profit"
+input ENUM_RANDOM_DISTANCE_MODE InpStopLossMode = RANDOM_DISTANCE_FIXED_POINTS; // SL distance mode
+input ENUM_RANDOM_DISTANCE_MODE InpTakeProfitMode = RANDOM_DISTANCE_FIXED_POINTS; // TP distance mode
 input double InpStopLossPoints = 200.0;                // Fixed SL distance in points
 input double InpTakeProfitPoints = 300.0;              // Fixed TP distance in points
+input int InpAtrPeriod = 14;                           // ATR period for ATR distance mode
+input double InpStopLossAtrMultiplier = 1.0;           // SL ATR multiplier
+input double InpTakeProfitAtrMultiplier = 1.0;         // TP ATR multiplier
 
 input group "Lot Sizing"
 input ENUM_RANDOM_LOT_MODE InpLotMode = RANDOM_LOT_FIXED; // Lot sizing mode
@@ -446,7 +457,7 @@ double EntryPrice(const long position_type)
 
 double StopLossPrice(const long position_type, const double entry)
 {
-   double distance = MathMax(0.0, InpStopLossPoints) * _Point;
+   double distance = StopLossDistance();
    if(distance <= 0.0)
       return 0.0;
 
@@ -458,7 +469,7 @@ double StopLossPrice(const long position_type, const double entry)
 
 double TakeProfitPrice(const long position_type, const double entry)
 {
-   double distance = MathMax(0.0, InpTakeProfitPoints) * _Point;
+   double distance = TakeProfitDistance();
    if(distance <= 0.0)
       return 0.0;
 
@@ -466,6 +477,58 @@ double TakeProfitPrice(const long position_type, const double entry)
       return entry + distance;
 
    return entry - distance;
+}
+
+double StopLossDistance()
+{
+   return TradeDistance(InpStopLossMode, InpStopLossPoints, InpStopLossAtrMultiplier);
+}
+
+double TakeProfitDistance()
+{
+   return TradeDistance(InpTakeProfitMode, InpTakeProfitPoints, InpTakeProfitAtrMultiplier);
+}
+
+double TradeDistance(const ENUM_RANDOM_DISTANCE_MODE mode,
+                     const double fixed_points,
+                     const double atr_multiplier)
+{
+   if(mode == RANDOM_DISTANCE_FIXED_POINTS)
+      return MathMax(0.0, fixed_points) * _Point;
+
+   double atr = CurrentAtrValue();
+   if(atr <= 0.0)
+      return 0.0;
+
+   return atr * MathMax(0.0, atr_multiplier);
+}
+
+double CurrentAtrValue()
+{
+   int period = MathMax(1, InpAtrPeriod);
+   int handle = iATR(_Symbol, PERIOD_CURRENT, period);
+   if(handle == INVALID_HANDLE)
+   {
+      g_last_error = "Cannot create ATR handle";
+      return 0.0;
+   }
+
+   double atr_values[];
+   ArraySetAsSeries(atr_values, true);
+   int copied = CopyBuffer(handle, 0, 0, 2, atr_values);
+   IndicatorRelease(handle);
+
+   if(copied < 2)
+   {
+      g_last_error = "Not enough ATR data";
+      return 0.0;
+   }
+
+   double atr = atr_values[1];
+   if(atr <= 0.0)
+      atr = atr_values[0];
+
+   return atr;
 }
 
 bool IsBullishBar(const int shift)
@@ -1448,7 +1511,7 @@ void UpdateStatus()
       "Trade side: " + TradeSideName() + "\n" +
       "Lot mode: " + EnumToString(InpLotMode) + "\n" +
       "Bad trader: " + BadTraderStatusName() + "\n" +
-      "SL/TP points: " + DoubleToString(InpStopLossPoints, 1) + " / " + DoubleToString(InpTakeProfitPoints, 1) + "\n" +
+      "SL/TP mode: " + StopLossDistanceStatusName() + " / " + TakeProfitDistanceStatusName() + "\n" +
       "Open EA trades: " + (string)CountOpenPositions() + "\n" +
       "Last action: " + g_last_action + "\n";
 
@@ -1456,6 +1519,26 @@ void UpdateStatus()
       text += "Last error: " + g_last_error + "\n";
 
    Comment(text);
+}
+
+string StopLossDistanceStatusName()
+{
+   return DistanceStatusName(InpStopLossMode, InpStopLossPoints, InpStopLossAtrMultiplier);
+}
+
+string TakeProfitDistanceStatusName()
+{
+   return DistanceStatusName(InpTakeProfitMode, InpTakeProfitPoints, InpTakeProfitAtrMultiplier);
+}
+
+string DistanceStatusName(const ENUM_RANDOM_DISTANCE_MODE mode,
+                          const double fixed_points,
+                          const double atr_multiplier)
+{
+   if(mode == RANDOM_DISTANCE_ATR_MULTIPLIER)
+      return "ATR(" + (string)MathMax(1, InpAtrPeriod) + ") x" + DoubleToString(MathMax(0.0, atr_multiplier), 2);
+
+   return DoubleToString(MathMax(0.0, fixed_points), 1) + " points";
 }
 
 string BadTraderStatusName()
