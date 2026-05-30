@@ -750,6 +750,7 @@ string BuildReportMessage(string report_label, datetime from_time, datetime to_t
    double be_adjusted_win_rate = (decisive_trades > 0 ? 100.0 * wins / decisive_trades : 0.0);
    double average_win = (wins > 0 ? gross_profit / wins : 0.0);
    double average_loss = (losses > 0 ? gross_loss / losses : 0.0);
+   double payoff_ratio = (average_loss > 0.0 ? average_win / average_loss : (average_win > 0.0 ? 999.0 : 0.0));
    double expectancy = 0.0;
    if(decisive_trades > 0)
       expectancy = (gross_profit - gross_loss) / decisive_trades;
@@ -764,13 +765,14 @@ string BuildReportMessage(string report_label, datetime from_time, datetime to_t
    msg += "Win rate excl BE: <b>" + DoubleToString(be_adjusted_win_rate, 1) + "%</b>\n";
    msg += "Average P&amp;L/trade: <b>" + MoneyText(average_pnl) + "</b>\n";
    msg += "Avg win / loss: <b>" + MoneyText(average_win) + "</b> / <b>" + MoneyText(-average_loss) + "</b>\n";
+   msg += "Payoff ratio: <b>" + (payoff_ratio >= 999.0 ? "infinite" : DoubleToString(payoff_ratio, 2) + ":1") + "</b>\n";
    msg += "Expectancy excl BE: <b>" + MoneyText(expectancy) + "/trade</b>\n";
    msg += BuildBestWorstTradeText(trades, best_trade_index, worst_trade_index);
    msg += BuildStreakAnalysisText(trades, count);
 
    msg += "\n<b>Risk &amp; Quality</b>\n";
-   msg += "Average RR: <b>" + (rr_count > 0 ? DoubleToString(average_rr, 2) + "R" : "n/a") + "</b>\n";
-   msg += "Overall RR: <b>" + (net_loss_ratio >= 999.0 ? "infinite" : DoubleToString(net_loss_ratio, 2) + "R") + "</b>\n";
+   msg += "Avg realized R: <b>" + (rr_count > 0 ? DoubleToString(average_rr, 2) + "R" : "n/a") + "</b>\n";
+   msg += "Net / gross loss: <b>" + (net_loss_ratio >= 999.0 ? "infinite" : DoubleToString(net_loss_ratio, 2) + "R") + "</b>\n";
    msg += "Profit factor: <b>" + (profit_factor >= 999.0 ? "infinite" : DoubleToString(profit_factor, 2)) + "</b>\n";
    msg += "Gross profit: " + MoneyText(gross_profit) + "\n";
    msg += "Gross loss: -" + DoubleToString(gross_loss, 2) + " " + AccountInfoString(ACCOUNT_CURRENCY) + "\n";
