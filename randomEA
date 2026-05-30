@@ -1,0 +1,1561 @@
+#property strict
+#property version   "1.01"
+#property description "Random market-entry EA with fixed SL/TP points, fixed-risk lot sizing, and optional bad trader behaviour."
+
+#include <Trade/Trade.mqh>
+
+enum ENUM_RANDOM_TRADE_SIDE
+{
+   RANDOM_SIDE_BOTH = 0,      // Buy and Sell
+   RANDOM_SIDE_BUY_ONLY = 1,  // Buy only
+   RANDOM_SIDE_SELL_ONLY = 2  // Sell only
+};
+
+enum ENUM_RANDOM_LOT_MODE
+{
+   RANDOM_LOT_FIXED = 0,                  // Fixed lot
+   RANDOM_LOT_STARTING_BALANCE_RISK = 1,  // Risk percent of starting balance
+   RANDOM_LOT_CURRENT_BALANCE_RISK = 2    // Risk percent of current balance
+};
+
+enum ENUM_RANDOM_TRADE_PATTERN
+{
+   RANDOM_PATTERN_RANDOM = 0,                  // 1. Random trades
+   RANDOM_PATTERN_CHASE_LAST_CANDLE = 1,       // 2. Chase last candle
+   RANDOM_PATTERN_FADE_LAST_CANDLE = 2,        // 3. Fade last candle
+   RANDOM_PATTERN_BUY_HIGH_SELL_LOW = 3,       // 4. Buy highs / sell lows
+   RANDOM_PATTERN_SELL_HIGH_BUY_LOW = 4,       // 5. Sell highs / buy lows
+   RANDOM_PATTERN_CHASE_THREE_CANDLES = 5,     // 6. Chase 3-candle move
+   RANDOM_PATTERN_FADE_THREE_CANDLES = 6,      // 7. Fade 3-candle move
+   RANDOM_PATTERN_CHASE_CURRENT_CANDLE = 7,    // 8. Chase current candle
+   RANDOM_PATTERN_FADE_CURRENT_CANDLE = 8,     // 9. Fade current candle
+   RANDOM_PATTERN_GAP_CHASE = 9,               // 10. Chase gap from last close
+   RANDOM_PATTERN_WIDEST_BAR_CHASE = 10,       // 11. Chase widest recent bar
+   RANDOM_PATTERN_PARABOLIC_CHASE = 11,        // 12. Parabolic overextension chase
+   RANDOM_PATTERN_MA_EXTREME_CHASE = 12,       // 13. Moving-average extreme chase
+   RANDOM_PATTERN_VOLATILITY_SPIKE_CHASE = 13, // 14. Volatility spike chase
+   RANDOM_PATTERN_SQUEEZE_BREAKOUT_CHASE = 14, // 15. Squeeze breakout chase
+   RANDOM_PATTERN_LIQUIDITY_SWEEP_CHASE = 15,  // 16. Liquidity sweep chase
+   RANDOM_PATTERN_REJECTION_WICK_CHASE = 16,   // 17. Rejection wick chase
+   RANDOM_PATTERN_ROUND_NUMBER_CHASE = 17,     // 18. Round-number drift chase
+   RANDOM_PATTERN_MICRO_RANGE_CHASE = 18,      // 19. Micro-range edge chase
+   RANDOM_PATTERN_INSIDE_BAR_CHASE = 19,       // 20. Inside-bar fakeout chase
+   RANDOM_PATTERN_CHOP_MIDPOINT_CHASE = 20,    // 21. Chop midpoint chase
+   RANDOM_PATTERN_BODY_CLIMAX_CHASE = 21,      // 22. Candle-body climax chase
+   RANDOM_PATTERN_TAIL_CLIMAX_CHASE = 22,      // 23. Candle-tail climax chase
+   RANDOM_PATTERN_NOISE_CORRELATION_CHASE = 23,// 24. Noise-correlation chase
+   RANDOM_PATTERN_REGIME_FLIP_CHASE = 24,      // 25. Regime-flip chase
+   RANDOM_PATTERN_PULLBACK_WRONGWAY = 25,      // 26. Wrong-way pullback
+   RANDOM_PATTERN_DRIFT_DECAY_CHASE = 26,      // 27. Drift-decay chase
+   RANDOM_PATTERN_ENTROPY_CLUSTER_CHASE = 27,  // 28. Entropy-cluster chase
+   RANDOM_PATTERN_FRACTAL_EXTREME_CHASE = 28,  // 29. Fractal extreme chase
+   RANDOM_PATTERN_SPREAD_PRESSURE_CHASE = 29,  // 30. Spread-pressure chase
+   RANDOM_PATTERN_SIGNAL_SOUP_CHASE = 30,      // 31. Overfit signal-soup chase
+   RANDOM_PATTERN_RSI_EXTREME_CROSS = 31       // 32. RSI 70/30 contrarian cross
+};
+
+input group "Random Entry"
+input int InpFrequencyMinutes = 15;                    // Try one random trade every X minutes
+input ENUM_RANDOM_TRADE_PATTERN InpTradePattern = RANDOM_PATTERN_RANDOM; // Trade pattern dropdown
+input ENUM_RANDOM_TRADE_SIDE InpTradeSide = RANDOM_SIDE_BOTH; // Allowed trade side
+input ulong InpMagicNumber = 26052601;                 // Magic number
+input int InpSlippagePoints = 30;                      // Max slippage in points
+input int InpRsiPeriod = 14;                           // RSI period for RSI cross pattern
+
+input group "Stop Loss / Take Profit"
+input double InpStopLossPoints = 200.0;                // Fixed SL distance in points
+input double InpTakeProfitPoints = 300.0;              // Fixed TP distance in points
+
+input group "Lot Sizing"
+input ENUM_RANDOM_LOT_MODE InpLotMode = RANDOM_LOT_FIXED; // Lot sizing mode
+input double InpFixedLot = 0.01;                       // Fixed lot size
+input double InpRiskPerTradePercent = 1.0;             // Risk percent for balance modes
+input double InpStartingBalance = 5000.0;              // Starting balance for risk mode
+input double InpMinLot = 0.0;                          // Min lot override, 0 = symbol minimum
+input double InpMaxLot = 0.0;                          // Max lot override, 0 = symbol maximum
+
+input group "Bad Trader Behaviour"
+input bool InpEnableBadTraderBehaviour = true;          // Enable losing-trader behaviour layer
+input double InpBadBehaviourPercent = 50.0;             // How bad / chance percent, 0-100
+input bool InpBadChangeLotSizes = true;                 // Randomly override normal lot sizing
+input bool InpBadHoldLosers = true;                     // Remove SL when a trade is losing
+input bool InpBadRandomExitHeldLosers = true;           // Randomly close held losers later
+input int InpBadHeldLoserExitCheckMinutes = 5;          // Check held-loser panic exit every X minutes
+input bool InpBadCloseWinnersEarly = true;              // Close winners before normal TP
+input bool InpBadRevengeTrade = true;                   // Re-enter right after a losing close
+
+input group "Display"
+input bool InpShowChartStatus = true;                  // Show chart status comment
+
+CTrade trade;
+datetime g_last_attempt_time = 0;
+string g_last_action = "Waiting for first interval";
+string g_last_error = "";
+bool g_revenge_trade_pending = false;
+long g_revenge_position_type = -1;
+ulong g_revenge_source_deal = 0;
+ulong g_managed_ticket = 0;
+ulong g_held_loser_ticket = 0;
+datetime g_next_held_loser_exit_check = 0;
+bool g_hold_loser_checked = false;
+bool g_close_winner_checked = false;
+
+int OnInit()
+{
+   trade.SetExpertMagicNumber(InpMagicNumber);
+   trade.SetDeviationInPoints(InpSlippagePoints);
+
+   MathSrand((int)(GetTickCount() + (uint)TimeLocal() + (uint)ChartID()));
+   EventSetTimer(1);
+   UpdateStatus();
+
+   return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+   Comment("");
+}
+
+void OnTick()
+{
+   ManageBadTraderBehaviour();
+   TryScheduledEntry();
+   UpdateStatus();
+}
+
+void OnTimer()
+{
+   ManageBadTraderBehaviour();
+   TryScheduledEntry();
+   UpdateStatus();
+}
+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
+{
+   if(!InpEnableBadTraderBehaviour || !InpBadRevengeTrade)
+      return;
+
+   if(trans.type != TRADE_TRANSACTION_DEAL_ADD || trans.deal == 0)
+      return;
+
+   if(!HistoryDealSelect(trans.deal))
+      return;
+
+   if((ulong)HistoryDealGetInteger(trans.deal, DEAL_MAGIC) != InpMagicNumber)
+      return;
+
+   if(HistoryDealGetString(trans.deal, DEAL_SYMBOL) != _Symbol)
+      return;
+
+   ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(trans.deal, DEAL_ENTRY);
+   if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT && entry != DEAL_ENTRY_OUT_BY)
+      return;
+
+   double net_profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT) +
+                       HistoryDealGetDouble(trans.deal, DEAL_SWAP) +
+                       HistoryDealGetDouble(trans.deal, DEAL_COMMISSION);
+   if(net_profit >= 0.0)
+      return;
+
+   PrintFormat("RandomEA bad behaviour | Losing close detected | Deal=%I64u | NetProfit=%.2f | Checking revenge trade",
+               trans.deal, net_profit);
+
+   if(!BadBehaviourKicksInFor("revenge trade after losing close deal #" + (string)trans.deal))
+      return;
+
+   ENUM_DEAL_TYPE deal_type = (ENUM_DEAL_TYPE)HistoryDealGetInteger(trans.deal, DEAL_TYPE);
+   if(deal_type == DEAL_TYPE_SELL)
+      g_revenge_position_type = POSITION_TYPE_BUY;
+   else if(deal_type == DEAL_TYPE_BUY)
+      g_revenge_position_type = POSITION_TYPE_SELL;
+   else
+      g_revenge_position_type = RandomPositionType();
+
+   g_revenge_position_type = EnforceAllowedTradeSide(g_revenge_position_type);
+   g_revenge_trade_pending = (g_revenge_position_type >= 0);
+   if(g_revenge_trade_pending)
+   {
+      g_revenge_source_deal = trans.deal;
+      g_last_action = "Bad behaviour queued revenge " + PositionTypeName(g_revenge_position_type) + " after losing close";
+      PrintFormat("RandomEA bad behaviour | Revenge queued | Deal=%I64u | Direction=%s | This will bypass the normal timer when no EA trade is open",
+                  trans.deal, PositionTypeName(g_revenge_position_type));
+   }
+}
+
+void TryScheduledEntry()
+{
+   int frequency_seconds = MathMax(1, InpFrequencyMinutes) * 60;
+   datetime now = TimeCurrent();
+   bool revenge_now = g_revenge_trade_pending;
+
+   if(!revenge_now && g_last_attempt_time > 0 && now - g_last_attempt_time < frequency_seconds)
+      return;
+
+   g_last_attempt_time = now;
+
+   if(HasOpenPosition())
+   {
+      if(revenge_now)
+      {
+         g_last_action = "Revenge trade waiting because an EA trade is already running";
+         Print("RandomEA bad behaviour | Revenge waiting | Existing EA trade is still open, so revenge entry is delayed");
+      }
+      else
+         g_last_action = "Skipped interval because an EA trade is already running";
+      return;
+   }
+
+   if(!SymbolSelect(_Symbol, true))
+   {
+      g_last_error = "Cannot select symbol " + _Symbol;
+      return;
+   }
+
+   long position_type = (revenge_now ? g_revenge_position_type : SelectPositionType());
+   if(revenge_now)
+   {
+      PrintFormat("RandomEA bad behaviour | Opening revenge trade now | SourceDeal=%I64u | Direction=%s | Timer bypassed",
+                  g_revenge_source_deal, PositionTypeName(position_type));
+   }
+
+   if(position_type < 0)
+   {
+      g_last_action = "Skipped interval because " + TradePatternName() + " has no fresh signal";
+      return;
+   }
+
+   bool opened = OpenRandomTrade(position_type);
+   if(opened && revenge_now)
+   {
+      g_revenge_trade_pending = false;
+      g_revenge_position_type = -1;
+      g_revenge_source_deal = 0;
+      Print("RandomEA bad behaviour | Revenge trade sent successfully | Revenge queue cleared");
+   }
+   else if(!opened && revenge_now)
+   {
+      Print("RandomEA bad behaviour | Revenge trade attempt failed | Queue remains pending | " + g_last_error);
+   }
+}
+
+long SelectPositionType()
+{
+   long position_type = RandomPositionType();
+   if(InpTradePattern != RANDOM_PATTERN_RANDOM)
+      position_type = LosingPatternPositionType(InpTradePattern);
+
+   return EnforceAllowedTradeSide(position_type);
+}
+
+long RandomPositionType()
+{
+   if(InpTradeSide == RANDOM_SIDE_BUY_ONLY)
+      return POSITION_TYPE_BUY;
+
+   if(InpTradeSide == RANDOM_SIDE_SELL_ONLY)
+      return POSITION_TYPE_SELL;
+
+   return (MathRand() % 2 == 0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long EnforceAllowedTradeSide(const long position_type)
+{
+   if(position_type < 0)
+      return position_type;
+
+   if(InpTradeSide == RANDOM_SIDE_BUY_ONLY)
+      return POSITION_TYPE_BUY;
+
+   if(InpTradeSide == RANDOM_SIDE_SELL_ONLY)
+      return POSITION_TYPE_SELL;
+
+   return position_type;
+}
+
+long LosingPatternPositionType(const ENUM_RANDOM_TRADE_PATTERN pattern)
+{
+   switch(pattern)
+   {
+      case RANDOM_PATTERN_CHASE_LAST_CANDLE:
+         return (IsBullishBar(1) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+      case RANDOM_PATTERN_FADE_LAST_CANDLE:
+         return (IsBullishBar(1) ? POSITION_TYPE_SELL : POSITION_TYPE_BUY);
+
+      case RANDOM_PATTERN_BUY_HIGH_SELL_LOW:
+         return CloseNearRecentHigh(1, 10) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+
+      case RANDOM_PATTERN_SELL_HIGH_BUY_LOW:
+         return CloseNearRecentHigh(1, 10) ? POSITION_TYPE_SELL : POSITION_TYPE_BUY;
+
+      case RANDOM_PATTERN_CHASE_THREE_CANDLES:
+         return (NetMove(1, 3) >= 0.0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+      case RANDOM_PATTERN_FADE_THREE_CANDLES:
+         return (NetMove(1, 3) >= 0.0 ? POSITION_TYPE_SELL : POSITION_TYPE_BUY);
+
+      case RANDOM_PATTERN_CHASE_CURRENT_CANDLE:
+         return (CurrentMidPrice() >= iOpen(_Symbol, PERIOD_CURRENT, 0) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+      case RANDOM_PATTERN_FADE_CURRENT_CANDLE:
+         return (CurrentMidPrice() >= iOpen(_Symbol, PERIOD_CURRENT, 0) ? POSITION_TYPE_SELL : POSITION_TYPE_BUY);
+
+      case RANDOM_PATTERN_GAP_CHASE:
+         return (CurrentMidPrice() >= iClose(_Symbol, PERIOD_CURRENT, 1) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+      case RANDOM_PATTERN_WIDEST_BAR_CHASE:
+         return (IsBullishBar(WidestRecentBarShift(1, 8)) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+      case RANDOM_PATTERN_PARABOLIC_CHASE:
+         return (NetMove(1, 5) >= 0.0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+      case RANDOM_PATTERN_MA_EXTREME_CHASE:
+         return (PriceVsAverage(1, 24) >= 0.0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+      case RANDOM_PATTERN_VOLATILITY_SPIKE_CHASE:
+         return (IsBullishBar(VolatilitySpikeBarShift(1, 12)) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+      case RANDOM_PATTERN_SQUEEZE_BREAKOUT_CHASE:
+         return BreakoutChasePositionType(0, 12);
+
+      case RANDOM_PATTERN_LIQUIDITY_SWEEP_CHASE:
+         return LiquiditySweepChasePositionType(1, 16);
+
+      case RANDOM_PATTERN_REJECTION_WICK_CHASE:
+         return RejectionWickChasePositionType(1);
+
+      case RANDOM_PATTERN_ROUND_NUMBER_CHASE:
+         return RoundNumberChasePositionType();
+
+      case RANDOM_PATTERN_MICRO_RANGE_CHASE:
+         return BreakoutChasePositionType(0, 5);
+
+      case RANDOM_PATTERN_INSIDE_BAR_CHASE:
+         return InsideBarChasePositionType(1);
+
+      case RANDOM_PATTERN_CHOP_MIDPOINT_CHASE:
+         return RangeMidpointChasePositionType(1, 14);
+
+      case RANDOM_PATTERN_BODY_CLIMAX_CHASE:
+         return (IsBullishBar(BodyClimaxBarShift(1, 12)) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+      case RANDOM_PATTERN_TAIL_CLIMAX_CHASE:
+         return TailClimaxChasePositionType(1, 12);
+
+      case RANDOM_PATTERN_NOISE_CORRELATION_CHASE:
+         return NoiseCorrelationChasePositionType(1, 12);
+
+      case RANDOM_PATTERN_REGIME_FLIP_CHASE:
+         return RegimeFlipChasePositionType(1, 16);
+
+      case RANDOM_PATTERN_PULLBACK_WRONGWAY:
+         return PullbackWrongWayPositionType(1, 18);
+
+      case RANDOM_PATTERN_DRIFT_DECAY_CHASE:
+         return DriftDecayChasePositionType(1, 10);
+
+      case RANDOM_PATTERN_ENTROPY_CLUSTER_CHASE:
+         return EntropyClusterChasePositionType(1, 12);
+
+      case RANDOM_PATTERN_FRACTAL_EXTREME_CHASE:
+         return FractalExtremeChasePositionType(2, 18);
+
+      case RANDOM_PATTERN_SPREAD_PRESSURE_CHASE:
+         return SpreadPressureChasePositionType();
+
+      case RANDOM_PATTERN_SIGNAL_SOUP_CHASE:
+         return SignalSoupChasePositionType();
+
+      case RANDOM_PATTERN_RSI_EXTREME_CROSS:
+         return RsiExtremeCrossPositionType();
+   }
+
+   return RandomPositionType();
+}
+
+bool OpenRandomTrade(const long position_type)
+{
+   double entry = EntryPrice(position_type);
+   if(entry <= 0.0)
+   {
+      g_last_error = "Entry price is not available";
+      return false;
+   }
+
+   double sl = StopLossPrice(position_type, entry);
+   double tp = TakeProfitPrice(position_type, entry);
+   if(sl <= 0.0 || tp <= 0.0)
+   {
+      g_last_error = "Invalid SL/TP settings";
+      return false;
+   }
+
+   sl = NormalizePrice(sl);
+   tp = NormalizePrice(tp);
+
+   double lot = CalculateLot(position_type, entry, sl);
+   if(lot <= 0.0)
+   {
+      g_last_error = "Calculated lot is invalid";
+      return false;
+   }
+
+   lot = ApplyBadLotSizing(lot);
+
+   trade.SetExpertMagicNumber(InpMagicNumber);
+   trade.SetDeviationInPoints(InpSlippagePoints);
+
+   ResetLastError();
+   string comment = "RandomEA";
+   bool sent = false;
+   if(position_type == POSITION_TYPE_BUY)
+      sent = trade.Buy(lot, _Symbol, 0.0, sl, tp, comment);
+   else
+      sent = trade.Sell(lot, _Symbol, 0.0, sl, tp, comment);
+
+   if(sent)
+   {
+      g_last_error = "";
+      g_last_action = "Opened " + PositionTypeName(position_type) + " " + _Symbol +
+                      " pattern " + TradePatternName() +
+                      " lot " + DoubleToString(lot, VolumeDigits()) +
+                      " SL " + DoubleToString(sl, _Digits) +
+                      " TP " + DoubleToString(tp, _Digits);
+      Print(g_last_action);
+      return true;
+   }
+
+   g_last_error = "Order failed: retcode " + (string)trade.ResultRetcode() +
+                  " " + trade.ResultRetcodeDescription() +
+                  " terminal error " + (string)GetLastError();
+   Print(g_last_error);
+   return false;
+}
+
+double EntryPrice(const long position_type)
+{
+   if(position_type == POSITION_TYPE_BUY)
+      return SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+   return SymbolInfoDouble(_Symbol, SYMBOL_BID);
+}
+
+double StopLossPrice(const long position_type, const double entry)
+{
+   double distance = MathMax(0.0, InpStopLossPoints) * _Point;
+   if(distance <= 0.0)
+      return 0.0;
+
+   if(position_type == POSITION_TYPE_BUY)
+      return entry - distance;
+
+   return entry + distance;
+}
+
+double TakeProfitPrice(const long position_type, const double entry)
+{
+   double distance = MathMax(0.0, InpTakeProfitPoints) * _Point;
+   if(distance <= 0.0)
+      return 0.0;
+
+   if(position_type == POSITION_TYPE_BUY)
+      return entry + distance;
+
+   return entry - distance;
+}
+
+bool IsBullishBar(const int shift)
+{
+   double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+   double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+   if(open <= 0.0 || close <= 0.0)
+      return (MathRand() % 2 == 0);
+
+   return close >= open;
+}
+
+double CurrentMidPrice()
+{
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   if(bid <= 0.0 || ask <= 0.0)
+      return iClose(_Symbol, PERIOD_CURRENT, 0);
+
+   return (bid + ask) / 2.0;
+}
+
+double NetMove(const int start_shift, const int bars)
+{
+   double newest_close = iClose(_Symbol, PERIOD_CURRENT, start_shift);
+   double oldest_open = iOpen(_Symbol, PERIOD_CURRENT, start_shift + bars - 1);
+   if(newest_close <= 0.0 || oldest_open <= 0.0)
+      return (MathRand() % 2 == 0 ? 1.0 : -1.0);
+
+   return newest_close - oldest_open;
+}
+
+bool CloseNearRecentHigh(const int start_shift, const int bars)
+{
+   double close = iClose(_Symbol, PERIOD_CURRENT, start_shift);
+   double high = 0.0;
+   double low = 0.0;
+   bool found_bar = false;
+
+   for(int i = start_shift; i < start_shift + bars; i++)
+   {
+      double bar_high = iHigh(_Symbol, PERIOD_CURRENT, i);
+      double bar_low = iLow(_Symbol, PERIOD_CURRENT, i);
+      if(bar_high <= 0.0 || bar_low <= 0.0)
+         continue;
+
+      if(!found_bar)
+      {
+         high = bar_high;
+         low = bar_low;
+         found_bar = true;
+      }
+      else
+      {
+         high = MathMax(high, bar_high);
+         low = MathMin(low, bar_low);
+      }
+   }
+
+   if(close <= 0.0 || !found_bar || high <= low)
+      return (MathRand() % 2 == 0);
+
+   return close >= low + ((high - low) * 0.5);
+}
+
+int WidestRecentBarShift(const int start_shift, const int bars)
+{
+   int widest_shift = start_shift;
+   double widest_range = -1.0;
+
+   for(int i = start_shift; i < start_shift + bars; i++)
+   {
+      double bar_high = iHigh(_Symbol, PERIOD_CURRENT, i);
+      double bar_low = iLow(_Symbol, PERIOD_CURRENT, i);
+      double range = bar_high - bar_low;
+      if(bar_high <= 0.0 || bar_low <= 0.0 || range <= widest_range)
+         continue;
+
+      widest_range = range;
+      widest_shift = i;
+   }
+
+   return widest_shift;
+}
+
+double BarRange(const int shift)
+{
+   double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+   double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+   if(high <= 0.0 || low <= 0.0 || high <= low)
+      return 0.0;
+
+   return high - low;
+}
+
+double BarBody(const int shift)
+{
+   double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+   double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+   if(open <= 0.0 || close <= 0.0)
+      return 0.0;
+
+   return MathAbs(close - open);
+}
+
+double UpperWick(const int shift)
+{
+   double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+   double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+   double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+   if(high <= 0.0 || open <= 0.0 || close <= 0.0)
+      return 0.0;
+
+   return MathMax(0.0, high - MathMax(open, close));
+}
+
+double LowerWick(const int shift)
+{
+   double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+   double open = iOpen(_Symbol, PERIOD_CURRENT, shift);
+   double close = iClose(_Symbol, PERIOD_CURRENT, shift);
+   if(low <= 0.0 || open <= 0.0 || close <= 0.0)
+      return 0.0;
+
+   return MathMax(0.0, MathMin(open, close) - low);
+}
+
+double AverageClose(const int start_shift, const int bars)
+{
+   double sum = 0.0;
+   int count = 0;
+
+   for(int i = start_shift; i < start_shift + bars; i++)
+   {
+      double close = iClose(_Symbol, PERIOD_CURRENT, i);
+      if(close <= 0.0)
+         continue;
+
+      sum += close;
+      count++;
+   }
+
+   if(count <= 0)
+      return 0.0;
+
+   return sum / count;
+}
+
+double AverageRange(const int start_shift, const int bars)
+{
+   double sum = 0.0;
+   int count = 0;
+
+   for(int i = start_shift; i < start_shift + bars; i++)
+   {
+      double range = BarRange(i);
+      if(range <= 0.0)
+         continue;
+
+      sum += range;
+      count++;
+   }
+
+   if(count <= 0)
+      return 0.0;
+
+   return sum / count;
+}
+
+double RecentHigh(const int start_shift, const int bars)
+{
+   double high = 0.0;
+
+   for(int i = start_shift; i < start_shift + bars; i++)
+   {
+      double bar_high = iHigh(_Symbol, PERIOD_CURRENT, i);
+      if(bar_high <= 0.0)
+         continue;
+
+      if(high <= 0.0 || bar_high > high)
+         high = bar_high;
+   }
+
+   return high;
+}
+
+double RecentLow(const int start_shift, const int bars)
+{
+   double low = 0.0;
+
+   for(int i = start_shift; i < start_shift + bars; i++)
+   {
+      double bar_low = iLow(_Symbol, PERIOD_CURRENT, i);
+      if(bar_low <= 0.0)
+         continue;
+
+      if(low <= 0.0 || bar_low < low)
+         low = bar_low;
+   }
+
+   return low;
+}
+
+double PriceVsAverage(const int start_shift, const int bars)
+{
+   double close = iClose(_Symbol, PERIOD_CURRENT, start_shift);
+   double average = AverageClose(start_shift, bars);
+   if(close <= 0.0 || average <= 0.0)
+      return (MathRand() % 2 == 0 ? 1.0 : -1.0);
+
+   return close - average;
+}
+
+int VolatilitySpikeBarShift(const int start_shift, const int bars)
+{
+   double average_range = AverageRange(start_shift, bars);
+   int spike_shift = WidestRecentBarShift(start_shift, bars);
+   if(average_range <= 0.0)
+      return spike_shift;
+
+   double spike_range = BarRange(spike_shift);
+   if(spike_range < average_range * 1.5)
+      return start_shift;
+
+   return spike_shift;
+}
+
+long BreakoutChasePositionType(const int current_shift, const int lookback_bars)
+{
+   double price = (current_shift == 0 ? CurrentMidPrice() : iClose(_Symbol, PERIOD_CURRENT, current_shift));
+   double high = RecentHigh(current_shift + 1, lookback_bars);
+   double low = RecentLow(current_shift + 1, lookback_bars);
+   if(price <= 0.0 || high <= 0.0 || low <= 0.0 || high <= low)
+      return RandomPositionType();
+
+   if(price >= high)
+      return POSITION_TYPE_BUY;
+   if(price <= low)
+      return POSITION_TYPE_SELL;
+
+   return (price >= low + ((high - low) * 0.5) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long LiquiditySweepChasePositionType(const int shift, const int lookback_bars)
+{
+   double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+   double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+   double old_high = RecentHigh(shift + 1, lookback_bars);
+   double old_low = RecentLow(shift + 1, lookback_bars);
+   if(high <= 0.0 || low <= 0.0 || old_high <= 0.0 || old_low <= 0.0)
+      return RandomPositionType();
+
+   bool swept_high = high > old_high;
+   bool swept_low = low < old_low;
+   if(swept_high && !swept_low)
+      return POSITION_TYPE_BUY;
+   if(swept_low && !swept_high)
+      return POSITION_TYPE_SELL;
+   if(swept_high && swept_low)
+      return (MathAbs(high - old_high) >= MathAbs(old_low - low) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+   return CloseNearRecentHigh(shift, lookback_bars) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+}
+
+long RejectionWickChasePositionType(const int shift)
+{
+   double upper = UpperWick(shift);
+   double lower = LowerWick(shift);
+   if(upper <= 0.0 && lower <= 0.0)
+      return RandomPositionType();
+
+   return (upper >= lower ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long RoundNumberChasePositionType()
+{
+   double price = CurrentMidPrice();
+   double grid = MathMax(_Point * 100.0, _Point);
+   if(price <= 0.0 || grid <= 0.0)
+      return RandomPositionType();
+
+   double nearest = MathRound(price / grid) * grid;
+   return (price >= nearest ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long InsideBarChasePositionType(const int shift)
+{
+   double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+   double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+   double parent_high = iHigh(_Symbol, PERIOD_CURRENT, shift + 1);
+   double parent_low = iLow(_Symbol, PERIOD_CURRENT, shift + 1);
+   if(high <= 0.0 || low <= 0.0 || parent_high <= 0.0 || parent_low <= 0.0)
+      return RandomPositionType();
+
+   bool inside_bar = high < parent_high && low > parent_low;
+   if(!inside_bar)
+      return (IsBullishBar(shift) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+   double price = CurrentMidPrice();
+   if(price >= high)
+      return POSITION_TYPE_BUY;
+   if(price <= low)
+      return POSITION_TYPE_SELL;
+
+   return (price >= low + ((high - low) * 0.5) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long RangeMidpointChasePositionType(const int start_shift, const int bars)
+{
+   double high = RecentHigh(start_shift, bars);
+   double low = RecentLow(start_shift, bars);
+   double price = CurrentMidPrice();
+   if(high <= 0.0 || low <= 0.0 || high <= low || price <= 0.0)
+      return RandomPositionType();
+
+   return (price >= low + ((high - low) * 0.5) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+int BodyClimaxBarShift(const int start_shift, const int bars)
+{
+   int climax_shift = start_shift;
+   double climax_body = -1.0;
+
+   for(int i = start_shift; i < start_shift + bars; i++)
+   {
+      double body = BarBody(i);
+      if(body <= climax_body)
+         continue;
+
+      climax_body = body;
+      climax_shift = i;
+   }
+
+   return climax_shift;
+}
+
+long TailClimaxChasePositionType(const int start_shift, const int bars)
+{
+   int climax_shift = start_shift;
+   double climax_tail = -1.0;
+   bool upper_won = true;
+
+   for(int i = start_shift; i < start_shift + bars; i++)
+   {
+      double upper = UpperWick(i);
+      double lower = LowerWick(i);
+      double tail = MathMax(upper, lower);
+      if(tail <= climax_tail)
+         continue;
+
+      climax_tail = tail;
+      climax_shift = i;
+      upper_won = upper >= lower;
+   }
+
+   if(climax_tail <= 0.0)
+      return (IsBullishBar(climax_shift) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+   return (upper_won ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long NoiseCorrelationChasePositionType(const int start_shift, const int bars)
+{
+   double score = 0.0;
+
+   for(int i = start_shift; i < start_shift + bars; i++)
+   {
+      double close = iClose(_Symbol, PERIOD_CURRENT, i);
+      double previous_close = iClose(_Symbol, PERIOD_CURRENT, i + 1);
+      if(close <= 0.0 || previous_close <= 0.0)
+         continue;
+
+      double direction = (close >= previous_close ? 1.0 : -1.0);
+      double noisy_weight = (i % 2 == 0 ? 1.0 : -0.7);
+      score += direction * noisy_weight * MathMax(1.0, BarRange(i) / MathMax(_Point, AverageRange(start_shift, bars)));
+   }
+
+   if(score == 0.0)
+      return RandomPositionType();
+
+   return (score >= 0.0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long RegimeFlipChasePositionType(const int start_shift, const int bars)
+{
+   int half = MathMax(2, bars / 2);
+   double recent_move = NetMove(start_shift, half);
+   double older_move = NetMove(start_shift + half, half);
+
+   if((recent_move >= 0.0 && older_move < 0.0) || (recent_move < 0.0 && older_move >= 0.0))
+      return (recent_move >= 0.0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+   return (older_move >= 0.0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long PullbackWrongWayPositionType(const int start_shift, const int bars)
+{
+   double trend_move = NetMove(start_shift + 1, bars);
+   bool last_bullish = IsBullishBar(start_shift);
+
+   if(trend_move >= 0.0 && !last_bullish)
+      return POSITION_TYPE_SELL;
+   if(trend_move < 0.0 && last_bullish)
+      return POSITION_TYPE_BUY;
+
+   return (trend_move >= 0.0 ? POSITION_TYPE_SELL : POSITION_TYPE_BUY);
+}
+
+long DriftDecayChasePositionType(const int start_shift, const int bars)
+{
+   int half = MathMax(2, bars / 2);
+   double recent_move = NetMove(start_shift, half);
+   double older_move = NetMove(start_shift + half, half);
+
+   if(MathAbs(recent_move) < MathAbs(older_move) * 0.5)
+      return (older_move >= 0.0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+   return (recent_move >= 0.0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long EntropyClusterChasePositionType(const int start_shift, const int bars)
+{
+   int flips = 0;
+   int valid_moves = 0;
+   int previous_direction = 0;
+   int last_direction = 0;
+
+   for(int i = start_shift; i < start_shift + bars; i++)
+   {
+      double close = iClose(_Symbol, PERIOD_CURRENT, i);
+      double previous_close = iClose(_Symbol, PERIOD_CURRENT, i + 1);
+      if(close <= 0.0 || previous_close <= 0.0)
+         continue;
+
+      int direction = (close >= previous_close ? 1 : -1);
+      if(valid_moves == 0)
+         last_direction = direction;
+      if(previous_direction != 0 && direction != previous_direction)
+         flips++;
+
+      previous_direction = direction;
+      valid_moves++;
+   }
+
+   if(valid_moves <= 0)
+      return RandomPositionType();
+
+   if(flips >= valid_moves / 2)
+      return (last_direction >= 0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+   return (last_direction >= 0 ? POSITION_TYPE_SELL : POSITION_TYPE_BUY);
+}
+
+long FractalExtremeChasePositionType(const int start_shift, const int bars)
+{
+   double close = iClose(_Symbol, PERIOD_CURRENT, start_shift);
+   double high = RecentHigh(start_shift, bars);
+   double low = RecentLow(start_shift, bars);
+   if(close <= 0.0 || high <= 0.0 || low <= 0.0 || high <= low)
+      return RandomPositionType();
+
+   double location = (close - low) / (high - low);
+   if(location >= 0.80)
+      return POSITION_TYPE_BUY;
+   if(location <= 0.20)
+      return POSITION_TYPE_SELL;
+
+   return (NetMove(start_shift, MathMax(3, bars / 3)) >= 0.0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long SpreadPressureChasePositionType()
+{
+   long spread_points = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   double average_range = AverageRange(1, 12);
+   if(spread_points <= 0 || average_range <= 0.0)
+      return (CurrentMidPrice() >= iOpen(_Symbol, PERIOD_CURRENT, 0) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+   double spread_price = (double)spread_points * _Point;
+   if(spread_price > average_range * 0.20)
+      return (CurrentMidPrice() >= iOpen(_Symbol, PERIOD_CURRENT, 0) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+
+   return (PriceVsAverage(1, 12) >= 0.0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long SignalSoupChasePositionType()
+{
+   double score = 0.0;
+
+   score += (NetMove(1, 5) >= 0.0 ? 1.0 : -1.0);
+   score += (PriceVsAverage(1, 21) >= 0.0 ? 1.0 : -1.0);
+   score += (CloseNearRecentHigh(1, 13) ? 1.0 : -1.0);
+   score += (UpperWick(1) >= LowerWick(1) ? 1.0 : -1.0);
+   score += (BarRange(1) >= AverageRange(2, 13) ? 1.0 : -1.0);
+   score += (MathMod((double)TimeCurrent(), 2.0) == 0.0 ? 1.0 : -1.0);
+
+   return (score >= 0.0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
+}
+
+long RsiExtremeCrossPositionType()
+{
+   int period = MathMax(2, InpRsiPeriod);
+   int handle = iRSI(_Symbol, PERIOD_CURRENT, period, PRICE_CLOSE);
+   if(handle == INVALID_HANDLE)
+   {
+      g_last_error = "Cannot create RSI handle";
+      return -1;
+   }
+
+   double rsi_values[];
+   ArraySetAsSeries(rsi_values, true);
+   ArrayResize(rsi_values, 3);
+
+   int copied = CopyBuffer(handle, 0, 0, 3, rsi_values);
+   IndicatorRelease(handle);
+
+   if(copied < 3)
+   {
+      g_last_error = "Not enough RSI data";
+      return -1;
+   }
+
+   double current_closed = rsi_values[1];
+   double previous_closed = rsi_values[2];
+
+   if(previous_closed <= 70.0 && current_closed > 70.0)
+      return POSITION_TYPE_SELL;
+
+   if(previous_closed >= 30.0 && current_closed < 30.0)
+      return POSITION_TYPE_BUY;
+
+   return -1;
+}
+
+double CalculateLot(const long position_type, const double entry, const double sl)
+{
+   if(InpLotMode == RANDOM_LOT_FIXED)
+      return NormalizeVolume(InpFixedLot);
+
+   double risk_base = InpStartingBalance;
+   if(InpLotMode == RANDOM_LOT_CURRENT_BALANCE_RISK)
+      risk_base = AccountInfoDouble(ACCOUNT_BALANCE);
+
+   double risk_amount = risk_base * (MathMax(0.0, InpRiskPerTradePercent) / 100.0);
+   if(risk_amount <= 0.0 || entry <= 0.0 || sl <= 0.0)
+      return 0.0;
+
+   ENUM_ORDER_TYPE order_type = (position_type == POSITION_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+   double loss_per_lot = 0.0;
+   if(!OrderCalcProfit(order_type, _Symbol, 1.0, entry, sl, loss_per_lot))
+      return 0.0;
+
+   loss_per_lot = MathAbs(loss_per_lot);
+   if(loss_per_lot <= 0.0)
+      return 0.0;
+
+   double raw_lot = risk_amount / loss_per_lot;
+   double lot = NormalizeVolume(raw_lot);
+
+   PrintFormat("RandomEA lot sizing | Mode=%s | RiskBase=%.2f | Risk=%.2f | Entry=%.5f | SL=%.5f | LossPerLot=%.2f | RawLot=%.8f | FinalLot=%.4f",
+               EnumToString(InpLotMode), risk_base, risk_amount, entry, sl, loss_per_lot, raw_lot, lot);
+
+   return lot;
+}
+
+double ApplyBadLotSizing(const double normal_lot)
+{
+   if(!InpEnableBadTraderBehaviour)
+      return normal_lot;
+
+   if(!InpBadChangeLotSizes)
+   {
+      PrintFormat("RandomEA bad behaviour | Lot override skipped | Setting is off | NormalLot=%.4f",
+                  normal_lot);
+      return normal_lot;
+   }
+
+   PrintFormat("RandomEA bad behaviour | Lot override check | NormalLot=%.4f | Badness=%.1f%%",
+               normal_lot, BadBehaviourPercent());
+
+   if(!BadBehaviourKicksInFor("lot-size override"))
+      return normal_lot;
+
+   double intensity = BadBehaviourIntensity();
+   double multiplier = 1.0;
+
+   if(MathRand() % 100 < 70)
+   {
+      double max_multiplier = 1.0 + (intensity * 4.0);
+      multiplier = 1.0 + RandomUnit() * (max_multiplier - 1.0);
+   }
+   else
+   {
+      double min_multiplier = MathMax(0.01, 1.0 - (intensity * 0.90));
+      multiplier = min_multiplier + RandomUnit() * (1.0 - min_multiplier);
+   }
+
+   double bad_lot = NormalizeVolume(normal_lot * multiplier);
+   PrintFormat("RandomEA bad behaviour | Lot override triggered | NormalLot=%.4f | Multiplier=%.2f | FinalBadLot=%.4f | Normal money management overridden",
+               normal_lot, multiplier, bad_lot);
+   return bad_lot;
+}
+
+void ManageBadTraderBehaviour()
+{
+   if(!InpEnableBadTraderBehaviour || (!InpBadHoldLosers && !InpBadCloseWinnersEarly))
+      return;
+
+   ulong ticket = 0;
+   long position_type = -1;
+   double profit = 0.0;
+   double open_price = 0.0;
+   double sl = 0.0;
+   double tp = 0.0;
+
+   if(!GetOpenEaPosition(ticket, position_type, profit, open_price, sl, tp))
+   {
+      ResetBadPositionState();
+      return;
+   }
+
+   if(ticket != g_managed_ticket)
+   {
+      g_managed_ticket = ticket;
+      g_hold_loser_checked = false;
+      g_close_winner_checked = false;
+      PrintFormat("RandomEA bad behaviour | Started watching ticket #%I64u | Direction=%s | OpenPrice=%.5f | SL=%.5f | TP=%.5f",
+                  ticket, PositionTypeName(position_type), open_price, sl, tp);
+   }
+
+   if(InpBadHoldLosers && !g_hold_loser_checked && profit < 0.0)
+   {
+      g_hold_loser_checked = true;
+      PrintFormat("RandomEA bad behaviour | Hold-loser check | Ticket=%I64u | FloatingProfit=%.2f | CurrentSL=%.5f",
+                  ticket, profit, sl);
+
+      if(sl <= 0.0)
+      {
+         PrintFormat("RandomEA bad behaviour | Hold-loser skipped | Ticket=%I64u | No SL exists to remove",
+                     ticket);
+      }
+      else if(BadBehaviourKicksInFor("hold loser by removing SL on ticket #" + (string)ticket))
+      {
+         trade.SetExpertMagicNumber(InpMagicNumber);
+         trade.SetDeviationInPoints(InpSlippagePoints);
+         if(trade.PositionModify(ticket, 0.0, tp))
+         {
+            g_last_error = "";
+            g_last_action = "Bad behaviour removed SL to hold losing ticket #" + (string)ticket;
+            Print(g_last_action);
+            ScheduleHeldLoserExitCheck(ticket);
+         }
+         else
+         {
+            g_last_error = "Failed to remove SL for losing ticket #" + (string)ticket +
+                           ": retcode " + (string)trade.ResultRetcode() +
+                           " " + trade.ResultRetcodeDescription();
+            Print("RandomEA bad behaviour | Hold-loser action failed | " + g_last_error);
+         }
+      }
+   }
+
+   ManageRandomHeldLoserExit(ticket, profit);
+
+   if(InpBadCloseWinnersEarly && !g_close_winner_checked && profit > 0.0)
+   {
+      double winner_points = WinnerPoints(position_type, open_price);
+      double early_points = EarlyWinnerClosePoints();
+      if(winner_points >= early_points)
+      {
+         g_close_winner_checked = true;
+         PrintFormat("RandomEA bad behaviour | Close-winner-early check | Ticket=%I64u | FloatingProfit=%.2f | WinnerPoints=%.1f | EarlyCloseThreshold=%.1f",
+                     ticket, profit, winner_points, early_points);
+
+         if(BadBehaviourKicksInFor("close winner early on ticket #" + (string)ticket))
+         {
+            trade.SetExpertMagicNumber(InpMagicNumber);
+            trade.SetDeviationInPoints(InpSlippagePoints);
+            if(trade.PositionClose(ticket))
+            {
+               g_last_error = "";
+               g_last_action = "Bad behaviour closed winner early ticket #" + (string)ticket +
+                               " at " + DoubleToString(winner_points, 1) + " points";
+               Print(g_last_action);
+            }
+            else
+            {
+               g_last_error = "Failed to close winner early ticket #" + (string)ticket +
+                              ": retcode " + (string)trade.ResultRetcode() +
+                              " " + trade.ResultRetcodeDescription();
+               Print("RandomEA bad behaviour | Close-winner-early action failed | " + g_last_error);
+            }
+         }
+      }
+   }
+}
+
+bool GetOpenEaPosition(ulong &ticket, long &position_type, double &profit, double &open_price, double &sl, double &tp)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong selected_ticket = PositionGetTicket(i);
+      if(selected_ticket == 0)
+         continue;
+
+      if((ulong)PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
+         continue;
+
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
+
+      ticket = selected_ticket;
+      position_type = PositionGetInteger(POSITION_TYPE);
+      profit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      open_price = PositionGetDouble(POSITION_PRICE_OPEN);
+      sl = PositionGetDouble(POSITION_SL);
+      tp = PositionGetDouble(POSITION_TP);
+      return true;
+   }
+
+   return false;
+}
+
+void ResetBadPositionState()
+{
+   g_managed_ticket = 0;
+   g_held_loser_ticket = 0;
+   g_next_held_loser_exit_check = 0;
+   g_hold_loser_checked = false;
+   g_close_winner_checked = false;
+}
+
+void ScheduleHeldLoserExitCheck(const ulong ticket)
+{
+   if(!InpBadRandomExitHeldLosers)
+      return;
+
+   g_held_loser_ticket = ticket;
+   g_next_held_loser_exit_check = TimeCurrent() + HeldLoserExitCheckSeconds();
+
+   PrintFormat("RandomEA bad behaviour | Held-loser panic exit scheduled | Ticket=%I64u | FirstCheckIn=%d sec",
+               ticket, HeldLoserExitCheckSeconds());
+}
+
+void ManageRandomHeldLoserExit(const ulong ticket, const double profit)
+{
+   if(!InpEnableBadTraderBehaviour || !InpBadRandomExitHeldLosers)
+      return;
+
+   if(g_held_loser_ticket != ticket || ticket == 0)
+      return;
+
+   datetime now = TimeCurrent();
+   if(g_next_held_loser_exit_check > 0 && now < g_next_held_loser_exit_check)
+      return;
+
+   g_next_held_loser_exit_check = now + HeldLoserExitCheckSeconds();
+
+   if(profit >= 0.0)
+   {
+      PrintFormat("RandomEA bad behaviour | Held-loser panic exit skipped | Ticket=%I64u | Trade is no longer losing | FloatingProfit=%.2f",
+                  ticket, profit);
+      return;
+   }
+
+   PrintFormat("RandomEA bad behaviour | Held-loser panic exit check | Ticket=%I64u | FloatingProfit=%.2f | NextCheckIn=%d sec if skipped",
+               ticket, profit, HeldLoserExitCheckSeconds());
+
+   if(!BadBehaviourKicksInFor("random panic close held loser ticket #" + (string)ticket))
+      return;
+
+   trade.SetExpertMagicNumber(InpMagicNumber);
+   trade.SetDeviationInPoints(InpSlippagePoints);
+   if(trade.PositionClose(ticket))
+   {
+      g_last_error = "";
+      g_last_action = "Bad behaviour panic-closed held losing ticket #" + (string)ticket;
+      Print(g_last_action);
+      g_held_loser_ticket = 0;
+      g_next_held_loser_exit_check = 0;
+   }
+   else
+   {
+      g_last_error = "Failed to panic-close held loser ticket #" + (string)ticket +
+                     ": retcode " + (string)trade.ResultRetcode() +
+                     " " + trade.ResultRetcodeDescription();
+      Print("RandomEA bad behaviour | Held-loser panic exit failed | " + g_last_error);
+   }
+}
+
+int HeldLoserExitCheckSeconds()
+{
+   return MathMax(1, InpBadHeldLoserExitCheckMinutes) * 60;
+}
+
+double WinnerPoints(const long position_type, const double open_price)
+{
+   if(open_price <= 0.0 || _Point <= 0.0)
+      return 0.0;
+
+   double current_price = (position_type == POSITION_TYPE_BUY ?
+                           SymbolInfoDouble(_Symbol, SYMBOL_BID) :
+                           SymbolInfoDouble(_Symbol, SYMBOL_ASK));
+   if(current_price <= 0.0)
+      return 0.0;
+
+   if(position_type == POSITION_TYPE_BUY)
+      return MathMax(0.0, (current_price - open_price) / _Point);
+
+   return MathMax(0.0, (open_price - current_price) / _Point);
+}
+
+double EarlyWinnerClosePoints()
+{
+   double intensity = BadBehaviourIntensity();
+   double fraction_of_tp = 0.60 - (intensity * 0.50);
+   fraction_of_tp = MathMax(0.05, MathMin(0.60, fraction_of_tp));
+
+   return MathMax(1.0, MathMax(1.0, InpTakeProfitPoints) * fraction_of_tp);
+}
+
+bool BadBehaviourKicksIn()
+{
+   return BadBehaviourChanceRoll("", false);
+}
+
+bool BadBehaviourKicksInFor(const string reason)
+{
+   return BadBehaviourChanceRoll(reason, true);
+}
+
+bool BadBehaviourChanceRoll(const string reason, const bool log_decision)
+{
+   double chance = BadBehaviourPercent();
+   if(chance <= 0.0)
+   {
+      if(log_decision)
+         Print("RandomEA bad behaviour | Chance roll skipped | " + reason + " | Badness=0.0%");
+      return false;
+   }
+   if(chance >= 100.0)
+   {
+      if(log_decision)
+         Print("RandomEA bad behaviour | Chance roll forced YES | " + reason + " | Badness=100.0%");
+      return true;
+   }
+
+   double roll = RandomPercent();
+   bool triggered = (roll < chance);
+   if(log_decision)
+   {
+      string result_text = (triggered ? "TRIGGERED" : "skipped");
+      PrintFormat("RandomEA bad behaviour | Chance roll | %s | Roll=%.2f | NeedsBelow=%.2f | Result=%s",
+                  reason, roll, chance, result_text);
+   }
+
+   return triggered;
+}
+
+double BadBehaviourIntensity()
+{
+   return BadBehaviourPercent() / 100.0;
+}
+
+double BadBehaviourPercent()
+{
+   return MathMax(0.0, MathMin(100.0, InpBadBehaviourPercent));
+}
+
+double RandomPercent()
+{
+   return RandomUnit() * 100.0;
+}
+
+double RandomUnit()
+{
+   return (double)MathRand() / 32767.0;
+}
+
+double NormalizeVolume(double volume)
+{
+   double symbol_min = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double symbol_max = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+   if(step <= 0.0)
+      step = 0.01;
+   if(symbol_min <= 0.0)
+      symbol_min = step;
+   if(symbol_max <= 0.0)
+      symbol_max = volume;
+
+   double min_lot = (InpMinLot > 0.0 ? InpMinLot : symbol_min);
+   double max_lot = (InpMaxLot > 0.0 ? InpMaxLot : symbol_max);
+
+   min_lot = MathMax(symbol_min, min_lot);
+   max_lot = MathMin(symbol_max, max_lot);
+
+   volume = MathMax(min_lot, MathMin(max_lot, volume));
+   volume = MathFloor((volume / step) + 0.0000001) * step;
+
+   return NormalizeDouble(volume, VolumeDigits());
+}
+
+int VolumeDigits()
+{
+   double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   if(step <= 0.0)
+      step = 0.01;
+
+   int digits = 0;
+   double value = step;
+   while(digits < 8 && MathAbs(value - MathRound(value)) > 0.00000001)
+   {
+      value *= 10.0;
+      digits++;
+   }
+
+   return digits;
+}
+
+double NormalizePrice(const double price)
+{
+   if(price <= 0.0)
+      return 0.0;
+
+   return NormalizeDouble(price, _Digits);
+}
+
+bool HasOpenPosition()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      if((ulong)PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
+      {
+         return true;
+      }
+   }
+
+   return false;
+}
+
+int CountOpenPositions()
+{
+   int count = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      if((ulong)PositionGetInteger(POSITION_MAGIC) == InpMagicNumber)
+      {
+         count++;
+      }
+   }
+
+   return count;
+}
+
+void UpdateStatus()
+{
+   if(!InpShowChartStatus)
+      return;
+
+   int frequency_seconds = MathMax(1, InpFrequencyMinutes) * 60;
+   int seconds_left = 0;
+   if(g_last_attempt_time > 0)
+      seconds_left = MathMax(0, frequency_seconds - (int)(TimeCurrent() - g_last_attempt_time));
+
+   string text =
+      "RandomEA\n" +
+      "Symbol: " + _Symbol + "\n" +
+      "Frequency: " + (string)MathMax(1, InpFrequencyMinutes) + " minutes\n" +
+      "Next attempt in: " + (string)seconds_left + " sec\n" +
+      "Trade pattern: " + TradePatternName() + "\n" +
+      "Trade side: " + TradeSideName() + "\n" +
+      "Lot mode: " + EnumToString(InpLotMode) + "\n" +
+      "Bad trader: " + BadTraderStatusName() + "\n" +
+      "SL/TP points: " + DoubleToString(InpStopLossPoints, 1) + " / " + DoubleToString(InpTakeProfitPoints, 1) + "\n" +
+      "Open EA trades: " + (string)CountOpenPositions() + "\n" +
+      "Last action: " + g_last_action + "\n";
+
+   if(g_last_error != "")
+      text += "Last error: " + g_last_error + "\n";
+
+   Comment(text);
+}
+
+string BadTraderStatusName()
+{
+   if(!InpEnableBadTraderBehaviour)
+      return "Off";
+
+   string status = DoubleToString(BadBehaviourPercent(), 1) + "%";
+   if(g_revenge_trade_pending)
+      status += " / revenge pending";
+
+   return status;
+}
+
+string TradeSideName()
+{
+   if(InpTradeSide == RANDOM_SIDE_BUY_ONLY)
+      return "Buy only";
+   if(InpTradeSide == RANDOM_SIDE_SELL_ONLY)
+      return "Sell only";
+   return "Both";
+}
+
+string TradePatternName()
+{
+   switch(InpTradePattern)
+   {
+      case RANDOM_PATTERN_RANDOM:
+         return "Random trades";
+      case RANDOM_PATTERN_CHASE_LAST_CANDLE:
+         return "Chase last candle";
+      case RANDOM_PATTERN_FADE_LAST_CANDLE:
+         return "Fade last candle";
+      case RANDOM_PATTERN_BUY_HIGH_SELL_LOW:
+         return "Buy highs / sell lows";
+      case RANDOM_PATTERN_SELL_HIGH_BUY_LOW:
+         return "Sell highs / buy lows";
+      case RANDOM_PATTERN_CHASE_THREE_CANDLES:
+         return "Chase 3-candle move";
+      case RANDOM_PATTERN_FADE_THREE_CANDLES:
+         return "Fade 3-candle move";
+      case RANDOM_PATTERN_CHASE_CURRENT_CANDLE:
+         return "Chase current candle";
+      case RANDOM_PATTERN_FADE_CURRENT_CANDLE:
+         return "Fade current candle";
+      case RANDOM_PATTERN_GAP_CHASE:
+         return "Chase gap from last close";
+      case RANDOM_PATTERN_WIDEST_BAR_CHASE:
+         return "Chase widest recent bar";
+      case RANDOM_PATTERN_PARABOLIC_CHASE:
+         return "Parabolic overextension chase";
+      case RANDOM_PATTERN_MA_EXTREME_CHASE:
+         return "Moving-average extreme chase";
+      case RANDOM_PATTERN_VOLATILITY_SPIKE_CHASE:
+         return "Volatility spike chase";
+      case RANDOM_PATTERN_SQUEEZE_BREAKOUT_CHASE:
+         return "Squeeze breakout chase";
+      case RANDOM_PATTERN_LIQUIDITY_SWEEP_CHASE:
+         return "Liquidity sweep chase";
+      case RANDOM_PATTERN_REJECTION_WICK_CHASE:
+         return "Rejection wick chase";
+      case RANDOM_PATTERN_ROUND_NUMBER_CHASE:
+         return "Round-number drift chase";
+      case RANDOM_PATTERN_MICRO_RANGE_CHASE:
+         return "Micro-range edge chase";
+      case RANDOM_PATTERN_INSIDE_BAR_CHASE:
+         return "Inside-bar fakeout chase";
+      case RANDOM_PATTERN_CHOP_MIDPOINT_CHASE:
+         return "Chop midpoint chase";
+      case RANDOM_PATTERN_BODY_CLIMAX_CHASE:
+         return "Candle-body climax chase";
+      case RANDOM_PATTERN_TAIL_CLIMAX_CHASE:
+         return "Candle-tail climax chase";
+      case RANDOM_PATTERN_NOISE_CORRELATION_CHASE:
+         return "Noise-correlation chase";
+      case RANDOM_PATTERN_REGIME_FLIP_CHASE:
+         return "Regime-flip chase";
+      case RANDOM_PATTERN_PULLBACK_WRONGWAY:
+         return "Wrong-way pullback";
+      case RANDOM_PATTERN_DRIFT_DECAY_CHASE:
+         return "Drift-decay chase";
+      case RANDOM_PATTERN_ENTROPY_CLUSTER_CHASE:
+         return "Entropy-cluster chase";
+      case RANDOM_PATTERN_FRACTAL_EXTREME_CHASE:
+         return "Fractal extreme chase";
+      case RANDOM_PATTERN_SPREAD_PRESSURE_CHASE:
+         return "Spread-pressure chase";
+      case RANDOM_PATTERN_SIGNAL_SOUP_CHASE:
+         return "Overfit signal-soup chase";
+      case RANDOM_PATTERN_RSI_EXTREME_CROSS:
+         return "RSI 70/30 contrarian cross";
+   }
+
+   return EnumToString(InpTradePattern);
+}
+
+string PositionTypeName(const long position_type)
+{
+   if(position_type == POSITION_TYPE_BUY)
+      return "BUY";
+
+   return "SELL";
+}
