@@ -10,6 +10,7 @@
 #define COPIER_FILE_PREFIX "minimal_trade_copier_"
 #define COPY_COMMENT_PREFIX "TC#"
 #define STATS_DASHBOARD_OBJECT "MTC1_STATS_DASHBOARD"
+#define PARTIAL_TP_LINE_PREFIX "MTC1_PARTIAL_TP_"
 
 enum ENUM_COPY_MODE
 {
@@ -20,7 +21,8 @@ enum ENUM_COPY_MODE
 enum ENUM_COPIER_LOT_MODE
 {
    COPIER_LOT_EXACT = 0,
-   COPIER_LOT_FIXED_STARTING_BALANCE_RISK = 1
+   COPIER_LOT_FIXED_STARTING_BALANCE_RISK = 1,
+   COPIER_LOT_CURRENT_BALANCE_RISK = 2
 };
 
 enum ENUM_COPIER_ENTRY_MODE
@@ -75,12 +77,20 @@ input bool AdjustTakeProfitToCopiedRR = true;
 input ENUM_TP_ADJUST_MODE TakeProfitAdjustMode = TP_ADJUST_TARGET_RISK_MONEY;
 input bool PreventReEntryAfterCopiedExit = true;
 input bool EnforceOneTradePerSymbol = true;
+input int MaxCopiedPositionsPerSymbol = 1;
 input bool SkipSenderTradesSeenWhileSymbolBusy = true;
+
+input group "Partial TP Booking"
+input bool EnablePartialTpBooking = false;
+input double PartialTpTriggerPercent = 20.0;
+input double PartialTpClosePercent = 50.0;
 
 input group "Sender Exit Settings"
 input ENUM_SENDER_EXIT_ACTION SenderExitAction = SENDER_EXIT_SMART_PROTECT_PROFIT_CLOSE_LOSS;
 input double SenderExitProfitLockPercent = 0.0;
 input bool UseClosestLegalStopWhenBreakevenTooClose = true;
+input bool AggressiveCloseNearTpOnSenderExit = false;
+input double AggressiveCloseSpreadMultiplier = 1.0;
 
 input group "Bad Behaviour Sender Handling"
 input bool BadBehaviourSenderExitDetection = false;
@@ -128,12 +138,22 @@ struct TradeStats
    double gross_loss;
 };
 
+struct CopiedPositionIdentity
+{
+   long identifier;
+   ulong source_ticket;
+   string symbol;
+   long type;
+};
+
 CTrade trade;
 SourcePosition sources[];
 SourcePosition last_seen_sources[];
 SourcePosition remembered_source_stops[];
+CopiedPositionIdentity remembered_copied_positions[];
 ulong logged_missing_sltp_rr_adjust_sources[];
 ulong logged_incomplete_sltp_rr_adjust_sources[];
+ulong logged_no_reentry_sources[];
 long source_login = 0;
 datetime source_time = 0;
 datetime last_successful_read = 0;
@@ -158,6 +178,7 @@ void OnDeinit(const int reason)
 {
    EventKillTimer();
    ObjectDelete(0, STATS_DASHBOARD_OBJECT);
+   DeletePartialTpLines();
 }
 
 void OnTick()
@@ -186,6 +207,9 @@ void SyncPositions()
    int total = ArraySize(sources);
    for(int i = 0; i < total; i++)
       SyncOneSource(sources[i]);
+
+   ManagePartialTpBooking();
+   RefreshPartialTpLines();
 
    UpdateDashboard();
    UpdateStatsDashboard();
@@ -268,8 +292,7 @@ void SyncOneSource(const SourcePosition &src)
       if(ticket == 0 || !IsOurCopiedPosition())
          continue;
 
-      string comment = PositionGetString(POSITION_COMMENT);
-      if(comment != wanted_comment)
+      if(SourceTicketFromSelectedPosition() != src.ticket)
          continue;
 
       string symbol = PositionGetString(POSITION_SYMBOL);
@@ -314,15 +337,15 @@ void SyncOneSource(const SourcePosition &src)
    string busy_details = "";
    if(EnforceOneTradePerSymbol &&
       active_volume <= step / 2.0 &&
-      HasOtherCopiedExposureForSymbol(target_symbol, src.ticket, busy_details))
+      CopiedExposureLimitReachedForSymbol(target_symbol, src.ticket, busy_details))
    {
       bool already_marked_stale = SkippedSourceAlreadyMarked(src.ticket);
       if(SkipSenderTradesSeenWhileSymbolBusy)
          MarkSourceSkippedWhileSymbolBusy(src.ticket);
 
-      last_action = "One-trade-per-symbol: source #" + (string)src.ticket + " " + src.symbol +
+      last_action = "Symbol exposure limit: source #" + (string)src.ticket + " " + src.symbol +
                     " maps to " + target_symbol + " but " + busy_details +
-                    " is still active. Skipping this sender ticket as stale; copier will wait for a fresh trade after the symbol is free.";
+                    ". Skipping this sender ticket as stale; copier will wait for a fresh trade after the symbol has capacity.";
       if(!already_marked_stale)
          Print(last_action);
       return;
@@ -339,15 +362,19 @@ void SyncOneSource(const SourcePosition &src)
    if(PreventReEntryAfterCopiedExit && active_volume <= step / 2.0 && SourceLifecycleAlreadyStarted(src.ticket))
    {
       last_action = "Source #" + (string)src.ticket + " was already copied and exited; no re-entry";
-      Print(last_action);
+      if(MarkSourceLoggedOnce(logged_no_reentry_sources, src.ticket))
+         Print(last_action);
       return;
    }
 
    double desired_volume = 0.0;
-   if(LotMode == COPIER_LOT_FIXED_STARTING_BALANCE_RISK && active_volume > 0.0)
+   if(IsRiskLotMode() && active_volume > 0.0)
       desired_volume = active_volume;
    else
       desired_volume = DesiredCopiedVolume(src, target_symbol, target_type, false);
+
+   if(SourcePartialTpAlreadyBooked(src.ticket))
+      desired_volume *= 1.0 - (PartialTpClosePercentClamped() / 100.0);
 
    if(desired_volume <= 0.0)
       return;
@@ -393,8 +420,7 @@ void CloseOrphanCopiedPositions()
       if(ticket == 0 || !IsOurCopiedPosition())
          continue;
 
-      string comment = PositionGetString(POSITION_COMMENT);
-      ulong source_ticket = SourceTicketFromComment(comment);
+      ulong source_ticket = SourceTicketFromSelectedPosition();
       if(source_ticket > 0 && !SourceExists(source_ticket))
       {
          HandleCopiedPositionAfterSenderExit(ticket, source_ticket);
@@ -412,6 +438,9 @@ void HandleCopiedPositionAfterSenderExit(const ulong ticket, const ulong source_
       last_action = "Copied trade for source #" + (string)source_ticket + " is already in sender-exit protection";
       return;
    }
+
+   if(AggressiveCloseNearTpOnSenderExit && TryAggressiveCloseNearTpAfterSenderExit(ticket, source_ticket))
+      return;
 
    if(BadBehaviourSenderExitDetection && HandleCopiedPositionByDetectedSenderExit(ticket, source_ticket))
       return;
@@ -516,6 +545,145 @@ bool CopiedPositionIsProfitable(const ulong ticket)
       return current > entry;
 
    return current < entry;
+}
+
+bool TryAggressiveCloseNearTpAfterSenderExit(const ulong ticket, const ulong source_ticket)
+{
+   trade.SetExpertMagicNumber(MagicNumber);
+   trade.SetDeviationInPoints(SlippagePoints);
+
+   if(!PositionSelectByTicket(ticket))
+      return true;
+
+   string symbol = PositionGetString(POSITION_SYMBOL);
+   long type = PositionGetInteger(POSITION_TYPE);
+   double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+   double sl = PositionGetDouble(POSITION_SL);
+   double tp = PositionGetDouble(POSITION_TP);
+   double volume = PositionGetDouble(POSITION_VOLUME);
+   double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+
+   if(entry <= 0.0 || tp <= 0.0 || volume <= 0.0 || bid <= 0.0 || ask <= 0.0)
+      return false;
+
+   double spread = MathAbs(ask - bid) * MathMax(0.0, AggressiveCloseSpreadMultiplier);
+   double raw_spread = MathAbs(ask - bid);
+   double trigger_tp = tp;
+   double current = bid;
+   bool reached = false;
+
+   if(type == POSITION_TYPE_BUY)
+   {
+      trigger_tp = tp - spread;
+      current = bid;
+      reached = (current >= trigger_tp);
+      if(trigger_tp <= entry)
+      {
+         PrintFormat("Aggressive sender-exit TP skipped source #%I64u ticket #%I64u: adjusted BUY TP %.5f is not above entry %.5f",
+                     source_ticket, ticket, trigger_tp, entry);
+         return false;
+      }
+   }
+   else
+   {
+      trigger_tp = tp + spread;
+      current = ask;
+      reached = (current <= trigger_tp);
+      if(trigger_tp >= entry)
+      {
+         PrintFormat("Aggressive sender-exit TP skipped source #%I64u ticket #%I64u: adjusted SELL TP %.5f is not below entry %.5f",
+                     source_ticket, ticket, trigger_tp, entry);
+         return false;
+      }
+   }
+
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double original_tp_profit = ProfitAtPrice(symbol, type, volume, entry, tp);
+   double trigger_tp_profit = ProfitAtPrice(symbol, type, volume, entry, trigger_tp);
+
+   if(reached)
+   {
+      last_action = "Aggressive sender-exit TP close: source #" + (string)source_ticket +
+                    " exited and copied trade #" + (string)ticket +
+                    " reached spread-adjusted TP " + DoubleToString(trigger_tp, digits) +
+                    " (current " + DoubleToString(current, digits) +
+                    ", original TP " + DoubleToString(tp, digits) +
+                    ", spread " + DoubleToString(raw_spread, digits) +
+                    " x" + DoubleToString(MathMax(0.0, AggressiveCloseSpreadMultiplier), 2) +
+                    ", original TP profit $" + DoubleToString(original_tp_profit, 2) +
+                    ", adjusted TP profit $" + DoubleToString(trigger_tp_profit, 2) + ")";
+      Print(last_action);
+      ClosePosition(ticket);
+      return true;
+   }
+
+   double adjusted_tp = FitTakeProfitToBrokerLimits(symbol, type, trigger_tp);
+   adjusted_tp = NormalizePrice(symbol, adjusted_tp);
+   if(adjusted_tp <= 0.0)
+      return false;
+
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   if(point <= 0.0)
+      point = 0.00001;
+
+   bool improves_tp = false;
+   if(type == POSITION_TYPE_BUY)
+      improves_tp = (adjusted_tp < tp - point / 2.0 && adjusted_tp > entry);
+   else
+      improves_tp = (adjusted_tp > tp + point / 2.0 && adjusted_tp < entry);
+
+   if(!improves_tp)
+   {
+      PrintFormat("Aggressive sender-exit TP no-change source #%I64u ticket #%I64u: current %.5f has not reached adjusted TP %.5f; existing TP %.5f is already equal/better | spread %.5f x%.2f | original TP profit $%.2f | adjusted TP profit $%.2f",
+                  source_ticket,
+                  ticket,
+                  current,
+                  adjusted_tp,
+                  tp,
+                  raw_spread,
+                  MathMax(0.0, AggressiveCloseSpreadMultiplier),
+                  original_tp_profit,
+                  trigger_tp_profit);
+      return false;
+   }
+
+   ResetLastError();
+   double adjusted_tp_profit = ProfitAtPrice(symbol, type, volume, entry, adjusted_tp);
+   if(trade.PositionModify(ticket, sl, adjusted_tp))
+   {
+      last_action = "Aggressive sender-exit TP armed: moved copied trade #" + (string)ticket +
+                    " TP from " + DoubleToString(tp, digits) +
+                    " to spread-adjusted " + DoubleToString(adjusted_tp, digits) +
+                    " after source #" + (string)source_ticket +
+                    " exited; spread " + DoubleToString(raw_spread, digits) +
+                    " x" + DoubleToString(MathMax(0.0, AggressiveCloseSpreadMultiplier), 2) +
+                    ", original TP profit $" + DoubleToString(original_tp_profit, 2) +
+                    ", new TP profit $" + DoubleToString(adjusted_tp_profit, 2) +
+                    "; normal sender-exit protection still applies";
+      Print(last_action);
+      return false;
+   }
+
+   RememberTradeError("Aggressive sender-exit TP modify failed ticket #" + (string)ticket);
+   return false;
+}
+
+double ProfitAtPrice(const string symbol,
+                     const long type,
+                     const double volume,
+                     const double entry,
+                     const double exit_price)
+{
+   if(volume <= 0.0 || entry <= 0.0 || exit_price <= 0.0)
+      return 0.0;
+
+   ENUM_ORDER_TYPE order_type = (type == POSITION_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+   double profit = 0.0;
+   if(!OrderCalcProfit(order_type, symbol, volume, entry, exit_price, profit))
+      return 0.0;
+
+   return profit;
 }
 
 bool SourceExists(const ulong source_ticket)
@@ -742,7 +910,7 @@ void RememberActiveCopiedSourceLifecycles()
       if(ticket == 0 || !IsOurCopiedPosition())
          continue;
 
-      ulong source_ticket = SourceTicketFromComment(PositionGetString(POSITION_COMMENT));
+      ulong source_ticket = SourceTicketFromSelectedPosition();
       if(source_ticket > 0)
          MarkSourceLifecycleStarted(source_ticket);
    }
@@ -799,6 +967,19 @@ void MarkSourceSkippedWhileSymbolBusy(const ulong source_ticket)
       GlobalVariableSet(SourceSkippedGlobalName(source_ticket), (double)TimeCurrent());
 }
 
+bool SourcePartialTpAlreadyBooked(const ulong source_ticket)
+{
+   return GlobalVariableCheck(SourcePartialTpBookedGlobalName(source_ticket));
+}
+
+void MarkSourcePartialTpBooked(const ulong source_ticket)
+{
+   if(source_ticket == 0)
+      return;
+
+   GlobalVariableSet(SourcePartialTpBookedGlobalName(source_ticket), (double)TimeCurrent());
+}
+
 string SourceLifecycleGlobalName(const ulong source_ticket)
 {
    return "MTC1_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket;
@@ -812,6 +993,11 @@ string SourceExitProtectedGlobalName(const ulong source_ticket)
 string SourceSkippedGlobalName(const ulong source_ticket)
 {
    return "MTC1_SKIP_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket;
+}
+
+string SourcePartialTpBookedGlobalName(const ulong source_ticket)
+{
+   return "MTC1_PTP_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket;
 }
 
 string ShortSafeKey(const string value, const int max_length)
@@ -829,15 +1015,13 @@ string ShortSafeKey(const string value, const int max_length)
 double CurrentCopiedVolume(const ulong source_ticket, const string symbol, const long type)
 {
    double volume = 0.0;
-   string wanted_comment = CopyComment(source_ticket);
-
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
       if(ticket == 0 || !IsOurCopiedPosition())
          continue;
 
-      if(PositionGetString(POSITION_COMMENT) == wanted_comment &&
+      if(SourceTicketFromSelectedPosition() == source_ticket &&
          PositionGetString(POSITION_SYMBOL) == symbol &&
          PositionGetInteger(POSITION_TYPE) == type)
       {
@@ -870,8 +1054,32 @@ double CurrentCopiedPendingVolume(const ulong source_ticket, const string symbol
    return volume;
 }
 
-bool HasOtherCopiedExposureForSymbol(const string symbol, const ulong source_ticket, string &details)
+bool CopiedExposureLimitReachedForSymbol(const string symbol, const ulong source_ticket, string &details)
 {
+   int max_positions = MaxCopiedPositionsAllowedPerSymbol();
+   if(max_positions <= 0)
+   {
+      details = "";
+      return false;
+   }
+
+   int exposure_count = CountOtherCopiedExposureForSymbol(symbol, source_ticket, details);
+   if(exposure_count < max_positions)
+   {
+      details = "";
+      return false;
+   }
+
+   details = (string)exposure_count + "/" + (string)max_positions + " copied position/order slot(s) are already used on " + symbol +
+             (details == "" ? "" : "; " + details);
+   return true;
+}
+
+int CountOtherCopiedExposureForSymbol(const string symbol, const ulong source_ticket, string &first_detail)
+{
+   int count = 0;
+   first_detail = "";
+
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -881,12 +1089,13 @@ bool HasOtherCopiedExposureForSymbol(const string symbol, const ulong source_tic
       if(PositionGetString(POSITION_SYMBOL) != symbol)
          continue;
 
-      ulong other_source = SourceTicketFromComment(PositionGetString(POSITION_COMMENT));
+      ulong other_source = SourceTicketFromSelectedPosition();
       if(other_source == source_ticket)
          continue;
 
-      details = "copied position #" + (string)ticket + " from source #" + (string)other_source;
-      return true;
+      count++;
+      if(first_detail == "")
+         first_detail = "copied position #" + (string)ticket + " from source #" + (string)other_source;
    }
 
    for(int i = OrdersTotal() - 1; i >= 0; i--)
@@ -902,25 +1111,31 @@ bool HasOtherCopiedExposureForSymbol(const string symbol, const ulong source_tic
       if(other_source == source_ticket)
          continue;
 
-      details = "copied pending order #" + (string)ticket + " from source #" + (string)other_source;
-      return true;
+      count++;
+      if(first_detail == "")
+         first_detail = "copied pending order #" + (string)ticket + " from source #" + (string)other_source;
    }
 
-   details = "";
-   return false;
+   return count;
+}
+
+int MaxCopiedPositionsAllowedPerSymbol()
+{
+   if(MaxCopiedPositionsPerSymbol <= 0)
+      return 0;
+
+   return MaxCopiedPositionsPerSymbol;
 }
 
 void ReduceCopiedVolume(const ulong source_ticket, const string symbol, const long type, double volume_to_close)
 {
-   string wanted_comment = CopyComment(source_ticket);
-
    for(int i = PositionsTotal() - 1; i >= 0 && volume_to_close > 0.0; i--)
    {
       ulong ticket = PositionGetTicket(i);
       if(ticket == 0 || !IsOurCopiedPosition())
          continue;
 
-      if(PositionGetString(POSITION_COMMENT) != wanted_comment ||
+      if(SourceTicketFromSelectedPosition() != source_ticket ||
          PositionGetString(POSITION_SYMBOL) != symbol ||
          PositionGetInteger(POSITION_TYPE) != type)
       {
@@ -943,9 +1158,230 @@ void ReduceCopiedVolume(const ulong source_ticket, const string symbol, const lo
    }
 }
 
+void ManagePartialTpBooking()
+{
+   if(!EnablePartialTpBooking)
+      return;
+
+   double trigger_percent = PartialTpTriggerPercentClamped();
+   double close_percent = PartialTpClosePercentClamped();
+   if(trigger_percent <= 0.0 || close_percent <= 0.0)
+      return;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !IsOurCopiedPosition())
+         continue;
+
+      ulong source_ticket = SourceTicketFromSelectedPosition();
+      if(source_ticket == 0 || SourcePartialTpAlreadyBooked(source_ticket))
+         continue;
+
+      TryBookPartialAtTpProgress(ticket, source_ticket, trigger_percent, close_percent);
+   }
+}
+
+void RefreshPartialTpLines()
+{
+   DeletePartialTpLines();
+
+   if(!EnablePartialTpBooking)
+      return;
+
+   double trigger_percent = PartialTpTriggerPercentClamped();
+   double close_percent = PartialTpClosePercentClamped();
+   if(trigger_percent <= 0.0 || close_percent <= 0.0)
+      return;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !IsOurCopiedPosition())
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      if(symbol != _Symbol)
+         continue;
+
+      ulong source_ticket = SourceTicketFromSelectedPosition();
+      if(source_ticket == 0 || SourcePartialTpAlreadyBooked(source_ticket))
+         continue;
+
+      double trigger_price = PartialTpTriggerPriceForPosition(symbol,
+                                                              PositionGetInteger(POSITION_TYPE),
+                                                              PositionGetDouble(POSITION_PRICE_OPEN),
+                                                              PositionGetDouble(POSITION_TP),
+                                                              trigger_percent);
+      if(trigger_price <= 0.0)
+         continue;
+
+      DrawPartialTpLine(source_ticket, symbol, trigger_price, close_percent, trigger_percent);
+   }
+}
+
+double PartialTpTriggerPriceForPosition(const string symbol,
+                                        const long type,
+                                        const double entry,
+                                        const double tp,
+                                        const double trigger_percent)
+{
+   if(entry <= 0.0 || tp <= 0.0)
+      return 0.0;
+
+   if(type == POSITION_TYPE_BUY && tp <= entry)
+      return 0.0;
+   if(type == POSITION_TYPE_SELL && tp >= entry)
+      return 0.0;
+
+   double price = entry + ((tp - entry) * (trigger_percent / 100.0));
+   return NormalizePrice(symbol, price);
+}
+
+void DrawPartialTpLine(const ulong source_ticket,
+                       const string symbol,
+                       const double price,
+                       const double close_percent,
+                       const double trigger_percent)
+{
+   string name = PartialTpLineName(source_ticket);
+   if(ObjectCreate(0, name, OBJ_HLINE, 0, 0, price))
+   {
+      ObjectSetInteger(0, name, OBJPROP_COLOR, clrDeepSkyBlue);
+      ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DASH);
+      ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, name, OBJPROP_BACK, false);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   }
+
+   ObjectSetDouble(0, name, OBJPROP_PRICE, price);
+   ObjectSetString(0, name, OBJPROP_TEXT,
+                   "Partial TP " + DoubleToString(close_percent, 2) +
+                   "% at " + DoubleToString(trigger_percent, 2) +
+                   "% | source #" + (string)source_ticket +
+                   " | " + symbol + " " +
+                   DoubleToString(price, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)));
+}
+
+void DeletePartialTpLines()
+{
+   string own_prefix = PartialTpLineNamePrefix();
+   for(int i = ObjectsTotal(0, -1, -1) - 1; i >= 0; i--)
+   {
+      string name = ObjectName(0, i, -1, -1);
+      if(StringFind(name, own_prefix) == 0)
+         ObjectDelete(0, name);
+   }
+}
+
+string PartialTpLineNamePrefix()
+{
+   return PARTIAL_TP_LINE_PREFIX + (string)MagicNumber + "_" +
+          ShortSafeKey(CopierKey, 12) + "_" +
+          (string)source_login + "_";
+}
+
+string PartialTpLineName(const ulong source_ticket)
+{
+   return PartialTpLineNamePrefix() + (string)source_ticket;
+}
+
+bool TryBookPartialAtTpProgress(const ulong ticket,
+                                const ulong source_ticket,
+                                const double trigger_percent,
+                                const double close_percent)
+{
+   if(!PositionSelectByTicket(ticket))
+      return false;
+
+   string symbol = PositionGetString(POSITION_SYMBOL);
+   long type = PositionGetInteger(POSITION_TYPE);
+   double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+   double tp = PositionGetDouble(POSITION_TP);
+   double volume = PositionGetDouble(POSITION_VOLUME);
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+
+   if(entry <= 0.0 || tp <= 0.0 || volume <= 0.0)
+      return false;
+
+   double current = 0.0;
+   double tp_distance = 0.0;
+   double current_distance = 0.0;
+
+   if(type == POSITION_TYPE_BUY)
+   {
+      if(tp <= entry)
+         return false;
+
+      current = SymbolInfoDouble(symbol, SYMBOL_BID);
+      tp_distance = tp - entry;
+      current_distance = current - entry;
+   }
+   else if(type == POSITION_TYPE_SELL)
+   {
+      if(tp >= entry)
+         return false;
+
+      current = SymbolInfoDouble(symbol, SYMBOL_ASK);
+      tp_distance = entry - tp;
+      current_distance = entry - current;
+   }
+   else
+   {
+      return false;
+   }
+
+   if(tp_distance <= 0.0)
+      return false;
+
+   double progress = (current_distance / tp_distance) * 100.0;
+   if(progress + 0.000001 < trigger_percent)
+      return false;
+
+   double close_volume = NormalizePartialCloseVolume(symbol, volume, close_percent);
+   double step = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+   if(step <= 0.0)
+      step = 0.01;
+
+   if(close_volume <= 0.0)
+   {
+      last_action = "Partial TP booking skipped source #" + (string)source_ticket +
+                    " because the requested close volume would not leave a valid remaining lot";
+      return false;
+   }
+
+   bool ok = false;
+   if(close_volume >= volume - (step / 2.0))
+      ok = ClosePosition(ticket);
+   else
+      ok = ClosePartialPosition(ticket, close_volume);
+
+   if(!ok)
+      return false;
+
+   MarkSourcePartialTpBooked(source_ticket);
+   last_action = "Partial TP booking: source #" + (string)source_ticket +
+                 " reached " + DoubleToString(progress, 2) + "% of entry-to-TP distance" +
+                 " at " + DoubleToString(current, digits) +
+                 "; closed " + DoubleToString(close_percent, 2) + "% volume";
+   Print(last_action);
+   return true;
+}
+
+double PartialTpTriggerPercentClamped()
+{
+   return MathMax(0.0, MathMin(100.0, PartialTpTriggerPercent));
+}
+
+double PartialTpClosePercentClamped()
+{
+   return MathMax(0.0, MathMin(100.0, PartialTpClosePercent));
+}
+
 bool OpenCopiedPosition(const SourcePosition &src, const string symbol, const long type, double volume)
 {
-   if(LotMode == COPIER_LOT_FIXED_STARTING_BALANCE_RISK)
+   if(IsRiskLotMode())
       volume = DesiredCopiedVolume(src, symbol, type, true);
 
    volume = NormalizeVolume(symbol, volume);
@@ -971,7 +1407,7 @@ bool OpenCopiedPosition(const SourcePosition &src, const string symbol, const lo
 
    if(!ok)
    {
-      if(LotMode == COPIER_LOT_FIXED_STARTING_BALANCE_RISK && CopyStopLossTakeProfit)
+      if(IsRiskLotMode() && CopyStopLossTakeProfit)
       {
          last_action = "Risk-sized source #" + (string)src.ticket + " was not opened because copied SL/TP is invalid";
          Print(last_action);
@@ -1101,6 +1537,7 @@ ulong FindNewestCopiedPosition(const string comment, const string symbol, const 
 {
    ulong newest_ticket = 0;
    long newest_time = 0;
+   ulong wanted_source_ticket = SourceTicketFromComment(comment);
 
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -1108,7 +1545,7 @@ ulong FindNewestCopiedPosition(const string comment, const string symbol, const 
       if(ticket == 0 || !IsOurCopiedPosition())
          continue;
 
-      if(PositionGetString(POSITION_COMMENT) != comment ||
+      if(SourceTicketFromSelectedPosition() != wanted_source_ticket ||
          PositionGetString(POSITION_SYMBOL) != symbol ||
          PositionGetInteger(POSITION_TYPE) != type)
       {
@@ -1232,7 +1669,7 @@ double SyncPendingOrdersForSource(const SourcePosition &src, const string symbol
 
 bool OpenCopiedPendingOrder(const SourcePosition &src, const string symbol, const long target_type, double volume)
 {
-   if(LotMode == COPIER_LOT_FIXED_STARTING_BALANCE_RISK)
+   if(IsRiskLotMode())
       volume = DesiredCopiedVolume(src, symbol, target_type, true);
 
    volume = NormalizeVolume(symbol, volume);
@@ -1267,7 +1704,7 @@ bool OpenCopiedPendingOrder(const SourcePosition &src, const string symbol, cons
 
    if(!ok && (sl > 0.0 || tp > 0.0))
    {
-      if(LotMode == COPIER_LOT_FIXED_STARTING_BALANCE_RISK && CopyStopLossTakeProfit)
+      if(IsRiskLotMode() && CopyStopLossTakeProfit)
       {
          last_action = "Risk-sized source #" + (string)src.ticket + " pending order was not placed because copied SL/TP is invalid";
          Print(last_action);
@@ -1677,7 +2114,8 @@ double DesiredCopiedVolume(const SourcePosition &src, const string target_symbol
 
 double CalculateFixedRiskVolume(const SourcePosition &src, const string symbol, const long target_type, const double sl, const bool log_details)
 {
-   double risk_amount = RiskStartingBalance * (RiskPerTradePercent / 100.0);
+   double risk_base = RiskSizingBalanceBase();
+   double risk_amount = risk_base * (RiskPerTradePercent / 100.0);
    double entry_price = RiskSizingEntryPrice(src, symbol, target_type);
    if(risk_amount <= 0.0 || entry_price <= 0.0 || sl <= 0.0)
       return 0.0;
@@ -1711,8 +2149,8 @@ double CalculateFixedRiskVolume(const SourcePosition &src, const string symbol, 
 
    if(log_details && LogRiskSizingDetails)
    {
-      PrintFormat("Risk Sizing: Source #%I64u | Symbol=%s | Direction=%s | StartingBalance=%.2f | RiskPercent=%.2f%% | RiskMoney=%.2f",
-                  src.ticket, symbol, PositionTypeName(target_type), RiskStartingBalance, RiskPerTradePercent, risk_amount);
+      PrintFormat("Risk Sizing: Source #%I64u | Symbol=%s | Direction=%s | RiskBaseMode=%s | RiskBase=%.2f | RiskPercent=%.2f%% | RiskMoney=%.2f",
+                  src.ticket, symbol, PositionTypeName(target_type), EnumToString(LotMode), risk_base, RiskPerTradePercent, risk_amount);
       PrintFormat("Risk Sizing: Entry=%.5f | SL=%.5f | Distance=%.1f points | LossPer1Lot=%.2f | RawLot=%.8f | NormalizedLot=%.2f | ExpectedRisk=%.2f",
                   entry_price, sl, MathAbs(entry_price - sl) / SymbolInfoDouble(symbol, SYMBOL_POINT),
                   loss_per_lot, raw_volume, normalized_volume, expected_risk);
@@ -1721,6 +2159,14 @@ double CalculateFixedRiskVolume(const SourcePosition &src, const string symbol, 
    }
 
    return normalized_volume;
+}
+
+double RiskSizingBalanceBase()
+{
+   if(LotMode == COPIER_LOT_CURRENT_BALANCE_RISK)
+      return AccountInfoDouble(ACCOUNT_BALANCE);
+
+   return RiskStartingBalance;
 }
 
 double RiskSizingEntryPrice(const SourcePosition &src, const string symbol, const long target_type)
@@ -1848,8 +2294,86 @@ bool IsOurCopiedPosition()
    if((ulong)PositionGetInteger(POSITION_MAGIC) != MagicNumber)
       return false;
 
-   string comment = PositionGetString(POSITION_COMMENT);
-   return StringFind(comment, COPY_COMMENT_PREFIX) == 0;
+   return SourceTicketFromSelectedPosition() > 0;
+}
+
+ulong SourceTicketFromSelectedPosition()
+{
+   ulong source_ticket = SourceTicketFromComment(PositionGetString(POSITION_COMMENT));
+   if(source_ticket > 0)
+   {
+      RememberSelectedCopiedPositionIdentity(source_ticket);
+      return source_ticket;
+   }
+
+   return RememberedSourceTicketForSelectedPosition();
+}
+
+void RememberSelectedCopiedPositionIdentity(const ulong source_ticket)
+{
+   if(source_ticket == 0)
+      return;
+
+   long identifier = SelectedPositionIdentifier();
+   if(identifier <= 0)
+      return;
+
+   int total = ArraySize(remembered_copied_positions);
+   for(int i = 0; i < total; i++)
+   {
+      if(remembered_copied_positions[i].identifier == identifier)
+      {
+         remembered_copied_positions[i].source_ticket = source_ticket;
+         remembered_copied_positions[i].symbol = PositionGetString(POSITION_SYMBOL);
+         remembered_copied_positions[i].type = PositionGetInteger(POSITION_TYPE);
+         GlobalVariableSet(PositionIdentityGlobalName(identifier), (double)source_ticket);
+         return;
+      }
+   }
+
+   ArrayResize(remembered_copied_positions, total + 1);
+   remembered_copied_positions[total].identifier = identifier;
+   remembered_copied_positions[total].source_ticket = source_ticket;
+   remembered_copied_positions[total].symbol = PositionGetString(POSITION_SYMBOL);
+   remembered_copied_positions[total].type = PositionGetInteger(POSITION_TYPE);
+   GlobalVariableSet(PositionIdentityGlobalName(identifier), (double)source_ticket);
+}
+
+ulong RememberedSourceTicketForSelectedPosition()
+{
+   long identifier = SelectedPositionIdentifier();
+   if(identifier <= 0)
+      return 0;
+
+   int total = ArraySize(remembered_copied_positions);
+   for(int i = 0; i < total; i++)
+   {
+      if(remembered_copied_positions[i].identifier == identifier)
+         return remembered_copied_positions[i].source_ticket;
+   }
+
+   string global_name = PositionIdentityGlobalName(identifier);
+   if(GlobalVariableCheck(global_name))
+      return (ulong)GlobalVariableGet(global_name);
+
+   return 0;
+}
+
+long SelectedPositionIdentifier()
+{
+   long identifier = PositionGetInteger(POSITION_IDENTIFIER);
+   if(identifier <= 0)
+      identifier = PositionGetInteger(POSITION_TICKET);
+
+   return identifier;
+}
+
+string PositionIdentityGlobalName(const long identifier)
+{
+   return "MTC1_POS_" + (string)MagicNumber + "_" +
+          ShortSafeKey(CopierKey, 12) + "_" +
+          (string)source_login + "_" +
+          (string)identifier;
 }
 
 bool IsOurCopiedOrder()
@@ -1941,6 +2465,12 @@ bool IsPendingEntryMode()
    return EntryMode == COPIER_ENTRY_PENDING_ORDER;
 }
 
+bool IsRiskLotMode()
+{
+   return LotMode == COPIER_LOT_FIXED_STARTING_BALANCE_RISK ||
+          LotMode == COPIER_LOT_CURRENT_BALANCE_RISK;
+}
+
 double NormalizeVolume(const string symbol, double volume)
 {
    double min_volume = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
@@ -1959,6 +2489,38 @@ double NormalizeVolume(const string symbol, double volume)
 
    int digits = VolumeDigits(step);
    return NormalizeDouble(volume, digits);
+}
+
+double NormalizePartialCloseVolume(const string symbol, const double position_volume, const double close_percent)
+{
+   double min_volume = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   double step = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+
+   if(step <= 0.0)
+      step = 0.01;
+   if(min_volume <= 0.0)
+      min_volume = step;
+
+   int digits = VolumeDigits(step);
+   double total_volume = NormalizeDouble(position_volume, digits);
+   double requested_volume = total_volume * (MathMax(0.0, MathMin(100.0, close_percent)) / 100.0);
+
+   if(total_volume <= 0.0 || requested_volume <= 0.0)
+      return 0.0;
+
+   if(close_percent >= 100.0)
+      return total_volume;
+
+   double close_volume = MathFloor((requested_volume / step) + 0.0000001) * step;
+   close_volume = NormalizeDouble(close_volume, digits);
+
+   while(close_volume > 0.0 && total_volume - close_volume < min_volume - (step / 2.0))
+      close_volume = NormalizeDouble(close_volume - step, digits);
+
+   if(close_volume < min_volume)
+      return 0.0;
+
+   return close_volume;
 }
 
 int VolumeDigits(const double step)
@@ -2111,12 +2673,14 @@ void UpdateDashboard()
        "Key: " + SafeKey(CopierKey) + "\n" +
        "Mode: " + mode + "\n" +
        "Entry: " + EntryModeStatusLine() + "\n" +
+       "Partial TP booking: " + PartialTpBookingStatusLine() + "\n" +
        "Sender exit: " + SenderExitActionStatusLine() + "\n" +
+       "Aggressive sender-exit TP: " + AggressiveSenderExitTpStatusLine() + "\n" +
        "Bad behaviour exits: " + BadBehaviourSenderHandlingStatusLine() + "\n" +
        LotSizingStatusLine() +
        "Copy SL/TP: " + (CopyStopLossTakeProfit ? "yes" : "no") + "\n" +
        "TP RR adjust: " + (AdjustTakeProfitToCopiedRR ? "yes" : "no") + "\n" +
-       "One trade per symbol: " + OneTradePerSymbolStatusLine() + "\n" +
+       "Symbol exposure limit: " + OneTradePerSymbolStatusLine() + "\n" +
        "Symbol mapping: " + SymbolMappingStatusLine() + "\n" +
        "Sender account: " + (string)source_login + "\n" +
        "Sender open trades: " + (string)ArraySize(sources) + "\n" +
@@ -2139,6 +2703,16 @@ string EntryModeStatusLine()
    return "market order immediately";
 }
 
+string PartialTpBookingStatusLine()
+{
+   if(!EnablePartialTpBooking)
+      return "off";
+
+   return "close " + DoubleToString(PartialTpClosePercentClamped(), 2) +
+          "% at " + DoubleToString(PartialTpTriggerPercentClamped(), 2) +
+          "% of entry-to-TP distance";
+}
+
 string ProfitLockStatusLine()
 {
    double percent = MathMax(0.0, MathMin(100.0, SenderExitProfitLockPercent));
@@ -2159,6 +2733,14 @@ string SenderExitActionStatusLine()
    return "smart: protect profit, close loss";
 }
 
+string AggressiveSenderExitTpStatusLine()
+{
+   if(!AggressiveCloseNearTpOnSenderExit)
+      return "off";
+
+   return "on, spread x" + DoubleToString(MathMax(0.0, AggressiveCloseSpreadMultiplier), 2);
+}
+
 string BadBehaviourSenderHandlingStatusLine()
 {
    if(!BadBehaviourSenderExitDetection)
@@ -2173,7 +2755,9 @@ string OneTradePerSymbolStatusLine()
    if(!EnforceOneTradePerSymbol)
       return "off";
 
-   string text = "on";
+   int max_positions = MaxCopiedPositionsAllowedPerSymbol();
+   string max_text = (max_positions <= 0 ? "unlimited" : (string)max_positions);
+   string text = "on, max " + max_text + " copied position/order slot(s) per symbol";
    if(SkipSenderTradesSeenWhileSymbolBusy)
       text += ", skip stale busy-ticket signals";
    else
@@ -2229,6 +2813,15 @@ string LotSizingStatusLine()
       double risk_amount = RiskStartingBalance * (RiskPerTradePercent / 100.0);
       return "Lot sizing: fixed risk " + DoubleToString(RiskPerTradePercent, 2) +
              "% of " + DoubleToString(RiskStartingBalance, 2) +
+             " = " + DoubleToString(risk_amount, 2) + "\n";
+   }
+
+   if(LotMode == COPIER_LOT_CURRENT_BALANCE_RISK)
+   {
+      double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+      double risk_amount = balance * (RiskPerTradePercent / 100.0);
+      return "Lot sizing: current balance risk " + DoubleToString(RiskPerTradePercent, 2) +
+             "% of " + DoubleToString(balance, 2) +
              " = " + DoubleToString(risk_amount, 2) + "\n";
    }
 
