@@ -58,6 +58,18 @@ enum ENUM_SENDER_EXIT_REASON
    SENDER_EXIT_REASON_RANDOM_OR_MANUAL = 3
 };
 
+enum ENUM_PROFIT_TRAIL_SL_MODE
+{
+   PROFIT_TRAIL_SL_TO_BREAKEVEN = 0,
+   PROFIT_TRAIL_SL_REDUCE_ORIGINAL_LOSS = 1
+};
+
+enum ENUM_SENDER_EXIT_PROFIT_LOCK_BASIS
+{
+   SENDER_EXIT_LOCK_CURRENT_OPEN_PROFIT = 0,
+   SENDER_EXIT_LOCK_FULL_TP_PROFIT = 1
+};
+
 input group "Signal Settings"
 input string CopierKey = "client1";
 input ENUM_COPY_MODE CopyMode = COPY_EXACT_OPPOSITE;
@@ -85,9 +97,16 @@ input bool EnablePartialTpBooking = false;
 input double PartialTpTriggerPercent = 20.0;
 input double PartialTpClosePercent = 50.0;
 
+input group "Profit Progress Trailing SL"
+input bool EnableProfitProgressTrailingSL = false;
+input double ProfitTrailTriggerPercent = 40.0;
+input ENUM_PROFIT_TRAIL_SL_MODE ProfitTrailStopMode = PROFIT_TRAIL_SL_TO_BREAKEVEN;
+input double ProfitTrailRemainingLossPercent = 0.0;
+
 input group "Sender Exit Settings"
 input ENUM_SENDER_EXIT_ACTION SenderExitAction = SENDER_EXIT_SMART_PROTECT_PROFIT_CLOSE_LOSS;
 input double SenderExitProfitLockPercent = 0.0;
+input ENUM_SENDER_EXIT_PROFIT_LOCK_BASIS SenderExitProfitLockBasis = SENDER_EXIT_LOCK_CURRENT_OPEN_PROFIT;
 input bool UseClosestLegalStopWhenBreakevenTooClose = true;
 input bool AggressiveCloseNearTpOnSenderExit = false;
 input double AggressiveCloseSpreadMultiplier = 1.0;
@@ -98,7 +117,7 @@ input double BadBehaviourTpExitProgressPercent = 50.0;
 input double BadBehaviourSlExitProgressPercent = 40.0;
 
 input group "Lot Sizing"
-input double LotMultiplier = 1.0;
+input double LotMultiplier = 1.0;                         // Exact lot multiplier: 0.5=half, 1=same, 2=double
 input ENUM_COPIER_LOT_MODE LotMode = COPIER_LOT_EXACT;
 input double RiskStartingBalance = 10000.0;
 input double RiskPerTradePercent = 1.0;
@@ -208,6 +227,7 @@ void SyncPositions()
    for(int i = 0; i < total; i++)
       SyncOneSource(sources[i]);
 
+   ManageProfitProgressTrailingSL();
    ManagePartialTpBooking();
    RefreshPartialTpLines();
 
@@ -430,6 +450,14 @@ void CloseOrphanCopiedPositions()
 
 void HandleCopiedPositionAfterSenderExit(const ulong ticket, const ulong source_ticket)
 {
+   if(EnableProfitProgressTrailingSL)
+   {
+      last_action = "Closing copied trade because source #" + (string)source_ticket +
+                    " exited; profit-progress trailing SL mode is active";
+      ClosePosition(ticket);
+      return;
+   }
+
    if(SourceExitAlreadyProtected(source_ticket))
    {
       if(CopiedPositionIsProfitable(ticket))
@@ -980,6 +1008,19 @@ void MarkSourcePartialTpBooked(const ulong source_ticket)
    GlobalVariableSet(SourcePartialTpBookedGlobalName(source_ticket), (double)TimeCurrent());
 }
 
+bool SourceProfitTrailAlreadyApplied(const ulong source_ticket)
+{
+   return GlobalVariableCheck(SourceProfitTrailGlobalName(source_ticket));
+}
+
+void MarkSourceProfitTrailApplied(const ulong source_ticket)
+{
+   if(source_ticket == 0)
+      return;
+
+   GlobalVariableSet(SourceProfitTrailGlobalName(source_ticket), (double)TimeCurrent());
+}
+
 string SourceLifecycleGlobalName(const ulong source_ticket)
 {
    return "MTC1_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket;
@@ -998,6 +1039,11 @@ string SourceSkippedGlobalName(const ulong source_ticket)
 string SourcePartialTpBookedGlobalName(const ulong source_ticket)
 {
    return "MTC1_PTP_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket;
+}
+
+string SourceProfitTrailGlobalName(const ulong source_ticket)
+{
+   return "MTC1_PTRAIL_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket;
 }
 
 string ShortSafeKey(const string value, const int max_length)
@@ -1367,6 +1413,248 @@ bool TryBookPartialAtTpProgress(const ulong ticket,
                  "; closed " + DoubleToString(close_percent, 2) + "% volume";
    Print(last_action);
    return true;
+}
+
+void ManageProfitProgressTrailingSL()
+{
+   if(!EnableProfitProgressTrailingSL)
+      return;
+
+   double trigger_percent = ProfitTrailTriggerPercentClamped();
+   if(trigger_percent <= 0.0)
+      return;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !IsOurCopiedPosition())
+         continue;
+
+      ulong source_ticket = SourceTicketFromSelectedPosition();
+      if(source_ticket == 0)
+         continue;
+      if(SourceProfitTrailAlreadyApplied(source_ticket))
+         continue;
+
+      TryTrailSlAtProfitProgress(ticket, source_ticket, trigger_percent);
+   }
+}
+
+bool TryTrailSlAtProfitProgress(const ulong ticket,
+                                const ulong source_ticket,
+                                const double trigger_percent)
+{
+   trade.SetExpertMagicNumber(MagicNumber);
+   trade.SetDeviationInPoints(SlippagePoints);
+
+   if(!PositionSelectByTicket(ticket))
+      return false;
+
+   string symbol = PositionGetString(POSITION_SYMBOL);
+   long type = PositionGetInteger(POSITION_TYPE);
+   double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+   double old_sl = PositionGetDouble(POSITION_SL);
+   double tp = PositionGetDouble(POSITION_TP);
+   double volume = PositionGetDouble(POSITION_VOLUME);
+   double current = (type == POSITION_TYPE_BUY ? SymbolInfoDouble(symbol, SYMBOL_BID) : SymbolInfoDouble(symbol, SYMBOL_ASK));
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+
+   if(entry <= 0.0 || tp <= 0.0 || volume <= 0.0 || current <= 0.0)
+      return false;
+
+   double full_tp_profit = ProfitAtPrice(symbol, type, volume, entry, tp);
+   double current_profit = ProfitAtPrice(symbol, type, volume, entry, current);
+   if(full_tp_profit <= 0.0 || current_profit <= 0.0)
+      return false;
+
+   double progress = (current_profit / full_tp_profit) * 100.0;
+   if(progress + 0.000001 < trigger_percent)
+      return false;
+
+   double desired_sl = ProfitTrailDesiredStop(symbol, type, volume, entry, old_sl);
+   if(desired_sl <= 0.0)
+      return false;
+
+   double new_sl = FitStopToBrokerLimits(symbol, type, desired_sl);
+   new_sl = NormalizePrice(symbol, new_sl);
+   if(new_sl <= 0.0)
+      return false;
+
+   bool desired_requires_breakeven_side = ProfitTrailStopReachedDesiredSide(type, entry, desired_sl);
+   if(desired_requires_breakeven_side &&
+      !ProfitTrailStopReachedDesiredSide(type, entry, new_sl) &&
+      !UseClosestLegalStopWhenBreakevenTooClose)
+   {
+      last_action = "Profit-progress trailing SL skipped copied trade #" + (string)ticket +
+                    " because target SL is too close for broker stop limits";
+      return false;
+   }
+
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   if(point <= 0.0)
+      point = 0.00001;
+
+   bool improves_sl = false;
+   if(type == POSITION_TYPE_BUY)
+      improves_sl = (old_sl <= 0.0 || new_sl > old_sl + point / 2.0);
+   else
+      improves_sl = (old_sl <= 0.0 || new_sl < old_sl - point / 2.0);
+
+   if(!improves_sl)
+      return true;
+
+   ResetLastError();
+   if(trade.PositionModify(ticket, new_sl, tp))
+   {
+      MarkSourceProfitTrailApplied(source_ticket);
+      double risk_before = ProfitTrailRiskMoney(symbol, type, volume, entry, old_sl);
+      double risk_after = ProfitTrailRiskMoney(symbol, type, volume, entry, new_sl);
+      last_action = "Profit-progress trailing SL: source #" + (string)source_ticket +
+                    " reached " + DoubleToString(progress, 2) + "% of TP profit" +
+                    "; moved copied trade #" + (string)ticket +
+                    " SL to " + DoubleToString(new_sl, digits) +
+                    " (risk $" + DoubleToString(risk_before, 2) +
+                    " -> $" + DoubleToString(risk_after, 2) + ")";
+      if(desired_requires_breakeven_side && !ProfitTrailStopReachedDesiredSide(type, entry, new_sl))
+      {
+         last_action += " (closest legal stop; target " +
+                        DoubleToString(NormalizePrice(symbol, desired_sl), digits) +
+                        " is inside broker stop limits)";
+      }
+      last_error = "";
+      Print(last_action);
+      return true;
+   }
+
+   RememberTradeError("Profit-progress trailing SL modify failed ticket #" + (string)ticket);
+   return false;
+}
+
+double ProfitTrailDesiredStop(const string symbol,
+                              const long type,
+                              const double volume,
+                              const double entry,
+                              const double old_sl)
+{
+   if(ProfitTrailStopMode == PROFIT_TRAIL_SL_TO_BREAKEVEN)
+      return entry;
+
+   if(old_sl <= 0.0 || volume <= 0.0 || entry <= 0.0)
+      return 0.0;
+
+   double remaining_loss_percent = ProfitTrailRemainingLossPercentClamped();
+   if(remaining_loss_percent <= 0.0)
+      return entry;
+
+   double original_risk = ProfitTrailRiskMoney(symbol, type, volume, entry, old_sl);
+   if(original_risk <= 0.0)
+      return 0.0;
+
+   double target_loss = original_risk * (remaining_loss_percent / 100.0);
+   return PriceForTargetLoss(symbol, type, volume, entry, target_loss);
+}
+
+double PriceForTargetLoss(const string symbol,
+                          const long type,
+                          const double volume,
+                          const double entry,
+                          const double target_loss)
+{
+   if(volume <= 0.0 || entry <= 0.0 || target_loss <= 0.0)
+      return 0.0;
+
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   if(point <= 0.0)
+      point = 0.00001;
+
+   ENUM_ORDER_TYPE order_type = (type == POSITION_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+   double range = MathMax(point, entry * 0.001);
+   double low = entry;
+   double high = entry;
+   double profit = 0.0;
+
+   for(int i = 0; i < 60; i++)
+   {
+      if(type == POSITION_TYPE_BUY)
+         low = entry - range;
+      else
+         high = entry + range;
+
+      double test_price = (type == POSITION_TYPE_BUY ? low : high);
+      if(test_price <= 0.0)
+         return 0.0;
+
+      if(!OrderCalcProfit(order_type, symbol, volume, entry, test_price, profit))
+         return 0.0;
+
+      if(MathAbs(profit) >= target_loss && profit < 0.0)
+         break;
+
+      range *= 2.0;
+   }
+
+   if(MathAbs(profit) < target_loss || profit >= 0.0)
+      return 0.0;
+
+   for(int i = 0; i < 80; i++)
+   {
+      double mid = (low + high) / 2.0;
+      if(!OrderCalcProfit(order_type, symbol, volume, entry, mid, profit))
+         return 0.0;
+
+      if(type == POSITION_TYPE_BUY)
+      {
+         if(MathAbs(profit) < target_loss)
+            high = mid;
+         else
+            low = mid;
+      }
+      else
+      {
+         if(MathAbs(profit) < target_loss)
+            low = mid;
+         else
+            high = mid;
+      }
+   }
+
+   return (low + high) / 2.0;
+}
+
+double ProfitTrailRiskMoney(const string symbol,
+                            const long type,
+                            const double volume,
+                            const double entry,
+                            const double sl)
+{
+   if(volume <= 0.0 || entry <= 0.0 || sl <= 0.0)
+      return 0.0;
+
+   double profit = ProfitAtPrice(symbol, type, volume, entry, sl);
+   if(profit >= 0.0)
+      return 0.0;
+
+   return MathAbs(profit);
+}
+
+bool ProfitTrailStopReachedDesiredSide(const long type,
+                                       const double entry,
+                                       const double sl)
+{
+   if(type == POSITION_TYPE_BUY)
+      return sl >= entry;
+
+   return sl <= entry;
+}
+
+double ProfitTrailTriggerPercentClamped()
+{
+   return MathMax(0.0, MathMin(100.0, ProfitTrailTriggerPercent));
+}
+
+double ProfitTrailRemainingLossPercentClamped()
+{
+   return MathMax(0.0, MathMin(100.0, ProfitTrailRemainingLossPercent));
 }
 
 double PartialTpTriggerPercentClamped()
@@ -1931,10 +2219,11 @@ bool LockProfitAfterSenderExit(const ulong ticket)
    double entry = PositionGetDouble(POSITION_PRICE_OPEN);
    double old_sl = PositionGetDouble(POSITION_SL);
    double tp = PositionGetDouble(POSITION_TP);
+   double volume = PositionGetDouble(POSITION_VOLUME);
    double percent = MathMax(0.0, MathMin(100.0, SenderExitProfitLockPercent));
    double current = (type == POSITION_TYPE_BUY ? SymbolInfoDouble(symbol, SYMBOL_BID) : SymbolInfoDouble(symbol, SYMBOL_ASK));
 
-   if(entry <= 0.0 || current <= 0.0)
+   if(entry <= 0.0 || current <= 0.0 || volume <= 0.0)
       return false;
 
    bool profitable = (type == POSITION_TYPE_BUY ? current > entry : current < entry);
@@ -1946,10 +2235,36 @@ bool LockProfitAfterSenderExit(const ulong ticket)
 
    double new_sl = 0.0;
    double desired_sl = 0.0;
-   if(type == POSITION_TYPE_BUY)
-      desired_sl = entry + ((current - entry) * (percent / 100.0));
+   string basis_text = "open profit";
+   if(SenderExitProfitLockBasis == SENDER_EXIT_LOCK_FULL_TP_PROFIT && percent > 0.0)
+   {
+      if(tp <= 0.0)
+      {
+         last_action = "Sender exited but TP-profit lock basis needs a copied TP #" + (string)ticket;
+         return false;
+      }
+
+      double full_tp_profit = ProfitAtPrice(symbol, type, volume, entry, tp);
+      if(full_tp_profit <= 0.0)
+      {
+         last_action = "Sender exited but copied TP profit is not positive #" + (string)ticket;
+         return false;
+      }
+
+      double target_profit = full_tp_profit * (percent / 100.0);
+      desired_sl = PriceForTargetProfit(symbol, type, volume, entry, target_profit);
+      basis_text = "full TP profit";
+   }
    else
-      desired_sl = entry - ((entry - current) * (percent / 100.0));
+   {
+      if(type == POSITION_TYPE_BUY)
+         desired_sl = entry + ((current - entry) * (percent / 100.0));
+      else
+         desired_sl = entry - ((entry - current) * (percent / 100.0));
+   }
+
+   if(desired_sl <= 0.0)
+      return false;
 
    new_sl = desired_sl;
    new_sl = FitStopToBrokerLimits(symbol, type, new_sl);
@@ -1998,7 +2313,8 @@ bool LockProfitAfterSenderExit(const ulong ticket)
       int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
       last_action = "Moved copied trade #" + (string)ticket + " SL to " +
                     DoubleToString(new_sl, digits) +
-                    " after sender exit";
+                    " after sender exit; locked " +
+                    DoubleToString(percent, 2) + "% of " + basis_text;
       if((type == POSITION_TYPE_BUY && new_sl < entry) || (type == POSITION_TYPE_SELL && new_sl > entry))
       {
          last_action += " (closest legal stop; target " +
@@ -2094,7 +2410,7 @@ void StopsForCopiedTrade(const SourcePosition &src, const long target_type, doub
 
 double DesiredCopiedVolume(const SourcePosition &src, const string target_symbol, const long target_type, const bool log_details)
 {
-   double exact_volume = NormalizeVolume(target_symbol, src.volume * LotMultiplier);
+   double exact_volume = NormalizeVolume(target_symbol, src.volume * EffectiveLotMultiplier());
    if(LotMode == COPIER_LOT_EXACT)
       return exact_volume;
 
@@ -2110,6 +2426,14 @@ double DesiredCopiedVolume(const SourcePosition &src, const string target_symbol
    if(log_details)
       Print(last_error);
    return 0.0;
+}
+
+double EffectiveLotMultiplier()
+{
+   if(LotMultiplier > 0.0)
+      return LotMultiplier;
+
+   return 1.0;
 }
 
 double CalculateFixedRiskVolume(const SourcePosition &src, const string symbol, const long target_type, const double sl, const bool log_details)
@@ -2674,6 +2998,7 @@ void UpdateDashboard()
        "Mode: " + mode + "\n" +
        "Entry: " + EntryModeStatusLine() + "\n" +
        "Partial TP booking: " + PartialTpBookingStatusLine() + "\n" +
+       "Profit trailing SL: " + ProfitProgressTrailingStatusLine() + "\n" +
        "Sender exit: " + SenderExitActionStatusLine() + "\n" +
        "Aggressive sender-exit TP: " + AggressiveSenderExitTpStatusLine() + "\n" +
        "Bad behaviour exits: " + BadBehaviourSenderHandlingStatusLine() + "\n" +
@@ -2713,17 +3038,44 @@ string PartialTpBookingStatusLine()
           "% of entry-to-TP distance";
 }
 
+string ProfitProgressTrailingStatusLine()
+{
+   if(!EnableProfitProgressTrailingSL)
+      return "off";
+
+   string stop_text = "move SL to breakeven";
+   if(ProfitTrailStopMode == PROFIT_TRAIL_SL_REDUCE_ORIGINAL_LOSS)
+   {
+      double remaining_loss_percent = ProfitTrailRemainingLossPercentClamped();
+      if(remaining_loss_percent <= 0.0)
+         stop_text = "move SL to breakeven";
+      else
+         stop_text = "leave " + DoubleToString(remaining_loss_percent, 2) + "% original SL risk";
+   }
+
+   return "at " + DoubleToString(ProfitTrailTriggerPercentClamped(), 2) +
+          "% of TP profit, " + stop_text +
+          "; sender exit closes trade";
+}
+
 string ProfitLockStatusLine()
 {
    double percent = MathMax(0.0, MathMin(100.0, SenderExitProfitLockPercent));
    if(percent <= 0.0)
       return "move SL to breakeven";
 
-   return "lock " + DoubleToString(percent, 2) + "% open profit";
+   string basis = "open profit";
+   if(SenderExitProfitLockBasis == SENDER_EXIT_LOCK_FULL_TP_PROFIT)
+      basis = "full TP profit";
+
+   return "lock " + DoubleToString(percent, 2) + "% " + basis;
 }
 
 string SenderExitActionStatusLine()
 {
+   if(EnableProfitProgressTrailingSL)
+      return "close copied trade (profit trailing SL mode)";
+
    if(SenderExitAction == SENDER_EXIT_CLOSE_ALWAYS)
       return "close copied trade";
 
@@ -2825,7 +3177,8 @@ string LotSizingStatusLine()
              " = " + DoubleToString(risk_amount, 2) + "\n";
    }
 
-   return "Lot multiplier: " + DoubleToString(LotMultiplier, 2) + "\n";
+   return "Lot sizing: exact sender lot x " + DoubleToString(EffectiveLotMultiplier(), 2) +
+          " (0.5=half, 1=same, 2=double)\n";
 }
 
 int CountSkippedSourcesInCurrentSignal()
