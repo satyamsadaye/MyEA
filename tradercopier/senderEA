@@ -9,6 +9,30 @@
 #define COPIER_FILE_PREFIX "minimal_trade_copier_"
 
 input string CopierKey = "client1";
+input int ClosedTradeRetentionSeconds = 60;
+
+struct SenderPositionState
+{
+   ulong ticket;
+   long identifier;
+   string symbol;
+   long type;
+   double last_close_side_price;
+   datetime last_seen;
+};
+
+struct SenderCloseEvent
+{
+   ulong ticket;
+   long identifier;
+   string symbol;
+   long type;
+   double close_price;
+   datetime close_time;
+};
+
+SenderPositionState remembered_positions[];
+SenderCloseEvent close_events[];
 
 void OnInit()
 {
@@ -34,6 +58,8 @@ void OnTimer()
 
 void WriteSnapshot()
 {
+   RefreshCloseEvents();
+
    int handle = FileOpen(CopierFileName(),
                          FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
                          ';');
@@ -66,7 +92,188 @@ void WriteSnapshot()
                 DoubleToString(tp, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)));
    }
 
+   int closed_total = ArraySize(close_events);
+   for(int i = 0; i < closed_total; i++)
+   {
+      int digits = (int)SymbolInfoInteger(close_events[i].symbol, SYMBOL_DIGITS);
+      if(digits <= 0)
+         digits = 5;
+
+      FileWrite(handle,
+                "CLOSE",
+                (string)close_events[i].ticket,
+                close_events[i].symbol,
+                (string)close_events[i].type,
+                DoubleToString(close_events[i].close_price, digits),
+                (string)((long)close_events[i].close_time));
+   }
+
    FileClose(handle);
+}
+
+void RefreshCloseEvents()
+{
+   datetime now = TimeCurrent();
+   SenderPositionState current_positions[];
+
+   int total = PositionsTotal();
+   ArrayResize(current_positions, total);
+   int current_count = 0;
+
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      long type = PositionGetInteger(POSITION_TYPE);
+
+      current_positions[current_count].ticket = ticket;
+      current_positions[current_count].identifier = PositionGetInteger(POSITION_IDENTIFIER);
+      current_positions[current_count].symbol = symbol;
+      current_positions[current_count].type = type;
+      current_positions[current_count].last_close_side_price = CurrentCloseSidePrice(symbol, type);
+      current_positions[current_count].last_seen = now;
+      current_count++;
+   }
+
+   ArrayResize(current_positions, current_count);
+
+   int remembered_total = ArraySize(remembered_positions);
+   for(int i = 0; i < remembered_total; i++)
+   {
+      if(!PositionStateExists(current_positions, remembered_positions[i].ticket, remembered_positions[i].identifier))
+         AddCloseEventForRememberedPosition(remembered_positions[i]);
+   }
+
+   CopyRememberedPositions(current_positions);
+   PruneOldCloseEvents(now);
+}
+
+void CopyRememberedPositions(const SenderPositionState &positions[])
+{
+   int total = ArraySize(positions);
+   ArrayResize(remembered_positions, total);
+
+   for(int i = 0; i < total; i++)
+      remembered_positions[i] = positions[i];
+}
+
+bool PositionStateExists(const SenderPositionState &positions[], const ulong ticket, const long identifier)
+{
+   int total = ArraySize(positions);
+   for(int i = 0; i < total; i++)
+   {
+      if(positions[i].ticket == ticket)
+         return true;
+
+      if(identifier > 0 && positions[i].identifier == identifier)
+         return true;
+   }
+
+   return false;
+}
+
+void AddCloseEventForRememberedPosition(const SenderPositionState &position)
+{
+   if(position.ticket == 0 || CloseEventExists(position.ticket))
+      return;
+
+   SenderCloseEvent event;
+   event.ticket = position.ticket;
+   event.identifier = position.identifier;
+   event.symbol = position.symbol;
+   event.type = position.type;
+   event.close_time = TimeCurrent();
+   event.close_price = HistoryClosePrice(position.identifier, position.ticket, event.close_time);
+   if(event.close_price <= 0.0)
+      event.close_price = position.last_close_side_price;
+
+   if(event.close_price <= 0.0)
+      return;
+
+   int size = ArraySize(close_events);
+   ArrayResize(close_events, size + 1);
+   close_events[size] = event;
+}
+
+bool CloseEventExists(const ulong ticket)
+{
+   int total = ArraySize(close_events);
+   for(int i = 0; i < total; i++)
+   {
+      if(close_events[i].ticket == ticket)
+         return true;
+   }
+
+   return false;
+}
+
+double HistoryClosePrice(const long identifier, const ulong ticket, datetime &close_time)
+{
+   datetime to_time = TimeCurrent() + 60;
+   datetime from_time = TimeCurrent() - MathMax(60, ClosedTradeRetentionSeconds + 60);
+   if(!HistorySelect(from_time, to_time))
+      return 0.0;
+
+   double price = 0.0;
+   datetime best_time = 0;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      long position_id = HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
+      if(position_id != identifier && position_id != (long)ticket)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT && entry != DEAL_ENTRY_OUT_BY)
+         continue;
+
+      datetime deal_time = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      if(deal_time >= best_time)
+      {
+         best_time = deal_time;
+         price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+      }
+   }
+
+   if(best_time > 0)
+      close_time = best_time;
+
+   return price;
+}
+
+double CurrentCloseSidePrice(const string symbol, const long type)
+{
+   if(!SymbolSelect(symbol, true))
+      return 0.0;
+
+   if(type == POSITION_TYPE_BUY)
+      return SymbolInfoDouble(symbol, SYMBOL_BID);
+
+   return SymbolInfoDouble(symbol, SYMBOL_ASK);
+}
+
+void PruneOldCloseEvents(const datetime now)
+{
+   int retention = MathMax(1, ClosedTradeRetentionSeconds);
+
+   for(int i = ArraySize(close_events) - 1; i >= 0; i--)
+   {
+      if((int)(now - close_events[i].close_time) <= retention)
+         continue;
+
+      int last = ArraySize(close_events) - 1;
+      for(int j = i; j < last; j++)
+         close_events[j] = close_events[j + 1];
+
+      ArrayResize(close_events, last);
+   }
 }
 
 string CopierFileName()
