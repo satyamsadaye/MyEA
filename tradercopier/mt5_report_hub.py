@@ -19,6 +19,7 @@ import os
 import shutil
 import sys
 import time
+import zipfile
 from dataclasses import asdict
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -189,6 +190,93 @@ def collect_metrics(rows: list[list[str]]) -> dict[str, str]:
 def money(value: float, currency: str = "USD") -> str:
     sign = "+" if value > 0 else ""
     return f"{sign}{value:.2f} {currency}"
+
+
+def excel_column_name(index: int) -> str:
+    name = ""
+    while index > 0:
+        index, remainder = divmod(index - 1, 26)
+        name = chr(65 + remainder) + name
+    return name
+
+
+def xlsx_cell_xml(row: int, col: int, value) -> str:
+    ref = f"{excel_column_name(col)}{row}"
+    text = "" if value is None else str(value)
+    numeric = False
+    if text:
+        try:
+            float(text)
+            numeric = text.strip() == text and not any(ch in text for ch in " :|,")
+        except ValueError:
+            numeric = False
+
+    if numeric:
+        return f'<c r="{ref}"><v>{html.escape(text)}</v></c>'
+
+    escaped = html.escape(text, quote=False)
+    return f'<c r="{ref}" t="inlineStr"><is><t>{escaped}</t></is></c>'
+
+
+def write_xlsx(path: Path, rows: list[dict[str, str]], sheet_name: str = "Trade Tape") -> None:
+    if not rows:
+        return
+
+    headers = list(rows[0].keys())
+    sheet_rows = []
+    sheet_rows.append(
+        '<row r="1">' +
+        "".join(xlsx_cell_xml(1, col + 1, header) for col, header in enumerate(headers)) +
+        "</row>"
+    )
+    for row_index, item in enumerate(rows, start=2):
+        sheet_rows.append(
+            f'<row r="{row_index}">' +
+            "".join(xlsx_cell_xml(row_index, col + 1, item.get(header, "")) for col, header in enumerate(headers)) +
+            "</row>"
+        )
+
+    last_col = excel_column_name(len(headers))
+    dimension = f"A1:{last_col}{len(rows) + 1}"
+    worksheet = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <dimension ref="{dimension}"/>
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  <sheetData>
+    {''.join(sheet_rows)}
+  </sheetData>
+  <autoFilter ref="{dimension}"/>
+</worksheet>'''
+
+    workbook = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="{html.escape(sheet_name, quote=True)}" sheetId="1" r:id="rId1"/></sheets>
+</workbook>'''
+
+    rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>'''
+    workbook_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>'''
+    content_types = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>'''
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types)
+        zf.writestr("_rels/.rels", rels)
+        zf.writestr("xl/workbook.xml", workbook)
+        zf.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+        zf.writestr("xl/worksheets/sheet1.xml", worksheet)
 
 
 def ratio_text(value: float | None, suffix: str = "") -> str:
@@ -430,6 +518,9 @@ def convert_report_to_tape(report_path: Path, output_name: str) -> dict:
         writer.writeheader()
         writer.writerows(tape)
 
+    excel_path = output_path.with_suffix(".xlsx")
+    write_xlsx(excel_path, tape, "Trade Tape")
+
     common_dir = common_files_dir()
     common_dir.mkdir(parents=True, exist_ok=True)
     common_path = common_dir / output_path.name
@@ -438,6 +529,7 @@ def convert_report_to_tape(report_path: Path, output_name: str) -> dict:
     return {
         "rows": len(tape),
         "tapePath": str(output_path),
+        "excelPath": str(excel_path),
         "commonPath": str(common_path),
         "tradeTapeFileName": output_path.name,
     }
@@ -679,7 +771,7 @@ HTML = r"""<!doctype html>
       const res = await fetch('/api/convert', { method: 'POST', body: fd });
       const data = await res.json();
       document.getElementById('convertStatus').textContent = data.ok
-        ? `Converted ${data.rows} trades. MT5 input: ${data.tradeTapeFileName}. Copied to ${data.commonPath}`
+        ? `Converted ${data.rows} trades. MT5 input: ${data.tradeTapeFileName}. Excel: ${data.excelPath}. Copied to ${data.commonPath}`
         : `Failed: ${data.error}`;
     }
 
