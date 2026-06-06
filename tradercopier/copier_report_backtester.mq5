@@ -46,6 +46,12 @@ enum ENUM_BEST_PRICE_TIMEOUT_ACTION
    BEST_PRICE_TIMEOUT_KEEP_WAITING = 2
 };
 
+enum ENUM_BEST_PRICE_REFERENCE_MODE
+{
+   BEST_PRICE_REFERENCE_SENDER_CLOSE = 0,
+   BEST_PRICE_REFERENCE_COPIER_DETECTED_PRICE = 1
+};
+
 enum ENUM_SYMBOL_MODE
 {
    SYMBOL_SINGLE_PAIR = 0,
@@ -125,6 +131,8 @@ input double SenderExitProfitLockPercent = 0.0;
 input ENUM_SENDER_EXIT_PROFIT_LOCK_BASIS SenderExitProfitLockBasis = SENDER_EXIT_LOCK_CURRENT_OPEN_PROFIT;
 input bool UseClosestLegalStopWhenBreakevenTooClose = true;
 input bool BestPriceCloseOnCloseAlways = false;
+input bool BestPriceCloseWaitOnlyWhenNotProfitable = true;
+input ENUM_BEST_PRICE_REFERENCE_MODE BestPriceCloseReferenceMode = BEST_PRICE_REFERENCE_SENDER_CLOSE;
 input double BestPriceCloseTolerancePoints = 50.0;
 input int BestPriceCloseMaxWaitSeconds = 10;
 input double BestPriceCloseMaxSpreadPoints = 400.0;
@@ -212,6 +220,14 @@ struct CopiedPositionIdentity
    long type;
 };
 
+struct BestPriceCloseReference
+{
+   ulong ticket;
+   ulong source_ticket;
+   double price;
+   datetime time;
+};
+
 CTrade trade;
 SourcePosition sources[];
 SourceCloseEvent source_close_events[];
@@ -219,6 +235,7 @@ SourceTapeTrade tape_trades[];
 SourcePosition last_seen_sources[];
 SourcePosition remembered_source_stops[];
 CopiedPositionIdentity remembered_copied_positions[];
+BestPriceCloseReference best_price_close_references[];
 ulong logged_missing_sltp_rr_adjust_sources[];
 ulong logged_incomplete_sltp_rr_adjust_sources[];
 ulong logged_no_reentry_sources[];
@@ -507,6 +524,7 @@ void ClearReplayState()
    ArrayResize(logged_missing_sltp_rr_adjust_sources, 0);
    ArrayResize(logged_incomplete_sltp_rr_adjust_sources, 0);
    ArrayResize(remembered_copied_positions, 0);
+   ArrayResize(best_price_close_references, 0);
 }
 
 void SyncOneSource(const SourcePosition &src)
@@ -735,6 +753,15 @@ bool ClosePositionAfterSenderExit(const ulong ticket, const ulong source_ticket)
    if(!BestPriceCloseOnCloseAlways)
       return ClosePosition(ticket);
 
+   if(BestPriceCloseWaitOnlyWhenNotProfitable && CopiedPositionIsProfitable(ticket))
+   {
+      last_action = "Closing profitable copied trade #" + (string)ticket +
+                    " immediately because source #" + (string)source_ticket +
+                    " exited; best-price wait is only for non-profitable trades";
+      Print(last_action);
+      return ClosePosition(ticket);
+   }
+
    SourceCloseEvent event;
    if(!FindSourceCloseEvent(source_ticket, event))
    {
@@ -744,6 +771,44 @@ bool ClosePositionAfterSenderExit(const ulong ticket, const ulong source_ticket)
    }
 
    return TryBestPriceCloseAfterSenderExit(ticket, source_ticket, event);
+}
+
+double BestPriceCloseReferencePrice(const ulong ticket,
+                                    const ulong source_ticket,
+                                    const SourceCloseEvent &event,
+                                    const double current)
+{
+   if(BestPriceCloseReferenceMode == BEST_PRICE_REFERENCE_SENDER_CLOSE)
+      return event.close_price;
+
+   int total = ArraySize(best_price_close_references);
+   for(int i = 0; i < total; i++)
+   {
+      if(best_price_close_references[i].ticket == ticket &&
+         best_price_close_references[i].source_ticket == source_ticket)
+      {
+         return best_price_close_references[i].price;
+      }
+   }
+
+   if(current <= 0.0)
+      return event.close_price;
+
+   ArrayResize(best_price_close_references, total + 1);
+   best_price_close_references[total].ticket = ticket;
+   best_price_close_references[total].source_ticket = source_ticket;
+   best_price_close_references[total].price = current;
+   best_price_close_references[total].time = TimeCurrent();
+
+   return current;
+}
+
+string BestPriceCloseReferenceName()
+{
+   if(BestPriceCloseReferenceMode == BEST_PRICE_REFERENCE_COPIER_DETECTED_PRICE)
+      return "copier detected price";
+
+   return "sender close";
 }
 
 bool TryBestPriceCloseAfterSenderExit(const ulong ticket,
@@ -767,23 +832,37 @@ bool TryBestPriceCloseAfterSenderExit(const ulong ticket,
       point = 0.00001;
 
    double current = (type == POSITION_TYPE_BUY ? bid : ask);
+   double reference_price = BestPriceCloseReferencePrice(ticket, source_ticket, event, current);
+   if(reference_price <= 0.0)
+      return false;
+
    double tolerance = MathMax(0.0, BestPriceCloseTolerancePoints) * point;
    double spread_points = MathAbs(ask - bid) / point;
    bool spread_ok = (BestPriceCloseMaxSpreadPoints <= 0.0 || spread_points <= BestPriceCloseMaxSpreadPoints);
    bool target_reached = false;
 
-   if(type == POSITION_TYPE_BUY)
-      target_reached = (current >= event.close_price - tolerance);
+   if(BestPriceCloseReferenceMode == BEST_PRICE_REFERENCE_COPIER_DETECTED_PRICE)
+   {
+      if(type == POSITION_TYPE_BUY)
+         target_reached = (current >= reference_price + tolerance);
+      else
+         target_reached = (current <= reference_price - tolerance);
+   }
    else
-      target_reached = (current <= event.close_price + tolerance);
+   {
+      if(type == POSITION_TYPE_BUY)
+         target_reached = (current >= reference_price - tolerance);
+      else
+         target_reached = (current <= reference_price + tolerance);
+   }
 
    if(target_reached && spread_ok)
    {
       last_action = "Best-price sender exit reached for source #" + (string)source_ticket +
                     ": closing copied trade #" + (string)ticket +
                     " at close-side " + DoubleToString(current, digits) +
-                    " vs sender close " + DoubleToString(event.close_price, digits) +
-                    BestPriceCloseStudyLine(ticket, event, current, "target reached");
+                    " vs " + BestPriceCloseReferenceName() + " " + DoubleToString(reference_price, digits) +
+                    BestPriceCloseStudyLine(ticket, event, reference_price, current, "target reached");
       Print(last_action);
       return ClosePosition(ticket);
    }
@@ -794,9 +873,9 @@ bool TryBestPriceCloseAfterSenderExit(const ulong ticket,
    {
       double adverse_distance = adverse_points * point;
       if(type == POSITION_TYPE_BUY)
-         adverse_reached = (current <= event.close_price - adverse_distance);
+         adverse_reached = (current <= reference_price - adverse_distance);
       else
-         adverse_reached = (current >= event.close_price + adverse_distance);
+         adverse_reached = (current >= reference_price + adverse_distance);
    }
 
    int max_wait = MathMax(0, BestPriceCloseMaxWaitSeconds);
@@ -807,18 +886,19 @@ bool TryBestPriceCloseAfterSenderExit(const ulong ticket,
       last_action = "Best-price sender exit adverse guard hit for source #" + (string)source_ticket +
                     ": closing copied trade #" + (string)ticket +
                     " at " + DoubleToString(current, digits) +
-                    " vs sender close " + DoubleToString(event.close_price, digits) +
-                    BestPriceCloseStudyLine(ticket, event, current, "adverse guard");
+                    " vs " + BestPriceCloseReferenceName() + " " + DoubleToString(reference_price, digits) +
+                    BestPriceCloseStudyLine(ticket, event, reference_price, current, "adverse guard");
       Print(last_action);
       return ClosePosition(ticket);
    }
 
    if(timed_out)
-      return HandleBestPriceCloseTimeout(ticket, source_ticket, event, current);
+      return HandleBestPriceCloseTimeout(ticket, source_ticket, event, reference_price, current);
 
    last_action = "Waiting for best-price sender exit source #" + (string)source_ticket +
                  ": close-side " + DoubleToString(current, digits) +
-                 " target " + DoubleToString(event.close_price, digits) +
+                 " reference " + DoubleToString(reference_price, digits) +
+                 " (" + BestPriceCloseReferenceName() + ")" +
                  " tolerance " + DoubleToString(MathMax(0.0, BestPriceCloseTolerancePoints), 1) +
                  " points, spread " + DoubleToString(spread_points, 1) + " points";
    return false;
@@ -827,6 +907,7 @@ bool TryBestPriceCloseAfterSenderExit(const ulong ticket,
 bool HandleBestPriceCloseTimeout(const ulong ticket,
                                  const ulong source_ticket,
                                  const SourceCloseEvent &event,
+                                 const double reference_price,
                                  const double current)
 {
    int digits = 5;
@@ -837,7 +918,8 @@ bool HandleBestPriceCloseTimeout(const ulong ticket,
    {
       last_action = "Best-price sender exit timed out for source #" + (string)source_ticket +
                     " but keep-waiting mode is active; current " + DoubleToString(current, digits) +
-                    " target " + DoubleToString(event.close_price, digits);
+                    " reference " + DoubleToString(reference_price, digits) +
+                    " (" + BestPriceCloseReferenceName() + ")";
       return false;
    }
 
@@ -855,14 +937,16 @@ bool HandleBestPriceCloseTimeout(const ulong ticket,
    last_action = "Best-price sender exit timed out for source #" + (string)source_ticket +
                  ": closing copied trade #" + (string)ticket +
                  " at market; current " + DoubleToString(current, digits) +
-                 " target " + DoubleToString(event.close_price, digits) +
-                 BestPriceCloseStudyLine(ticket, event, current, "timeout market close");
+                 " reference " + DoubleToString(reference_price, digits) +
+                 " (" + BestPriceCloseReferenceName() + ")" +
+                 BestPriceCloseStudyLine(ticket, event, reference_price, current, "timeout market close");
    Print(last_action);
    return ClosePosition(ticket);
 }
 
 string BestPriceCloseStudyLine(const ulong ticket,
                                const SourceCloseEvent &event,
+                               const double reference_price,
                                const double actual_close_price,
                                const string close_reason)
 {
@@ -881,12 +965,11 @@ string BestPriceCloseStudyLine(const ulong ticket,
    if(point <= 0.0)
       point = 0.00001;
 
-   double immediate_price = event.close_price;
-   double immediate_profit = ProfitAtPrice(symbol, type, volume, entry, immediate_price);
+   double reference_profit = ProfitAtPrice(symbol, type, volume, entry, reference_price);
    double actual_profit = ProfitAtPrice(symbol, type, volume, entry, actual_close_price);
-   double price_diff = actual_close_price - immediate_price;
+   double price_diff = actual_close_price - reference_price;
    double points_diff = price_diff / point;
-   double profit_saved = actual_profit - immediate_profit;
+   double profit_saved = actual_profit - reference_profit;
    double spread_points = 0.0;
    if(bid > 0.0 && ask > 0.0)
       spread_points = MathAbs(ask - bid) / point;
@@ -900,8 +983,10 @@ string BestPriceCloseStudyLine(const ulong ticket,
           ", close-side=" + CloseSideName(type) +
           ", entry=" + DoubleToString(entry, digits) +
           ", volume=" + DoubleToString(volume, 2) +
-          ", sender-exit-immediate-price=" + DoubleToString(immediate_price, digits) +
-          ", immediate P/L=$" + DoubleToString(immediate_profit, 2) +
+          ", sender-close-price=" + DoubleToString(event.close_price, digits) +
+          ", reference-mode=" + BestPriceCloseReferenceName() +
+          ", reference-price=" + DoubleToString(reference_price, digits) +
+          ", reference P/L=$" + DoubleToString(reference_profit, 2) +
           ", actual-close-price=" + DoubleToString(actual_close_price, digits) +
           ", actual P/L=$" + DoubleToString(actual_profit, 2) +
           ", price diff=" + DoubleToString(price_diff, digits) +
@@ -3532,7 +3617,11 @@ string BestPriceSenderExitStatusLine()
       return "off";
 
    string text = "on for close-always, wait " + (string)MathMax(0, BestPriceCloseMaxWaitSeconds) +
-                 " sec, tolerance " + DoubleToString(MathMax(0.0, BestPriceCloseTolerancePoints), 1) + " points";
+                 " sec, reference " + BestPriceCloseReferenceName() +
+                 ", tolerance " + DoubleToString(MathMax(0.0, BestPriceCloseTolerancePoints), 1) + " points";
+
+   if(BestPriceCloseWaitOnlyWhenNotProfitable)
+      text += ", wait only when not profitable";
 
    if(BestPriceCloseMaxSpreadPoints > 0.0)
       text += ", max spread " + DoubleToString(BestPriceCloseMaxSpreadPoints, 1) + " points";
