@@ -39,6 +39,13 @@ enum ENUM_SENDER_EXIT_ACTION
    SENDER_EXIT_SMART_PROTECT_PROFIT_CLOSE_LOSS = 2
 };
 
+enum ENUM_BEST_PRICE_TIMEOUT_ACTION
+{
+   BEST_PRICE_TIMEOUT_CLOSE_MARKET = 0,
+   BEST_PRICE_TIMEOUT_PROTECT = 1,
+   BEST_PRICE_TIMEOUT_KEEP_WAITING = 2
+};
+
 enum ENUM_SYMBOL_MODE
 {
    SYMBOL_SINGLE_PAIR = 0,
@@ -117,6 +124,12 @@ input ENUM_SENDER_EXIT_ACTION SenderExitAction = SENDER_EXIT_SMART_PROTECT_PROFI
 input double SenderExitProfitLockPercent = 0.0;
 input ENUM_SENDER_EXIT_PROFIT_LOCK_BASIS SenderExitProfitLockBasis = SENDER_EXIT_LOCK_CURRENT_OPEN_PROFIT;
 input bool UseClosestLegalStopWhenBreakevenTooClose = true;
+input bool BestPriceCloseOnCloseAlways = false;
+input double BestPriceCloseTolerancePoints = 50.0;
+input int BestPriceCloseMaxWaitSeconds = 10;
+input double BestPriceCloseMaxSpreadPoints = 400.0;
+input double BestPriceCloseMaxAdversePoints = 500.0;
+input ENUM_BEST_PRICE_TIMEOUT_ACTION BestPriceCloseTimeoutAction = BEST_PRICE_TIMEOUT_CLOSE_MARKET;
 input bool AggressiveCloseNearTpOnSenderExit = false;
 input double AggressiveCloseSpreadMultiplier = 1.0;
 
@@ -126,7 +139,7 @@ input double BadBehaviourTpExitProgressPercent = 50.0;
 input double BadBehaviourSlExitProgressPercent = 40.0;
 
 input group "Lot Sizing"
-input double LotMultiplier = 1.0;
+input double LotMultiplier = 1.0;                         // Exact lot multiplier: 0.5=half, 1=same, 2=double
 input ENUM_COPIER_LOT_MODE LotMode = COPIER_LOT_EXACT;
 input double RiskStartingBalance = 10000.0;
 input double RiskPerTradePercent = 1.0;
@@ -153,6 +166,15 @@ struct SourcePosition
    double price_open;
    double sl;
    double tp;
+};
+
+struct SourceCloseEvent
+{
+   ulong ticket;
+   string symbol;
+   long type;
+   double close_price;
+   datetime close_time;
 };
 
 struct SourceTapeTrade
@@ -192,6 +214,7 @@ struct CopiedPositionIdentity
 
 CTrade trade;
 SourcePosition sources[];
+SourceCloseEvent source_close_events[];
 SourceTapeTrade tape_trades[];
 SourcePosition last_seen_sources[];
 SourcePosition remembered_source_stops[];
@@ -276,6 +299,7 @@ void SyncPositions()
 bool ReadSources()
 {
    ArrayResize(sources, 0);
+   ArrayResize(source_close_events, 0);
 
    datetime now = TimeCurrent();
    int total = ArraySize(tape_trades);
@@ -289,8 +313,22 @@ bool ReadSources()
       if(now < effective_entry)
          continue;
       if(tape.exit_time > 0 && now >= tape.exit_time)
-         continue;
+      {
+         SourceCloseEvent event;
+         event.ticket = tape.ticket;
+         event.symbol = tape.symbol;
+         event.type = tape.type;
+         event.close_price = tape.exit_price;
+         event.close_time = tape.exit_time;
 
+         if(event.ticket > 0 && event.symbol != "" && event.close_price > 0.0)
+         {
+            int event_size = ArraySize(source_close_events);
+            ArrayResize(source_close_events, event_size + 1);
+            source_close_events[event_size] = event;
+         }
+         continue;
+      }
       SourcePosition src;
       src.ticket = tape.ticket;
       src.symbol = tape.symbol;
@@ -662,7 +700,7 @@ void HandleCopiedPositionAfterSenderExit(const ulong ticket, const ulong source_
    if(SenderExitAction == SENDER_EXIT_CLOSE_ALWAYS)
    {
       last_action = "Closing copied trade because source #" + (string)source_ticket + " exited";
-      ClosePosition(ticket);
+      ClosePositionAfterSenderExit(ticket, source_ticket);
       return;
    }
 
@@ -690,6 +728,134 @@ void HandleCopiedPositionAfterSenderExit(const ulong ticket, const ulong source_
 
    last_action = "Closing copied trade because source #" + (string)source_ticket + " exited while copied trade is not profitable";
    ClosePosition(ticket);
+}
+
+bool ClosePositionAfterSenderExit(const ulong ticket, const ulong source_ticket)
+{
+   if(!BestPriceCloseOnCloseAlways)
+      return ClosePosition(ticket);
+
+   SourceCloseEvent event;
+   if(!FindSourceCloseEvent(source_ticket, event))
+   {
+      last_action = "Closing copied trade because source #" + (string)source_ticket +
+                    " exited; sender close price is unavailable";
+      return ClosePosition(ticket);
+   }
+
+   return TryBestPriceCloseAfterSenderExit(ticket, source_ticket, event);
+}
+
+bool TryBestPriceCloseAfterSenderExit(const ulong ticket,
+                                      const ulong source_ticket,
+                                      const SourceCloseEvent &event)
+{
+   if(!PositionSelectByTicket(ticket))
+      return true;
+
+   string symbol = PositionGetString(POSITION_SYMBOL);
+   long type = PositionGetInteger(POSITION_TYPE);
+   double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+
+   if(bid <= 0.0 || ask <= 0.0 || event.close_price <= 0.0)
+      return false;
+
+   if(point <= 0.0)
+      point = 0.00001;
+
+   double current = (type == POSITION_TYPE_BUY ? bid : ask);
+   double tolerance = MathMax(0.0, BestPriceCloseTolerancePoints) * point;
+   double spread_points = MathAbs(ask - bid) / point;
+   bool spread_ok = (BestPriceCloseMaxSpreadPoints <= 0.0 || spread_points <= BestPriceCloseMaxSpreadPoints);
+   bool target_reached = false;
+
+   if(type == POSITION_TYPE_BUY)
+      target_reached = (current >= event.close_price - tolerance);
+   else
+      target_reached = (current <= event.close_price + tolerance);
+
+   if(target_reached && spread_ok)
+   {
+      last_action = "Best-price sender exit reached for source #" + (string)source_ticket +
+                    ": closing copied trade #" + (string)ticket +
+                    " at close-side " + DoubleToString(current, digits) +
+                    " vs sender close " + DoubleToString(event.close_price, digits);
+      Print(last_action);
+      return ClosePosition(ticket);
+   }
+
+   bool adverse_reached = false;
+   double adverse_points = MathMax(0.0, BestPriceCloseMaxAdversePoints);
+   if(adverse_points > 0.0)
+   {
+      double adverse_distance = adverse_points * point;
+      if(type == POSITION_TYPE_BUY)
+         adverse_reached = (current <= event.close_price - adverse_distance);
+      else
+         adverse_reached = (current >= event.close_price + adverse_distance);
+   }
+
+   int max_wait = MathMax(0, BestPriceCloseMaxWaitSeconds);
+   bool timed_out = (max_wait > 0 && event.close_time > 0 && (int)(TimeCurrent() - event.close_time) >= max_wait);
+
+   if(adverse_reached)
+   {
+      last_action = "Best-price sender exit adverse guard hit for source #" + (string)source_ticket +
+                    ": closing copied trade #" + (string)ticket +
+                    " at " + DoubleToString(current, digits) +
+                    " vs sender close " + DoubleToString(event.close_price, digits);
+      Print(last_action);
+      return ClosePosition(ticket);
+   }
+
+   if(timed_out)
+      return HandleBestPriceCloseTimeout(ticket, source_ticket, event, current);
+
+   last_action = "Waiting for best-price sender exit source #" + (string)source_ticket +
+                 ": close-side " + DoubleToString(current, digits) +
+                 " target " + DoubleToString(event.close_price, digits) +
+                 " tolerance " + DoubleToString(MathMax(0.0, BestPriceCloseTolerancePoints), 1) +
+                 " points, spread " + DoubleToString(spread_points, 1) + " points";
+   return false;
+}
+
+bool HandleBestPriceCloseTimeout(const ulong ticket,
+                                 const ulong source_ticket,
+                                 const SourceCloseEvent &event,
+                                 const double current)
+{
+   int digits = 5;
+   if(PositionSelectByTicket(ticket))
+      digits = (int)SymbolInfoInteger(PositionGetString(POSITION_SYMBOL), SYMBOL_DIGITS);
+
+   if(BestPriceCloseTimeoutAction == BEST_PRICE_TIMEOUT_KEEP_WAITING)
+   {
+      last_action = "Best-price sender exit timed out for source #" + (string)source_ticket +
+                    " but keep-waiting mode is active; current " + DoubleToString(current, digits) +
+                    " target " + DoubleToString(event.close_price, digits);
+      return false;
+   }
+
+   if(BestPriceCloseTimeoutAction == BEST_PRICE_TIMEOUT_PROTECT)
+   {
+      MarkSourceExitProtected(source_ticket);
+      if(LockProfitAfterSenderExit(ticket))
+         return true;
+
+      last_action = "Best-price sender exit timed out for source #" + (string)source_ticket +
+                    "; protection could not be placed yet";
+      return false;
+   }
+
+   last_action = "Best-price sender exit timed out for source #" + (string)source_ticket +
+                 ": closing copied trade #" + (string)ticket +
+                 " at market; current " + DoubleToString(current, digits) +
+                 " target " + DoubleToString(event.close_price, digits);
+   Print(last_action);
+   return ClosePosition(ticket);
 }
 
 bool HandleCopiedPositionByDetectedSenderExit(const ulong ticket, const ulong source_ticket)
@@ -908,6 +1074,21 @@ bool SourceExists(const ulong source_ticket)
       if(sources[i].ticket == source_ticket)
          return true;
    }
+   return false;
+}
+
+bool FindSourceCloseEvent(const ulong source_ticket, SourceCloseEvent &event)
+{
+   int total = ArraySize(source_close_events);
+   for(int i = 0; i < total; i++)
+   {
+      if(source_close_events[i].ticket == source_ticket)
+      {
+         event = source_close_events[i];
+         return true;
+      }
+   }
+
    return false;
 }
 
@@ -2596,7 +2777,7 @@ void StopsForCopiedTrade(const SourcePosition &src, const long target_type, doub
 
 double DesiredCopiedVolume(const SourcePosition &src, const string target_symbol, const long target_type, const bool log_details)
 {
-   double exact_volume = NormalizeVolume(target_symbol, src.volume * LotMultiplier);
+   double exact_volume = NormalizeVolume(target_symbol, src.volume * EffectiveLotMultiplier());
    if(LotMode == COPIER_LOT_EXACT)
       return exact_volume;
 
@@ -2612,6 +2793,14 @@ double DesiredCopiedVolume(const SourcePosition &src, const string target_symbol
    if(log_details)
       Print(last_error);
    return 0.0;
+}
+
+double EffectiveLotMultiplier()
+{
+   if(LotMultiplier > 0.0)
+      return LotMultiplier;
+
+   return 1.0;
 }
 
 double CalculateFixedRiskVolume(const SourcePosition &src, const string symbol, const long target_type, const double sl, const bool log_details)
@@ -3178,6 +3367,7 @@ void UpdateDashboard()
        "Partial TP booking: " + PartialTpBookingStatusLine() + "\n" +
        "Profit trailing SL: " + ProfitProgressTrailingStatusLine() + "\n" +
        "Sender exit: " + SenderExitActionStatusLine() + "\n" +
+       "Best-price sender exit: " + BestPriceSenderExitStatusLine() + "\n" +
        "Replay carry-in trades: " + ReplayCarryInStatusLine() + "\n" +
        "Aggressive sender-exit TP: " + AggressiveSenderExitTpStatusLine() + "\n" +
        "Bad behaviour exits: " + BadBehaviourSenderHandlingStatusLine() + "\n" +
@@ -3272,6 +3462,30 @@ string SenderExitActionStatusLine()
    return "smart: protect profit, close loss";
 }
 
+string BestPriceSenderExitStatusLine()
+{
+   if(!BestPriceCloseOnCloseAlways)
+      return "off";
+
+   string text = "on for close-always, wait " + (string)MathMax(0, BestPriceCloseMaxWaitSeconds) +
+                 " sec, tolerance " + DoubleToString(MathMax(0.0, BestPriceCloseTolerancePoints), 1) + " points";
+
+   if(BestPriceCloseMaxSpreadPoints > 0.0)
+      text += ", max spread " + DoubleToString(BestPriceCloseMaxSpreadPoints, 1) + " points";
+
+   if(BestPriceCloseMaxAdversePoints > 0.0)
+      text += ", adverse guard " + DoubleToString(BestPriceCloseMaxAdversePoints, 1) + " points";
+
+   if(BestPriceCloseTimeoutAction == BEST_PRICE_TIMEOUT_PROTECT)
+      text += ", timeout protect";
+   else if(BestPriceCloseTimeoutAction == BEST_PRICE_TIMEOUT_KEEP_WAITING)
+      text += ", timeout keep waiting";
+   else
+      text += ", timeout market close";
+
+   return text;
+}
+
 string AggressiveSenderExitTpStatusLine()
 {
    if(!AggressiveCloseNearTpOnSenderExit)
@@ -3364,7 +3578,8 @@ string LotSizingStatusLine()
              " = " + DoubleToString(risk_amount, 2) + "\n";
    }
 
-   return "Lot multiplier: " + DoubleToString(LotMultiplier, 2) + "\n";
+   return "Lot sizing: exact sender lot x " + DoubleToString(EffectiveLotMultiplier(), 2) +
+          " (0.5=half, 1=same, 2=double)\n";
 }
 
 int CountSkippedSourcesInCurrentSignal()
