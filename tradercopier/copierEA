@@ -600,7 +600,8 @@ bool TryBestPriceCloseAfterSenderExit(const ulong ticket,
       last_action = "Best-price sender exit reached for source #" + (string)source_ticket +
                     ": closing copied trade #" + (string)ticket +
                     " at close-side " + DoubleToString(current, digits) +
-                    " vs sender close " + DoubleToString(event.close_price, digits);
+                    " vs sender close " + DoubleToString(event.close_price, digits) +
+                    BestPriceCloseStudyLine(ticket, event, current, "target reached");
       Print(last_action);
       return ClosePosition(ticket);
    }
@@ -624,7 +625,8 @@ bool TryBestPriceCloseAfterSenderExit(const ulong ticket,
       last_action = "Best-price sender exit adverse guard hit for source #" + (string)source_ticket +
                     ": closing copied trade #" + (string)ticket +
                     " at " + DoubleToString(current, digits) +
-                    " vs sender close " + DoubleToString(event.close_price, digits);
+                    " vs sender close " + DoubleToString(event.close_price, digits) +
+                    BestPriceCloseStudyLine(ticket, event, current, "adverse guard");
       Print(last_action);
       return ClosePosition(ticket);
    }
@@ -671,9 +673,71 @@ bool HandleBestPriceCloseTimeout(const ulong ticket,
    last_action = "Best-price sender exit timed out for source #" + (string)source_ticket +
                  ": closing copied trade #" + (string)ticket +
                  " at market; current " + DoubleToString(current, digits) +
-                 " target " + DoubleToString(event.close_price, digits);
+                 " target " + DoubleToString(event.close_price, digits) +
+                 BestPriceCloseStudyLine(ticket, event, current, "timeout market close");
    Print(last_action);
    return ClosePosition(ticket);
+}
+
+string BestPriceCloseStudyLine(const ulong ticket,
+                               const SourceCloseEvent &event,
+                               const double actual_close_price,
+                               const string close_reason)
+{
+   if(!PositionSelectByTicket(ticket))
+      return "";
+
+   string symbol = PositionGetString(POSITION_SYMBOL);
+   long type = PositionGetInteger(POSITION_TYPE);
+   double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+   double volume = PositionGetDouble(POSITION_VOLUME);
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(symbol, SYMBOL_ASK);
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+
+   if(point <= 0.0)
+      point = 0.00001;
+
+   double immediate_price = event.close_price;
+   double immediate_profit = ProfitAtPrice(symbol, type, volume, entry, immediate_price);
+   double actual_profit = ProfitAtPrice(symbol, type, volume, entry, actual_close_price);
+   double price_diff = actual_close_price - immediate_price;
+   double points_diff = price_diff / point;
+   double profit_saved = actual_profit - immediate_profit;
+   double spread_points = 0.0;
+   if(bid > 0.0 && ask > 0.0)
+      spread_points = MathAbs(ask - bid) / point;
+
+   int wait_seconds = 0;
+   if(event.close_time > 0)
+      wait_seconds = MathMax(0, (int)(TimeCurrent() - event.close_time));
+
+   return " | Study: reason=" + close_reason +
+          ", direction=" + PositionTypeName(type) +
+          ", close-side=" + CloseSideName(type) +
+          ", entry=" + DoubleToString(entry, digits) +
+          ", volume=" + DoubleToString(volume, 2) +
+          ", sender-exit-immediate-price=" + DoubleToString(immediate_price, digits) +
+          ", immediate P/L=$" + DoubleToString(immediate_profit, 2) +
+          ", actual-close-price=" + DoubleToString(actual_close_price, digits) +
+          ", actual P/L=$" + DoubleToString(actual_profit, 2) +
+          ", price diff=" + DoubleToString(price_diff, digits) +
+          " (" + DoubleToString(points_diff, 1) + " points)" +
+          ", P/L saved=$" + DoubleToString(profit_saved, 2) +
+          ", spread=" + DoubleToString(spread_points, 1) + " points" +
+          ", waited=" + (string)wait_seconds + " sec" +
+          ", tolerance=" + DoubleToString(MathMax(0.0, BestPriceCloseTolerancePoints), 1) + " points" +
+          ", adverse guard=" + DoubleToString(MathMax(0.0, BestPriceCloseMaxAdversePoints), 1) + " points" +
+          ", max spread=" + DoubleToString(MathMax(0.0, BestPriceCloseMaxSpreadPoints), 1) + " points";
+}
+
+string CloseSideName(const long type)
+{
+   if(type == POSITION_TYPE_BUY)
+      return "Bid";
+
+   return "Ask";
 }
 
 bool HandleCopiedPositionByDetectedSenderExit(const ulong ticket, const ulong source_ticket)
