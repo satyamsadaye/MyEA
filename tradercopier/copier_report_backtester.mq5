@@ -23,7 +23,8 @@ enum ENUM_COPIER_LOT_MODE
 {
    COPIER_LOT_EXACT = 0,
    COPIER_LOT_FIXED_STARTING_BALANCE_RISK = 1,
-   COPIER_LOT_CURRENT_BALANCE_RISK = 2
+   COPIER_LOT_CURRENT_BALANCE_RISK = 2,
+   COPIER_LOT_CUSTOM = 3
 };
 
 enum ENUM_COPIER_ENTRY_MODE
@@ -149,6 +150,7 @@ input double BadBehaviourSlExitProgressPercent = 40.0;
 input group "Lot Sizing"
 input double LotMultiplier = 1.0;                         // Exact lot multiplier: 0.5=half, 1=same, 2=double
 input ENUM_COPIER_LOT_MODE LotMode = COPIER_LOT_EXACT;
+input double CustomLot = 0.01;                            // Custom lot mode: fixed copier lot, ignores sender lot
 input double RiskStartingBalance = 10000.0;
 input double RiskPerTradePercent = 1.0;
 input double MaxFixedRiskLot = 1.0;
@@ -2926,6 +2928,9 @@ void StopsForCopiedTrade(const SourcePosition &src, const long target_type, doub
 
 double DesiredCopiedVolume(const SourcePosition &src, const string target_symbol, const long target_type, const bool log_details)
 {
+   if(LotMode == COPIER_LOT_CUSTOM)
+      return NormalizeVolume(target_symbol, CustomLot);
+
    double exact_volume = NormalizeVolume(target_symbol, src.volume * EffectiveLotMultiplier());
    if(LotMode == COPIER_LOT_EXACT)
       return exact_volume;
@@ -3714,6 +3719,9 @@ string SymbolMappingStatusLine()
 
 string LotSizingStatusLine()
 {
+   if(LotMode == COPIER_LOT_CUSTOM)
+      return "Lot sizing: custom fixed lot " + DoubleToString(NormalizeVolume(_Symbol, CustomLot), 2) + "\n";
+
    if(LotMode == COPIER_LOT_FIXED_STARTING_BALANCE_RISK)
    {
       double risk_amount = RiskStartingBalance * (RiskPerTradePercent / 100.0);
