@@ -40,6 +40,7 @@ enum ENUM_PATTERN_TYPE
    ,PATTERN_17_STATASTICAL // Pattern 17 - Statastical Probability Pattern
    ,PATTERN_18_SIGNATURE_VOLUME // Pattern 18 - Signature Volume lock-and-trigger pattern
    ,PATTERN_19_OHLC_RECOVERY_ENTRY // Pattern 19 - OHLC Recovery Levels Entry Logic
+   ,PATTERN_20_THREE_GREEN_HHHL_RETEST // Pattern 20 - 3 Green Higher High/Higher Low Retest Buy
   };
 
 enum ENUM_PATTERN17_TRADE_MODE
@@ -171,6 +172,7 @@ input group "📈 Pattern 8 - HeikinAshi Consecutive Candles Settings"
 input int    InpPattern8ConsecutiveCandles = 3;            // Number of consecutive HeikinAshi candles (2-10)
 input bool   InpPattern8WaitForClose = true;               // Wait for candle close confirmation
 input bool   InpPattern8StrictMode = false;                // Strict mode: no opposite colored candles allowed
+input bool   InpPattern8LogEachClosedCandle = true;        // Log Pattern 8 check after every closed candle
 
 input group "📈 Pattern 9 - Price Percentage Change Settings"
 input double InpPattern9FallPercent = 0.10;               // Percentage change to trigger trade (default 0.10%)
@@ -276,6 +278,11 @@ input bool   InpPattern19UseLow = true;                    // Use Low level for 
 input bool   InpPattern19UseClose = true;                  // Use Close level for Pattern 19
 input int    InpPattern19LookbackCandles = 20;             // Number of previous candles to load Pattern 19 levels from
 
+input group "Pattern 20 - 3 Green HH/HL Retest Settings"
+input bool   InpPattern20Enabled = true;                   // Enable Pattern 20 - 3 green higher high/higher low retest
+input bool   InpPattern20ShowLevel = true;                 // Show latest Pattern 20 first-candle low on chart
+input bool   InpPattern20LogDetails = true;                // Log detailed Pattern 20 setup/touch decisions
+
 // 💰 RISK MANAGEMENT
 input group "💰 Risk Management"
 input double InpRiskPerTradePercentage = 1.0;              // Risk Per Trade as percentage of chosen metric (e.g., 1.0 for 1%)
@@ -291,6 +298,12 @@ input double InpFixedSLPoints = 200.0;                     // Fixed Stop Loss in
 input double InpFixedTPPoints = 300.0;                     // Fixed Take Profit in Points (when using Fixed Points method)
 
 input bool   InpUseSyntheticSL = false;                    // Use synthetic SL instead of real SL for main trades
+
+input group "🎯 Global Dollar Exit Settings"
+input bool   InpGlobalDollarExitEnabled = false;           // Enable global dollar profit/loss exit (disables normal SL/TP)
+input double InpGlobalDollarProfitTarget = 10.0;           // Close all EA trades when floating profit reaches this USD amount
+input double InpGlobalDollarLossLimit = 10.0;              // Close all EA trades when floating loss reaches this USD amount
+input bool   InpGlobalDollarExitAllSymbols = true;         // Apply dollar exit to all symbols with this magic number
 
 input group "💰 Position Limits & Controls"
 input int    InpMaxOpenPositions = 1;                      // Max Open Positions for this EA (per symbol, per magic)
@@ -771,6 +784,7 @@ const int    SYNTHETIC_SL_LINE_WIDTH = 1;
 const ENUM_LINE_STYLE SYNTHETIC_SL_LINE_STYLE = STYLE_DASH;
 const string OHLC_RECOVERY_LINE_PREFIX = "OHLC_RECOVERY_LEVEL_";
 const string PATTERN17_OBJECT_PREFIX = "P17_STAT_";
+const string PATTERN20_OBJECT_PREFIX = "P20_RETEST_";
 
 static datetime last_tick_time = 0;
 
@@ -782,6 +796,7 @@ string MAN_BTN_CLOSE = "MAN_BTN_CLOSE";
 string MAN_BTN_BE = "MAN_BTN_BE";
 string MAN_DASH_PREFIX = "MAN_DASH_";
 bool manual_dashboard_created = false;
+bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result);
 // Manual backtest signal file options
 input bool   InpManualSignalUseFile = false;              // Enable reading manual signals from file (backtester)
 input string InpManualSignalFileName = "manual_signals.csv"; // File placed in MQL5/Files or Common files
@@ -1141,7 +1156,7 @@ void Manual_RegisterForRecovery(ulong ticket)
 
       if(IsSpreadAcceptable())
       {
-         bool sent = OrderSend(req, res);
+         bool sent = SendDollarExitAwareOrder(req, res);
          if(!sent)
          {
             PrintFormat("Multi-Order Recovery (Manual): Failed to update SL/TP for position #%d. OrderSend returned false. Error: %d", ticket, GetLastError());
@@ -1277,7 +1292,7 @@ void Manual_MoveToBreakeven()
             req.position = ticket;
             req.sl = entry;
             req.tp = tp;
-            bool sent = OrderSend(req,res);
+            bool sent = SendDollarExitAwareOrder(req,res);
             if(!sent)
                PrintFormat("Failed to send breakeven modify for %d - Error: %d", ticket, GetLastError());
             else if(res.retcode==TRADE_RETCODE_DONE)
@@ -1326,9 +1341,12 @@ ulong OpenPosition(string symbol, ENUM_POSITION_TYPE position_type, double volum
     // Get market price for the order
     request.price = SymbolInfoDouble(symbol, (position_type == POSITION_TYPE_BUY) ? SYMBOL_ASK : SYMBOL_BID);
     
-    // Set stop loss and take profit if provided
-    if(sl != 0) request.sl = sl;
-    if(tp != 0) request.tp = tp;
+    // Global dollar exit manages exits by floating P&L, so broker SL/TP stay disabled.
+    if(!InpGlobalDollarExitEnabled)
+    {
+        if(sl != 0) request.sl = sl;
+        if(tp != 0) request.tp = tp;
+    }
     
     // Set other parameters
     request.deviation = InpMaxSlippagePoints;
@@ -1340,7 +1358,7 @@ ulong OpenPosition(string symbol, ENUM_POSITION_TYPE position_type, double volum
     if(!IsSpreadAcceptable()) return 0;
     
     // Send the order
-    if(!OrderSend(request, result))
+    if(!SendDollarExitAwareOrder(request, result))
     {
         PrintFormat("Error opening position: %d", GetLastError());
         return 0;
@@ -1409,7 +1427,7 @@ bool ClosePosition(ulong ticket)
     }
     
     // Send the order
-    if(!OrderSend(request, result))
+    if(!SendDollarExitAwareOrder(request, result))
     {
         PrintFormat("Error closing position #%d: %d", ticket, GetLastError());
         return false;
@@ -1570,6 +1588,14 @@ double   g_p18_pendingBarOpen = 0.0;       // Open price used for pending open t
 // Pattern 19 State Variables - OHLC Recovery Entry
 datetime g_p19_lastBarTime = 0;            // Last closed bar time processed for Pattern 19
 datetime g_p19_lastSignalBarTime = 0;      // Last bar time where Pattern 19 opened a trade
+
+// Pattern 20 State Variables - 3 Green Higher High/Higher Low Retest
+datetime g_p20_lastClosedBarTime = 0;       // Last closed bar checked for Pattern 20 setup
+datetime g_p20_patternFirstBarTime = 0;     // First candle time of the latest valid 3-candle setup
+datetime g_p20_patternLastBarTime = 0;      // Last candle time of the latest valid 3-candle setup
+double   g_p20_firstCandleLow = 0.0;        // Buy trigger level from latest setup first candle low
+bool     g_p20_levelActive = false;         // Latest setup is waiting for first touch
+bool     g_p20_levelExpired = false;        // Latest setup has already been touched
 
 // New state variables for proper pattern detection
 bool g_p8_has_setup_red = false;     // Has RED setup candle for BUY pattern
@@ -1853,6 +1879,23 @@ bool IsTradingHour()
       return true;
    return false;
 }
+
+string GetSelectedPatternSignalLogic()
+{
+   switch(InpPatternType)
+   {
+      case PATTERN_1_VOLUME:
+         return StringFormat("Pattern 1 Volume -> RSI(%d) > %.1f for BUY, RSI < %.1f for SELL", InpRsiPeriod, InpRsiThreshold, InpRsiThreshold);
+      case PATTERN_8_HEIKINASHI_CONSECUTIVE:
+         return StringFormat("Pattern 8 HeikinAshi Consecutive -> RED setup + %d GREEN closed HA candles for BUY, GREEN setup + %d RED closed HA candles for SELL",
+                             MathMax(2, MathMin(10, InpPattern8ConsecutiveCandles)),
+                             MathMax(2, MathMin(10, InpPattern8ConsecutiveCandles)));
+      case PATTERN_20_THREE_GREEN_HHHL_RETEST:
+         return "Pattern 20 -> latest 3 closed candles must be green with higher highs and higher lows; buy on first touch of the first candle low";
+      default:
+         return StringFormat("%s selected", EnumToString(InpPatternType));
+   }
+}
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
@@ -2006,7 +2049,7 @@ int OnInit()
    string ea_version_log_str = "1.31";
    Print("SatyamEA initialized. Version ", ea_version_log_str,".");
    Print("Starting balance for risk calculation set to: ", g_startingBalance, " (Method: ", EnumToString(InpRiskCalcMethod), ")");
-   PrintFormat("Signal Logic: Volume Pattern -> RSI(%d) > %.1f for BUY, RSI < %.1f for SELL", InpRsiPeriod, InpRsiThreshold, InpRsiThreshold);
+   PrintFormat("Signal Logic: %s", GetSelectedPatternSignalLogic());
    PrintFormat("Risk Method: %s, Risk Per Trade: %.2f%%, Order Type: %s, Dev Mode: %s, SL Type: %s",
                EnumToString(InpRiskCalcMethod), InpRiskPerTradePercentage, EnumToString(InpOrderExecutionType), 
                InpDevelopmentMode ? "ON" : "OFF", InpUseSyntheticSL ? "SYNTHETIC" : "REAL");
@@ -2263,6 +2306,225 @@ double CalculateEffectiveGroupProfit(MultiOrderGroup &group);
 void HandlePattern17_Statastical();
 void HandlePattern18_SignatureVolume();
 void HandlePattern19_OHLCRecoveryEntry();
+void HandlePattern20_ThreeGreenHHHLRetest();
+void UpdatePattern20SetupOnNewClosedBar();
+void ProcessPattern20Touch(bool allow_entry);
+void DeletePattern20Objects();
+void UpsertPattern20LevelLine();
+
+bool IsGlobalDollarExitManagedSymbol(const string symbol)
+{
+   return InpGlobalDollarExitAllSymbols || symbol == _Symbol;
+}
+
+bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result)
+{
+   if(InpGlobalDollarExitEnabled)
+   {
+      bool managed_request = false;
+
+      if(request.magic == InpMagicNumber)
+      {
+         managed_request = (request.symbol == "" || IsGlobalDollarExitManagedSymbol(request.symbol));
+      }
+
+      if(!managed_request && request.position > 0 && PositionSelectByTicket(request.position))
+      {
+         managed_request = (PositionGetInteger(POSITION_MAGIC) == InpMagicNumber &&
+                            IsGlobalDollarExitManagedSymbol(PositionGetString(POSITION_SYMBOL)));
+      }
+
+      if(!managed_request && request.order > 0 && OrderSelect(request.order))
+      {
+         managed_request = (OrderGetInteger(ORDER_MAGIC) == InpMagicNumber &&
+                            IsGlobalDollarExitManagedSymbol(OrderGetString(ORDER_SYMBOL)));
+      }
+
+      if(managed_request &&
+         (request.action == TRADE_ACTION_DEAL ||
+          request.action == TRADE_ACTION_PENDING ||
+          request.action == TRADE_ACTION_MODIFY ||
+          request.action == TRADE_ACTION_SLTP))
+      {
+         request.sl = 0.0;
+         request.tp = 0.0;
+      }
+   }
+
+   return OrderSend(request, result);
+}
+
+double CalculateGlobalDollarExitPnL(int &position_count)
+{
+   double total_pnl = 0.0;
+   position_count = 0;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      if(!IsGlobalDollarExitManagedSymbol(symbol)) continue;
+
+      total_pnl += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      position_count++;
+   }
+
+   return total_pnl;
+}
+
+void RemoveGlobalDollarExitSLTPFromPositions()
+{
+   if(!InpGlobalDollarExitEnabled) return;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      if(!IsGlobalDollarExitManagedSymbol(symbol)) continue;
+
+      double current_sl = PositionGetDouble(POSITION_SL);
+      double current_tp = PositionGetDouble(POSITION_TP);
+      if(current_sl == 0.0 && current_tp == 0.0) continue;
+
+      MqlTradeRequest request;
+      MqlTradeResult result;
+      ZeroMemory(request);
+      ZeroMemory(result);
+
+      request.action = TRADE_ACTION_SLTP;
+      request.position = ticket;
+      request.symbol = symbol;
+      request.sl = 0.0;
+      request.tp = 0.0;
+      request.magic = InpMagicNumber;
+      request.comment = "Global dollar exit: SL/TP disabled";
+
+      if(!SendDollarExitAwareOrder(request, result))
+      {
+         PrintFormat("Global Dollar Exit: Failed to remove SL/TP from position #%d. Error: %d",
+                     ticket, GetLastError());
+      }
+      else if(result.retcode != TRADE_RETCODE_DONE)
+      {
+         PrintFormat("Global Dollar Exit: SL/TP remove rejected for position #%d. Retcode: %d, Comment: %s",
+                     ticket, result.retcode, result.comment);
+      }
+      else
+      {
+         PrintFormat("Global Dollar Exit: Removed SL/TP from position #%d", ticket);
+      }
+   }
+}
+
+void RemoveGlobalDollarExitSLTPFromPendingOrders()
+{
+   if(!InpGlobalDollarExitEnabled) return;
+
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0) continue;
+      if(!OrderSelect(ticket)) continue;
+      if(OrderGetInteger(ORDER_MAGIC) != InpMagicNumber) continue;
+
+      string symbol = OrderGetString(ORDER_SYMBOL);
+      if(!IsGlobalDollarExitManagedSymbol(symbol)) continue;
+
+      double current_sl = OrderGetDouble(ORDER_SL);
+      double current_tp = OrderGetDouble(ORDER_TP);
+      if(current_sl == 0.0 && current_tp == 0.0) continue;
+
+      MqlTradeRequest request;
+      MqlTradeResult result;
+      ZeroMemory(request);
+      ZeroMemory(result);
+
+      request.action = TRADE_ACTION_MODIFY;
+      request.order = ticket;
+      request.symbol = symbol;
+      request.price = OrderGetDouble(ORDER_PRICE_OPEN);
+      request.stoplimit = OrderGetDouble(ORDER_PRICE_STOPLIMIT);
+      request.sl = 0.0;
+      request.tp = 0.0;
+      request.type_time = (ENUM_ORDER_TYPE_TIME)OrderGetInteger(ORDER_TYPE_TIME);
+      request.expiration = (datetime)OrderGetInteger(ORDER_TIME_EXPIRATION);
+      request.type_filling = GetSupportedFillingMode(symbol);
+      request.magic = InpMagicNumber;
+
+      if(!SendDollarExitAwareOrder(request, result))
+      {
+         PrintFormat("Global Dollar Exit: Failed to remove SL/TP from pending order #%d. Error: %d",
+                     ticket, GetLastError());
+      }
+      else if(result.retcode != TRADE_RETCODE_DONE)
+      {
+         PrintFormat("Global Dollar Exit: Pending order SL/TP remove rejected for #%d. Retcode: %d, Comment: %s",
+                     ticket, result.retcode, result.comment);
+      }
+      else
+      {
+         PrintFormat("Global Dollar Exit: Removed SL/TP from pending order #%d", ticket);
+      }
+   }
+}
+
+void CloseGlobalDollarExitPositions(const string reason)
+{
+   int closed_count = 0;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      if(!IsGlobalDollarExitManagedSymbol(symbol)) continue;
+
+      PrintFormat("Global Dollar Exit: Closing position #%d on %s. Reason: %s", ticket, symbol, reason);
+      if(ClosePosition(ticket))
+         closed_count++;
+   }
+
+   PrintFormat("Global Dollar Exit: Closed %d position(s). Reason: %s", closed_count, reason);
+}
+
+void EnforceGlobalDollarExit()
+{
+   if(!InpGlobalDollarExitEnabled) return;
+
+   RemoveGlobalDollarExitSLTPFromPositions();
+   RemoveGlobalDollarExitSLTPFromPendingOrders();
+
+   int position_count = 0;
+   double total_pnl = CalculateGlobalDollarExitPnL(position_count);
+   if(position_count <= 0) return;
+
+   if(InpGlobalDollarProfitTarget > 0.0 && total_pnl >= InpGlobalDollarProfitTarget)
+   {
+      PrintFormat("Global Dollar Exit: Profit target reached %.2f >= %.2f. Closing %d EA position(s).",
+                  total_pnl, InpGlobalDollarProfitTarget, position_count);
+      CloseGlobalDollarExitPositions("global_dollar_profit_exit");
+      return;
+   }
+
+   double loss_limit = MathAbs(InpGlobalDollarLossLimit);
+   if(loss_limit > 0.0 && total_pnl <= -loss_limit)
+   {
+      PrintFormat("Global Dollar Exit: Loss limit reached %.2f <= -%.2f. Closing %d EA position(s).",
+                  total_pnl, loss_limit, position_count);
+      CloseGlobalDollarExitPositions("global_dollar_loss_exit");
+   }
+}
 
 void OnTick()
 {
@@ -2271,9 +2533,11 @@ void OnTick()
    // Update manual dashboard each tick (lightweight)
    Manual_UpdateDashboard();
 
+   EnforceGlobalDollarExit();
+
     // Trailing safety net: run from ticks too.
     // This helps when timer cadence is sparse in tester/live.
-    if(InpEnableTrailSL)
+    if(InpEnableTrailSL && !InpGlobalDollarExitEnabled)
     {
         ApplyTrailingStop();
     }
@@ -2701,6 +2965,11 @@ void OnTick()
             g_p5_lastSellTicket = 0;
         }
 
+        if(InpPatternType == PATTERN_20_THREE_GREEN_HHHL_RETEST)
+        {
+            ProcessPattern20Touch(!limit_reached);
+        }
+
         // Pattern 9 optional intrabar open-price trigger needs same-bar tick processing
         if(!limit_reached && InpPatternType == PATTERN_9_PRICE_FALL)
         {
@@ -2766,6 +3035,13 @@ void OnTick()
         if(ea_positions > 0) stop_new_signals = true;
     } else {
         if(ea_positions >= InpMaxOpenPositions && !ShouldAllowAdditionalPosition()) stop_new_signals = true;
+    }
+
+    if(InpPatternType == PATTERN_20_THREE_GREEN_HHHL_RETEST)
+    {
+        UpdatePattern20SetupOnNewClosedBar();
+        if(stop_new_signals)
+            ProcessPattern20Touch(false);
     }
     
     if(stop_new_signals)
@@ -2862,6 +3138,9 @@ void OnTick()
                 break;
              case PATTERN_19_OHLC_RECOVERY_ENTRY:
                 HandlePattern19_OHLCRecoveryEntry();
+                break;
+             case PATTERN_20_THREE_GREEN_HHHL_RETEST:
+                HandlePattern20_ThreeGreenHHHLRetest();
                 break;
       }
 }
@@ -2974,7 +3253,7 @@ bool ExecutePattern9BuyOrder(double fallPercent)
 
         if(IsSpreadAcceptable())
         {
-            if(OrderSend(request, result))
+            if(SendDollarExitAwareOrder(request, result))
             {
                 PrintFormat("Pattern 9: Placed BUY order #%d at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f (Fall: %.2f%%)",
                            result.order, entryPrice, stopLoss, takeProfit, lots, fallPercent);
@@ -3038,7 +3317,7 @@ bool ExecutePattern9SellOrder(double risePercent)
 
         if(IsSpreadAcceptable())
         {
-            if(OrderSend(request, result))
+            if(SendDollarExitAwareOrder(request, result))
             {
                 PrintFormat("Pattern 9: Placed SELL order #%d at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f (Rise: %.2f%%)",
                            result.order, entryPrice, stopLoss, takeProfit, lots, risePercent);
@@ -3541,7 +3820,7 @@ bool ExecutePattern10SellOrder(double changePercent)
         if(!IsSpreadAcceptable())
             return false;
 
-        if(OrderSend(request, result))
+        if(SendDollarExitAwareOrder(request, result))
         {
             PrintFormat("Pattern 10: Placed SELL order #%d at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f (%s: %.2f%%)",
                         result.order, entryPrice, stopLoss, takeProfit, lots,
@@ -4241,7 +4520,7 @@ void ExecutePatternTrade(const string trade_type, double entry_price, double sl_
         request.type = ORDER_TYPE_BUY;
         request.price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
         
-        if(OrderSend(request, result))
+        if(SendDollarExitAwareOrder(request, result))
         {
             if(!g_is_backtesting)
                 PrintFormat("Pattern 13: BUY order placed - Ticket: %d, Entry: %.5f, SL: %.5f, TP: %.5f",
@@ -4258,7 +4537,7 @@ void ExecutePatternTrade(const string trade_type, double entry_price, double sl_
         request.type = ORDER_TYPE_SELL;
         request.price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
         
-        if(OrderSend(request, result))
+        if(SendDollarExitAwareOrder(request, result))
         {
             if(!g_is_backtesting)
                 PrintFormat("Pattern 13: SELL order placed - Ticket: %d, Entry: %.5f, SL: %.5f, TP: %.5f",
@@ -4361,7 +4640,7 @@ void HandlePattern14_BreakLowVolume()
             request.type_filling = GetSupportedFillingMode(_Symbol);
             if(IsSpreadAcceptable())
             {
-               if(OrderSend(request, result))
+               if(SendDollarExitAwareOrder(request, result))
                {
                   PrintFormat("Pattern 14: Placed BUY order #%d at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                               result.order, entryPrice, stopLoss, takeProfit, lots);
@@ -4409,7 +4688,7 @@ void HandlePattern14_BreakLowVolume()
             request.type_filling = GetSupportedFillingMode(_Symbol);
             if(IsSpreadAcceptable())
             {
-               if(OrderSend(request, result))
+               if(SendDollarExitAwareOrder(request, result))
                {
                   PrintFormat("Pattern 14: Placed SELL order #%d at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                               result.order, entryPrice, stopLoss, takeProfit, lots);
@@ -4621,7 +4900,7 @@ void ExecutePattern15Trade(ENUM_POSITION_TYPE tradeType = POSITION_TYPE_BUY)
 
       if(IsSpreadAcceptable())
       {
-         if(OrderSend(request, result))
+         if(SendDollarExitAwareOrder(request, result))
          {
             PrintFormat("Pattern 15: %s order placed #%d at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                         tradeTypeStr, result.order, entryPrice, stopLoss, takeProfit, lots);
@@ -4778,7 +5057,7 @@ void ExecutePattern16Trade()
 
       if(IsSpreadAcceptable())
       {
-         if(OrderSend(request, result))
+         if(SendDollarExitAwareOrder(request, result))
          {
             PrintFormat("Pattern 16: BUY order placed #%d at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                         result.order, entryPrice, stopLoss, takeProfit, lots);
@@ -5286,6 +5565,143 @@ void HandlePattern19_OHLCRecoveryEntry()
 
    ExecuteTrade(trade_action);
    g_p19_lastSignalBarTime = signal_bar_time;
+}
+
+//+------------------------------------------------------------------+
+//| Pattern 20 - 3 Green Higher High/Higher Low Retest Buy           |
+//+------------------------------------------------------------------+
+void DeletePattern20Objects()
+{
+   int total_objects = ObjectsTotal(0);
+   for(int i = total_objects - 1; i >= 0; i--)
+   {
+      string obj_name = ObjectName(0, i);
+      if(StringFind(obj_name, PATTERN20_OBJECT_PREFIX) == 0)
+         ObjectDelete(0, obj_name);
+   }
+}
+
+void UpsertPattern20LevelLine()
+{
+   if(g_is_backtesting)
+      return;
+
+   if(!InpPattern20ShowLevel || !g_p20_levelActive || g_p20_firstCandleLow <= 0.0)
+   {
+      DeletePattern20Objects();
+      return;
+   }
+
+   string name = PATTERN20_OBJECT_PREFIX + "FIRST_LOW";
+   string label = StringFormat("P20 first candle low %.5f", g_p20_firstCandleLow);
+
+   if(ObjectFind(0, name) < 0)
+   {
+      if(!ObjectCreate(0, name, OBJ_HLINE, 0, 0, g_p20_firstCandleLow))
+         return;
+   }
+
+   ObjectSetDouble(0, name, OBJPROP_PRICE, g_p20_firstCandleLow);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clrDeepSkyBlue);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);
+   ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DASH);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, false);
+   ObjectSetString(0, name, OBJPROP_TEXT, label);
+   ObjectSetString(0, name, OBJPROP_TOOLTIP, label);
+}
+
+void UpdatePattern20SetupOnNewClosedBar()
+{
+   if(!InpPattern20Enabled)
+      return;
+
+   datetime closed_bar_time = iTime(_Symbol, _Period, 1);
+   if(closed_bar_time <= 0 || closed_bar_time == g_p20_lastClosedBarTime)
+      return;
+
+   g_p20_lastClosedBarTime = closed_bar_time;
+
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true);
+   int copied = CopyRates(_Symbol, _Period, 1, 3, rates);
+   if(copied < 3)
+      return;
+
+   bool oldest_green = (rates[2].close > rates[2].open);
+   bool middle_green = (rates[1].close > rates[1].open);
+   bool latest_green = (rates[0].close > rates[0].open);
+   bool higher_highs = (rates[1].high > rates[2].high && rates[0].high > rates[1].high);
+   bool higher_lows = (rates[1].low > rates[2].low && rates[0].low > rates[1].low);
+
+   if(!(oldest_green && middle_green && latest_green && higher_highs && higher_lows))
+      return;
+
+   g_p20_patternFirstBarTime = rates[2].time;
+   g_p20_patternLastBarTime = rates[0].time;
+   g_p20_firstCandleLow = rates[2].low;
+   g_p20_levelActive = true;
+   g_p20_levelExpired = false;
+
+   if(InpPattern20LogDetails)
+   {
+      PrintFormat("Pattern 20: New 3-green HH/HL setup. First=%s Low=%.5f | Middle H/L=%.5f/%.5f | Latest H/L=%.5f/%.5f. Waiting for first touch to buy.",
+                  TimeToString(g_p20_patternFirstBarTime, TIME_DATE|TIME_MINUTES),
+                  g_p20_firstCandleLow,
+                  rates[1].high,
+                  rates[1].low,
+                  rates[0].high,
+                  rates[0].low);
+   }
+
+   UpsertPattern20LevelLine();
+}
+
+void ProcessPattern20Touch(bool allow_entry)
+{
+   if(!InpPattern20Enabled)
+      return;
+
+   if(!g_p20_levelActive || g_p20_levelExpired || g_p20_firstCandleLow <= 0.0)
+      return;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   if(bid <= 0.0)
+      return;
+
+   if(bid > g_p20_firstCandleLow)
+      return;
+
+   g_p20_levelActive = false;
+   g_p20_levelExpired = true;
+   DeletePattern20Objects();
+
+   if(InpPattern20LogDetails)
+   {
+      PrintFormat("Pattern 20: First touch of latest setup low %.5f detected at bid %.5f. Level expired%s.",
+                  g_p20_firstCandleLow,
+                  bid,
+                  allow_entry ? " and BUY entry requested" : " without entry because new trades are currently blocked");
+   }
+
+   if(!allow_entry)
+      return;
+
+   if(!IsTradingHour() || IsNewsTime())
+   {
+      if(InpPattern20LogDetails)
+         Print("Pattern 20: Touch detected, but entry blocked by trading-hours/news filter.");
+      return;
+   }
+
+   ExecuteTrade("buy");
+}
+
+void HandlePattern20_ThreeGreenHHHLRetest()
+{
+   UpdatePattern20SetupOnNewClosedBar();
+   ProcessPattern20Touch(true);
 }
 
 //+------------------------------------------------------------------+
@@ -6174,7 +6590,7 @@ void HandlePattern2()
                   request.magic = InpMagicNumber;
                   request.comment = "SatyamEA Gamma";
                   if(!IsSpreadAcceptable()) return;
-                  if(OrderSend(request, result)) { g_sellStopTicket = result.order; PrintFormat("Placed reversed sell limit order #%d at %.5f", g_sellStopTicket, sellLimitPrice); g_lastSignalTime = current_bar_time; }
+                  if(SendDollarExitAwareOrder(request, result)) { g_sellStopTicket = result.order; PrintFormat("Placed reversed sell limit order #%d at %.5f", g_sellStopTicket, sellLimitPrice); g_lastSignalTime = current_bar_time; }
                   else { PrintFormat("Failed to place reversed sell limit. Error: %d", GetLastError()); }
                }
             }
@@ -6218,7 +6634,7 @@ void HandlePattern2()
                buyRequest.type_filling = GetSupportedFillingMode(_Symbol);
 
                if(!IsSpreadAcceptable()) return;
-               if(OrderSend(buyRequest, buyResult))
+               if(SendDollarExitAwareOrder(buyRequest, buyResult))
                {
                   g_buyStopTicket = buyResult.order;
                   PrintFormat("Placed buy stop order #%d at %.5f, Lots=%.2f", g_buyStopTicket, buyStopPrice, buyLots);
@@ -6265,7 +6681,7 @@ void HandlePattern2()
                   request.magic = InpMagicNumber;
                   request.comment = "SatyamEA Delta";
                   if(!IsSpreadAcceptable()) return;
-                  if(OrderSend(request, result)) { g_buyStopTicket = result.order; PrintFormat("Placed reversed buy limit order #%d at %.5f", g_buyStopTicket, buyLimitPrice); g_lastSignalTime = current_bar_time; }
+                  if(SendDollarExitAwareOrder(request, result)) { g_buyStopTicket = result.order; PrintFormat("Placed reversed buy limit order #%d at %.5f", g_buyStopTicket, buyLimitPrice); g_lastSignalTime = current_bar_time; }
                   else { PrintFormat("Failed to place reversed buy limit. Error: %d", GetLastError()); }
                }
             }
@@ -6309,7 +6725,7 @@ void HandlePattern2()
                sellRequest.type_filling = GetSupportedFillingMode(_Symbol);
 
                if(!IsSpreadAcceptable()) return;
-               if(OrderSend(sellRequest, sellResult))
+               if(SendDollarExitAwareOrder(sellRequest, sellResult))
                {
                   g_sellStopTicket = sellResult.order;
                   PrintFormat("Placed sell stop order #%d at %.5f, Lots=%.2f", g_sellStopTicket, sellStopPrice, sellLots);
@@ -6450,7 +6866,7 @@ void HandlePattern3()
                        request.magic = InpMagicNumber;
                        request.comment = "SatyamEA Zeta";
                        if(!IsSpreadAcceptable()) return;
-                       if(OrderSend(request, result)) { g_p3_sellStopTicket = result.order; PrintFormat("Pattern 3: Placed reversed sell limit #%d at %.5f", g_p3_sellStopTicket, sellLimitPrice); g_lastSignalTime = current_bar_time; }
+                       if(SendDollarExitAwareOrder(request, result)) { g_p3_sellStopTicket = result.order; PrintFormat("Pattern 3: Placed reversed sell limit #%d at %.5f", g_p3_sellStopTicket, sellLimitPrice); g_lastSignalTime = current_bar_time; }
                        else { PrintFormat("Pattern 3: Failed to place reversed sell limit. Error: %d", GetLastError()); }
                    }
                }
@@ -6485,7 +6901,7 @@ void HandlePattern3()
                        request.magic = InpMagicNumber;
                        request.comment = "SatyamEA Eta";
                        if(!IsSpreadAcceptable()) return;
-                       if(OrderSend(request, result)) { g_p3_buyStopTicket = result.order; PrintFormat("Pattern 3: Placed reversed buy limit #%d at %.5f", g_p3_buyStopTicket, buyLimitPrice); g_lastSignalTime = current_bar_time; }
+                       if(SendDollarExitAwareOrder(request, result)) { g_p3_buyStopTicket = result.order; PrintFormat("Pattern 3: Placed reversed buy limit #%d at %.5f", g_p3_buyStopTicket, buyLimitPrice); g_lastSignalTime = current_bar_time; }
                        else { PrintFormat("Pattern 3: Failed to place reversed buy limit. Error: %d", GetLastError()); }
                    }
                }
@@ -6530,7 +6946,7 @@ void HandlePattern3()
                      buyRequest.type_filling = GetSupportedFillingMode(_Symbol);
 
                      if(!IsSpreadAcceptable()) return;
-                     if(OrderSend(buyRequest, buyResult))
+                     if(SendDollarExitAwareOrder(buyRequest, buyResult))
                      {
                         g_p3_buyStopTicket = buyResult.order;
                         PrintFormat("Pattern 3: Placed pivot buy stop order #%d at %.5f, Lots=%.2f",
@@ -6585,7 +7001,7 @@ void HandlePattern3()
                      sellRequest.type_filling = GetSupportedFillingMode(_Symbol);
 
                      if(!IsSpreadAcceptable()) return;
-                     if(OrderSend(sellRequest, sellResult))
+                     if(SendDollarExitAwareOrder(sellRequest, sellResult))
                      {
                         g_p3_sellStopTicket = sellResult.order;
                         PrintFormat("Pattern 3: Placed pivot sell stop order #%d at %.5f, Lots=%.2f",
@@ -6780,7 +7196,7 @@ void HandlePattern4()
                                 EnumToString(request.type), EnumToString(InpTradeDirection));
                 }
                 else if(!IsSpreadAcceptable()) return;
-                else if(OrderSend(request, result))
+                else if(SendDollarExitAwareOrder(request, result))
                 {
                     PrintFormat("Pattern 4: Placed %s order at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                         isReversed ? "reversed sell" : "buy", entryPrice, stopLoss, takeProfit, lots);
@@ -6868,7 +7284,7 @@ void HandlePattern4()
                                 EnumToString(request.type), EnumToString(InpTradeDirection));
                 }
                 else if(!IsSpreadAcceptable()) return;
-                else if(OrderSend(request, result))
+                else if(SendDollarExitAwareOrder(request, result))
                 {
                     PrintFormat("Pattern 4: Placed %s order at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                         isReversed ? "reversed buy" : "sell", entryPrice, stopLoss, takeProfit, lots);
@@ -7333,7 +7749,7 @@ void HandlePattern5()
             PrintFormat("[DEBUG] Trading allowed: %s | Session active: %s", trading_allowed ? "YES" : "NO", session_active ? "YES" : "NO");
             
             if(!IsSpreadAcceptable()) return;
-            if(OrderSend(request, result))
+            if(SendDollarExitAwareOrder(request, result))
             {
                 PrintFormat("Pattern 5: Placed BUY order #%d at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                            result.order, entryPrice, stopLoss, takeProfit, lots);
@@ -7432,7 +7848,7 @@ void HandlePattern5()
             request.type_filling = GetSupportedFillingMode(_Symbol);
             
             if(!IsSpreadAcceptable()) return;
-            if(OrderSend(request, result))
+            if(SendDollarExitAwareOrder(request, result))
             {
                 PrintFormat("Pattern 5: Placed SELL order #%d at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                            result.order, entryPrice, stopLoss, takeProfit, lots);
@@ -7562,7 +7978,7 @@ void HandlePattern5_OLD()
                                 EnumToString(request.type), EnumToString(InpTradeDirection));
                 }
                 else if(!IsSpreadAcceptable()) return;
-                else if(OrderSend(request, result))
+                else if(SendDollarExitAwareOrder(request, result))
                 {
                     PrintFormat("Pattern 5: Placed REVERSED SELL order at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                                entryPrice, stopLoss, takeProfit, lots);
@@ -7642,7 +8058,7 @@ void HandlePattern5_OLD()
                                 EnumToString(request.type), EnumToString(InpTradeDirection));
                 }
                 else if(!IsSpreadAcceptable()) return;
-                else if(OrderSend(request, result))
+                else if(SendDollarExitAwareOrder(request, result))
                 {
                     PrintFormat("Pattern 5: Placed BUY order at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                                entryPrice, stopLoss, takeProfit, lots);
@@ -7729,7 +8145,7 @@ void HandlePattern5_OLD()
                                 EnumToString(request.type), EnumToString(InpTradeDirection));
                 }
                 else if(!IsSpreadAcceptable()) return;
-                else if(OrderSend(request, result))
+                else if(SendDollarExitAwareOrder(request, result))
                 {
                     PrintFormat("Pattern 5: Placed REVERSED BUY order at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                                entryPrice, stopLoss, takeProfit, lots);
@@ -7809,7 +8225,7 @@ void HandlePattern5_OLD()
                                 EnumToString(request.type), EnumToString(InpTradeDirection));
                 }
                 else if(!IsSpreadAcceptable()) return;
-                else if(OrderSend(request, result))
+                else if(SendDollarExitAwareOrder(request, result))
                 {
                     PrintFormat("Pattern 5: Placed SELL order at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f",
                                entryPrice, stopLoss, takeProfit, lots);
@@ -8102,13 +8518,7 @@ void HandlePattern8_HeikinAshiConsecutive()
         return;
     }
     
-    // If waiting for candle close and current bar is not closed yet
-    if(InpPattern8WaitForClose && current_bar_time == iTime(_Symbol, _Period, 0))
-    {
-        // For real-time, wait for bar close. In backtest, process immediately
-        if(!g_is_backtesting)
-            return;
-    }
+    datetime last_closed_bar_time = iTime(_Symbol, _Period, 1);
     
     // Reset pattern detection variables
     g_p8_consecutiveGreen = 0;
@@ -8216,10 +8626,14 @@ void HandlePattern8_HeikinAshiConsecutive()
     // Update last bar time
     g_p8_lastBarTime = current_bar_time;
     
-    // Debug information
-    if(!g_is_backtesting)
+    // Candle-close visibility for live monitoring
+    if(!g_is_backtesting && InpPattern8LogEachClosedCandle)
     {
-        PrintFormat("Pattern 8: Analysis - BUY pattern (RED→%dGREEN): %s, SELL pattern (GREEN→%dRED): %s", 
+        PrintFormat("Pattern 8 candle close check [%s]: Need=%d closed HA candles, WaitForClose=%s, Strict=%s, BUY RED->%dGREEN: %s, SELL GREEN->%dRED: %s",
+                   TimeToString(last_closed_bar_time, TIME_DATE|TIME_MINUTES),
+                   consecutiveCandles,
+                   InpPattern8WaitForClose ? "YES" : "NO",
+                   InpPattern8StrictMode ? "YES" : "NO",
                    consecutiveCandles, buy_pattern_found ? "FOUND" : "Not found",
                    consecutiveCandles, sell_pattern_found ? "FOUND" : "Not found");
         
@@ -8326,7 +8740,7 @@ void HandlePattern8_HeikinAshiConsecutive()
                 request.type_filling = GetSupportedFillingMode(_Symbol);
                 
                 if(!IsSpreadAcceptable()) return;
-                if(OrderSend(request, result))
+                if(SendDollarExitAwareOrder(request, result))
                 {
                     PrintFormat("Pattern 8: Placed %s order #%d at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f (RED→%dGREEN HA)",
                                (final_order_type == ORDER_TYPE_BUY) ? "BUY" : "SELL",
@@ -8450,7 +8864,7 @@ void HandlePattern8_HeikinAshiConsecutive()
                 request.type_filling = GetSupportedFillingMode(_Symbol);
                 
                 if(!IsSpreadAcceptable()) return;
-                if(OrderSend(request, result))
+                if(SendDollarExitAwareOrder(request, result))
                 {
                     PrintFormat("Pattern 8: Placed %s order #%d at %.5f, SL: %.5f, TP: %.5f, Lots: %.2f (GREEN→%dRED HA)",
                                (final_order_type == ORDER_TYPE_BUY) ? "BUY" : "SELL",
@@ -8521,9 +8935,13 @@ void OnTimer()
    {
       // Only run essential risk management functions during backtesting
       CheckCandleExitConditions();
-      ApplyLossProtection();
-      ApplyBreakeven();
-      ApplyTrailingStop();
+      if(!InpGlobalDollarExitEnabled)
+      {
+         ApplyLossProtection();
+         ApplyBreakeven();
+         ApplyTrailingStop();
+      }
+      EnforceGlobalDollarExit();
       
       // Process multi-order recovery and synthetic SL
       if(InpMultiOrderEnabled || InpUseSyntheticSL)
@@ -8605,11 +9023,15 @@ void OnTimer()
 
    // Original timer function code
    CheckCandleExitConditions();
-   ApplyLossProtection();
-   ApplyBreakeven();
-   ApplyTrailingStop();
-   ApplyCandleColorTrailing();
-   ApplyCandleColorTrailing();
+   if(!InpGlobalDollarExitEnabled)
+   {
+      ApplyLossProtection();
+      ApplyBreakeven();
+      ApplyTrailingStop();
+      ApplyCandleColorTrailing();
+      ApplyCandleColorTrailing();
+   }
+   EnforceGlobalDollarExit();
    
    // Force cleanup any orphan DCA orders (timer check)
    CleanupOrphanDCAOrders();
@@ -8882,13 +9304,19 @@ void ExecuteTrade(string trade_action)
    request.type     = mt5_order_type;
    request.price    = order_request_price;
    
-   // Set or skip SL based on synthetic SL preference
-   if(InpUseSyntheticSL)
+   // Set or skip SL/TP based on synthetic SL and global dollar-exit settings.
+   if(InpGlobalDollarExitEnabled)
+   {
+      request.sl = 0;
+      request.tp = 0;
+   }
+   else if(InpUseSyntheticSL)
       request.sl = 0; // No real SL if using synthetic SL
    else
       request.sl = sl_price; // Use calculated SL
-      
-   request.tp       = tp_price;
+
+   if(!InpGlobalDollarExitEnabled)
+      request.tp = tp_price;
    request.deviation= InpMaxSlippagePoints;
    request.magic    = InpMagicNumber;
    request.comment  = "SatyamEA";
@@ -8909,7 +9337,7 @@ void ExecuteTrade(string trade_action)
    }
 
    if(!IsSpreadAcceptable()) return;
-   if(!OrderSend(request, result))
+   if(!SendDollarExitAwareOrder(request, result))
      {
       PrintFormat("OrderSend failed for %s %s. Error code: %d. Retcode: %d. Message: %s",
                   EnumToString(request.type), request.symbol, GetLastError(), result.retcode, result.comment);
@@ -9290,7 +9718,16 @@ void UpdateChartDisplay()
      {
       lines_to_display[line_idx++] = "Starting Bal: $" + DoubleToString(InpStartingBalance, 2);
      }
-   lines_to_display[line_idx++] = "SL Type: " + (InpUseSyntheticSL ? "SYNTHETIC" : "REAL");
+   lines_to_display[line_idx++] = "SL Type: " + (InpGlobalDollarExitEnabled ? "OFF (Dollar Exit)" : (InpUseSyntheticSL ? "SYNTHETIC" : "REAL"));
+   if(InpGlobalDollarExitEnabled)
+   {
+      int dollar_exit_positions = 0;
+      double dollar_exit_pnl = CalculateGlobalDollarExitPnL(dollar_exit_positions);
+      lines_to_display[line_idx++] = StringFormat("Dollar Exit: ON | P&L $%.2f | TP $%.2f | SL $%.2f",
+                                                   dollar_exit_pnl,
+                                                   InpGlobalDollarProfitTarget,
+                                                   MathAbs(InpGlobalDollarLossLimit));
+   }
 
    // Show effective risk percentage if in recovery mode
    if(InpRecoveryMode == RECOVERY_ENABLED && g_inRecoveryMode)
@@ -9512,7 +9949,7 @@ bool ClosePositionsByTypeForCandleExit(ENUM_POSITION_TYPE positionTypeToClose)
         PrintFormat("Candle Exit: Attempting market close for %s position #%d, Symbol %s, Volume %.2f",
                     type_str, ticket, request.symbol, request.volume);
 
-        if (!OrderSend(request, result))
+        if (!SendDollarExitAwareOrder(request, result))
         {
             PrintFormat("Candle Exit: Error closing %s position %d: OrderSend Error %d, Retcode: %d, Server Msg: %s",
                         type_str, ticket, GetLastError(), result.retcode, result.comment);
@@ -9788,6 +10225,7 @@ void CheckCandleExitConditions()
 
 void ApplyLossProtection()
 {
+   if(InpGlobalDollarExitEnabled) return;
    if(!InpLossProtectionEnabled) return;
 
    datetime current_time = TimeCurrent();
@@ -9927,7 +10365,7 @@ void ApplyLossProtection()
             request.tp = PositionGetDouble(POSITION_TP);
             request.comment = "SatyamEA Loss Protection";
 
-            if(OrderSend(request, result))
+            if(SendDollarExitAwareOrder(request, result))
             {
                PrintFormat("Loss Protection: Modified SL for position #%d to %.5f", ticket, new_sl);
                ExtPositionTrackers[i].loss_protection_applied = true;
@@ -9995,6 +10433,7 @@ void ApplyLossProtection()
 }
 void ApplyBreakeven()
 {
+   if(InpGlobalDollarExitEnabled) return;
    if(!InpBreakevenEnabled) return;
 
    int total_positions = PositionsTotal();
@@ -10095,7 +10534,7 @@ void ApplyBreakeven()
             request.tp = PositionGetDouble(POSITION_TP);
             request.comment = "SatyamEA Breakeven";
 
-            if(OrderSend(request, result))
+            if(SendDollarExitAwareOrder(request, result))
             {
                PrintFormat("Breakeven: Moved SL to entry for position #%d.", ticket);
                ExtBreakevenTrackers[i].breakeven_applied = true;
@@ -10462,6 +10901,13 @@ double GetATRValueForTimeframe(const string symbol, const ENUM_TIMEFRAMES timefr
 
 void ApplyTrailingStop()
 {
+   if(InpGlobalDollarExitEnabled)
+   {
+      RemoveTrailLine();
+      RemoveTrailTriggerLine();
+      return;
+   }
+
    if(!InpEnableTrailSL)
    {
       RemoveTrailLine();
@@ -10970,7 +11416,7 @@ void ApplyTrailingStop()
          request.tp = position_tp;
          request.comment = "SatyamEA Trailing SL";
 
-         bool sent = OrderSend(request, result);
+         bool sent = SendDollarExitAwareOrder(request, result);
          modified = (sent && (result.retcode == 10009 || result.retcode == 10008)); // DONE / PLACED
          if(!modified)
          {
@@ -11001,7 +11447,7 @@ void ApplyTrailingStop()
                   {
                      request.sl = fallback_sl;
                      ZeroMemory(result);
-                     bool retry_sent = OrderSend(request, result);
+                     bool retry_sent = SendDollarExitAwareOrder(request, result);
                      bool retry_ok = (retry_sent && (result.retcode == 10009 || result.retcode == 10008));
                      if(retry_ok)
                      {
@@ -11148,7 +11594,7 @@ void ApplyKillSwitch()
                request.type = ORDER_TYPE_BUY;
             }
             
-            if(OrderSend(request, result))
+            if(SendDollarExitAwareOrder(request, result))
             {
                PrintFormat("Kill Switch: Closed %s position #%d. Price moved %.2f points (%.2f × SL ATR) from entry (%.5f -> %.5f).",
                           EnumToString(pos_type), ticket, price_move, InpKillSwitchATRMultiplier, entry_price, current_price);
@@ -11196,7 +11642,7 @@ void ApplyKillSwitch()
                request.type = ORDER_TYPE_BUY;
             }
             
-            if(OrderSend(request, result))
+            if(SendDollarExitAwareOrder(request, result))
             {
                PrintFormat("Kill Switch: Closed %s position #%d. Price moved %.2f%% from entry (%.5f -> %.5f).",
                           EnumToString(pos_type), ticket, price_move_percent, entry_price, current_price);
@@ -11503,7 +11949,7 @@ void CancelAllPendingOrders()
       request.action = TRADE_ACTION_REMOVE;
       request.order = ticket;
 
-      if(!OrderSend(request, result))
+      if(!SendDollarExitAwareOrder(request, result))
       {
          PrintFormat("Failed to remove order #%d. Error: %d", ticket, GetLastError());
       }
@@ -12164,7 +12610,7 @@ bool TryActivateHaltRecoveryHedge(MultiOrderGroup &group)
    if(!IsSpreadAcceptable())
       return true;
 
-   if(!OrderSend(request, result))
+   if(!SendDollarExitAwareOrder(request, result))
    {
       PrintFormat("Halt Multi-Recovery: Failed to open halt hedge for group #%d. Error: %d",
                  group.base_ticket, GetLastError());
@@ -13577,7 +14023,7 @@ void UpdateMultiOrderGroups()
                           ticket);
                continue;
             }
-            if(OrderSend(request, result))
+            if(SendDollarExitAwareOrder(request, result))
             {
                PrintFormat("Multi-Order Recovery: Kept original TP (%.5f) but using synthetic SL for position #%d",
                           MultiOrderGroups[new_index].original_tp, ticket);
@@ -13852,7 +14298,7 @@ void CloseAllPositionsGlobally(string reason = "global_protection")
          request.type_filling = ORDER_FILLING_IOC;
          request.comment = reason;
          
-         if(!OrderSend(request, result))
+         if(!SendDollarExitAwareOrder(request, result))
          {
             PrintFormat("ERROR: Failed to close single position #%d in global closure: %d - Retcode: %d",
                        ticket, GetLastError(), result.retcode);
@@ -13982,7 +14428,7 @@ void CloseAllPositionsInGroup(MultiOrderGroup &group)
             continue;
          }
          
-         if(OrderSend(request, result))
+         if(SendDollarExitAwareOrder(request, result))
          {
             PrintFormat("Multi-Order Recovery: Successfully closed %s position #%d on attempt %d (reason: %s)",
                (ticket == group.base_ticket ? "ORIGINAL" : "RECOVERY"), ticket, retry_count + 1, group.close_reason);
@@ -14251,7 +14697,7 @@ bool CheckAndActivateHedging(MultiOrderGroup &group)
    request.type_filling = GetSupportedFillingMode(_Symbol);
    
    if(!IsSpreadAcceptable()) return false;
-   if(!OrderSend(request, result))
+   if(!SendDollarExitAwareOrder(request, result))
    {
       PrintFormat("Hedging: Failed to open hedge position. Error: %d", GetLastError());
       return false;
@@ -14656,7 +15102,7 @@ void OpenRecoveryPosition(MultiOrderGroup &group)
    request.volume = volume;
    request.comment = StringFormat("Recovery-%d for #%d", group.attempts, group.base_ticket);
    
-   if(OrderSend(request, result))
+   if(SendDollarExitAwareOrder(request, result))
    {
       trade_opened = true;
       PrintFormat("Multi-Order Recovery: Successfully opened with calculated lot size %.2f", volume);
@@ -14674,7 +15120,7 @@ void OpenRecoveryPosition(MultiOrderGroup &group)
          request.comment = StringFormat("Recovery-%d-FALLBACK-ORIG for #%d", group.attempts, group.base_ticket);
          ZeroMemory(result); // Clear previous result
          
-         if(OrderSend(request, result))
+         if(SendDollarExitAwareOrder(request, result))
          {
             trade_opened = true;
             fallback_reason = StringFormat("(FALLBACK: Used original lot %.2f instead of calculated %.2f)", volume, calculated_volume);
@@ -14692,7 +15138,7 @@ void OpenRecoveryPosition(MultiOrderGroup &group)
             request.comment = StringFormat("Recovery-%d-FALLBACK-MIN for #%d", group.attempts, group.base_ticket);
             ZeroMemory(result); // Clear previous result
             
-            if(OrderSend(request, result))
+            if(SendDollarExitAwareOrder(request, result))
             {
                trade_opened = true;
                fallback_reason = StringFormat("(FALLBACK: Used minimum lot %.2f, orig calc: %.2f, orig trade: %.2f)", volume, calculated_volume, group.original_lot);
@@ -14716,7 +15162,7 @@ void OpenRecoveryPosition(MultiOrderGroup &group)
          request.comment = StringFormat("Recovery-%d-FALLBACK-MIN for #%d", group.attempts, group.base_ticket);
          ZeroMemory(result); // Clear previous result
          
-         if(OrderSend(request, result))
+         if(SendDollarExitAwareOrder(request, result))
          {
             trade_opened = true;
             fallback_reason = StringFormat("(FALLBACK: Used minimum lot %.2f instead of calculated %.2f)", volume, calculated_volume);
@@ -14778,7 +15224,7 @@ void OpenRecoveryPosition(MultiOrderGroup &group)
                  mod_req.magic = InpMagicNumber;
                  mod_req.comment = "Remove TP for multi recovery";
                  mod_req.type_filling = GetSupportedFillingMode(group.symbol);
-                 if (OrderSend(mod_req, mod_res))
+                 if (SendDollarExitAwareOrder(mod_req, mod_res))
                  {
                     PrintFormat("Multi-Order Recovery: Main trade TP removed (set to zero) for base ticket #%d due to recovery trigger.", base_ticket);
                  }
@@ -15306,7 +15752,7 @@ void HandleMultiOrderRecovery()
             request.comment = StringFormat("Recovery-%d for #%I64u", recoveryLevel + 1, ticket);
             
             if(!IsSpreadAcceptable()) return;
-            bool orderSent = OrderSend(request, result);
+            bool orderSent = SendDollarExitAwareOrder(request, result);
             if(orderSent && result.retcode == TRADE_RETCODE_DONE)
             {
                 Print("Recovery order placed: Level ", (int)recoveryLevel + 1, " for ticket #", (long)ticket);
@@ -15363,7 +15809,7 @@ void HandleMultiOrderRecovery()
                        modifyRequest.sl = finalSL;
                        
                        if(!IsSpreadAcceptable()) return;
-                       if(!OrderSend(modifyRequest, modifyResult))
+                       if(!SendDollarExitAwareOrder(modifyRequest, modifyResult))
                        {
                            Print("Failed to modify final recovery SL. Error: ", GetLastError());
                        }
@@ -18338,7 +18784,7 @@ void CreateDCAOrders(ulong main_ticket)
         request.type_filling = GetSupportedFillingMode(_Symbol);
         
         if(!IsSpreadAcceptable()) return;
-        if(OrderSend(request, result))
+        if(SendDollarExitAwareOrder(request, result))
         {
             new_group.dca_tickets[new_group.dca_count] = result.order;
             new_group.dca_count++;
@@ -18523,7 +18969,7 @@ void CleanupOrphanDCAOrders()
                         request.order = ticket;
                         
                         if(!IsSpreadAcceptable()) return;
-                        if(OrderSend(request, result))
+                        if(SendDollarExitAwareOrder(request, result))
                         {
                             PrintFormat("ORPHAN CLEANUP: Cancelled orphan DCA order #%d (Main Trade #%d no longer exists)", 
                                        ticket, main_ticket);
@@ -18649,7 +19095,7 @@ bool ForceClosePosition(ulong ticket, string reason = "Force close")
             request.price = SymbolInfoDouble(symbol, SYMBOL_ASK);
         }
         
-        if(IsSpreadAcceptable() && OrderSend(request, result))
+        if(IsSpreadAcceptable() && SendDollarExitAwareOrder(request, result))
         {
             PrintFormat("%s: Successfully closed position #%d on standard attempt %d", reason, ticket, attempt);
             CleanupPositionChartObjects(ticket);
@@ -18703,7 +19149,7 @@ bool ForceClosePosition(ulong ticket, string reason = "Force close")
             request.price = SymbolInfoDouble(symbol, SYMBOL_ASK);
         }
         
-        if(IsSpreadAcceptable() && OrderSend(request, result))
+        if(IsSpreadAcceptable() && SendDollarExitAwareOrder(request, result))
         {
             PrintFormat("%s: Successfully closed position #%d using %s filling", 
                        reason, ticket, filling_names[mode_idx]);
@@ -18755,7 +19201,7 @@ bool ForceClosePosition(ulong ticket, string reason = "Force close")
             request.price = SymbolInfoDouble(symbol, SYMBOL_ASK);
         }
         
-        if(OrderSend(request, result))
+        if(SendDollarExitAwareOrder(request, result))
         {
             PrintFormat("%s: Successfully closed position #%d on final attempt %d (zero deviation)", 
                        reason, ticket, final_attempt);
@@ -19108,7 +19554,7 @@ void CancelDCAOrders(DCAGroup &group)
                 request.order = ticket;
                 
                 if(!IsSpreadAcceptable()) return;
-                if(OrderSend(request, result))
+                if(SendDollarExitAwareOrder(request, result))
                 {
                     PrintFormat("DCA: Cancelled order #%d", ticket);
                 }
@@ -19930,7 +20376,8 @@ void CleanupAllEAObjects()
       "ORIGINAL_TP_LINE_",
       "TRAILING_SL_LINE_",
       "GCTEA_TRAIL_",
-      "GCTEA_TRAIL_NEXT_"
+      "GCTEA_TRAIL_NEXT_",
+      "P20_RETEST_"
    };
    
    // Remove objects with EA-specific prefixes
@@ -20093,6 +20540,7 @@ double CalculateLotFromSLDistance(string symbol, double sl_distance_price_abs)
 
 void ApplyCandleColorTrailing()
 {
+   if(InpGlobalDollarExitEnabled) return;
    if(!InpCandleColorTrailingEnabled) return;
 
    // Process only on new closed bar
@@ -20200,7 +20648,7 @@ void ApplyCandleColorTrailing()
          req.tp = PositionGetDouble(POSITION_TP);
          req.comment = "SatyamEA CandleColorTrail";
 
-         if(OrderSend(req, res))
+         if(SendDollarExitAwareOrder(req, res))
          {
             PrintFormat("CandleColorTrail: Updated SL for %s position #%d to %.5f (delta: %.5f)", (pos_type==POSITION_TYPE_BUY?"BUY":"SELL"), ticket, new_sl, delta);
          }
@@ -20211,6 +20659,3 @@ void ApplyCandleColorTrailing()
       }
    }
 }
-
-
-
