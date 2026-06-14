@@ -23,7 +23,8 @@ enum ENUM_COPIER_LOT_MODE
    COPIER_LOT_EXACT = 0,
    COPIER_LOT_FIXED_STARTING_BALANCE_RISK = 1,
    COPIER_LOT_CURRENT_BALANCE_RISK = 2,
-   COPIER_LOT_CUSTOM = 3
+   COPIER_LOT_CUSTOM = 3,
+   COPIER_LOT_FIXED_MONEY_RISK = 4
 };
 
 enum ENUM_COPIER_ENTRY_MODE
@@ -142,6 +143,7 @@ input group "Lot Sizing"
 input double LotMultiplier = 1.0;                         // Exact lot multiplier: 0.5=half, 1=same, 2=double
 input ENUM_COPIER_LOT_MODE LotMode = COPIER_LOT_EXACT;
 input double CustomLot = 0.01;                            // Custom lot mode: fixed copier lot, ignores sender lot
+input double FixedRiskMoneyPerTrade = 100.0;               // Fixed money risk mode: max loss per copied trade
 input double RiskStartingBalance = 10000.0;
 input double RiskPerTradePercent = 1.0;
 input double MaxFixedRiskLot = 1.0;
@@ -2777,7 +2779,7 @@ double EffectiveLotMultiplier()
 double CalculateFixedRiskVolume(const SourcePosition &src, const string symbol, const long target_type, const double sl, const bool log_details)
 {
    double risk_base = RiskSizingBalanceBase();
-   double risk_amount = risk_base * (RiskPerTradePercent / 100.0);
+   double risk_amount = RiskSizingMoneyAmount(risk_base);
    double entry_price = RiskSizingEntryPrice(src, symbol, target_type);
    if(risk_amount <= 0.0 || entry_price <= 0.0 || sl <= 0.0)
       return 0.0;
@@ -2811,8 +2813,9 @@ double CalculateFixedRiskVolume(const SourcePosition &src, const string symbol, 
 
    if(log_details && LogRiskSizingDetails)
    {
-      PrintFormat("Risk Sizing: Source #%I64u | Symbol=%s | Direction=%s | RiskBaseMode=%s | RiskBase=%.2f | RiskPercent=%.2f%% | RiskMoney=%.2f",
-                  src.ticket, symbol, PositionTypeName(target_type), EnumToString(LotMode), risk_base, RiskPerTradePercent, risk_amount);
+      PrintFormat("Risk Sizing: Source #%I64u | Symbol=%s | Direction=%s | RiskMode=%s | RiskBase=%.2f | RiskPercent=%.2f%% | FixedRiskMoney=%.2f | RiskMoney=%.2f",
+                  src.ticket, symbol, PositionTypeName(target_type), EnumToString(LotMode), risk_base,
+                  RiskPerTradePercent, FixedRiskMoneyPerTrade, risk_amount);
       PrintFormat("Risk Sizing: Entry=%.5f | SL=%.5f | Distance=%.1f points | LossPer1Lot=%.2f | RawLot=%.8f | NormalizedLot=%.2f | ExpectedRisk=%.2f",
                   entry_price, sl, MathAbs(entry_price - sl) / SymbolInfoDouble(symbol, SYMBOL_POINT),
                   loss_per_lot, raw_volume, normalized_volume, expected_risk);
@@ -2821,6 +2824,14 @@ double CalculateFixedRiskVolume(const SourcePosition &src, const string symbol, 
    }
 
    return normalized_volume;
+}
+
+double RiskSizingMoneyAmount(const double risk_base)
+{
+   if(LotMode == COPIER_LOT_FIXED_MONEY_RISK)
+      return MathMax(0.0, FixedRiskMoneyPerTrade);
+
+   return risk_base * (RiskPerTradePercent / 100.0);
 }
 
 double RiskSizingBalanceBase()
@@ -2833,6 +2844,9 @@ double RiskSizingBalanceBase()
 
 double RiskSizingEntryPrice(const SourcePosition &src, const string symbol, const long target_type)
 {
+   if(LotMode == COPIER_LOT_FIXED_MONEY_RISK)
+      return NormalizePrice(symbol, src.price_open);
+
    if(IsPendingEntryMode())
       return NormalizePrice(symbol, src.price_open);
 
@@ -3130,7 +3144,8 @@ bool IsPendingEntryMode()
 bool IsRiskLotMode()
 {
    return LotMode == COPIER_LOT_FIXED_STARTING_BALANCE_RISK ||
-          LotMode == COPIER_LOT_CURRENT_BALANCE_RISK;
+          LotMode == COPIER_LOT_CURRENT_BALANCE_RISK ||
+          LotMode == COPIER_LOT_FIXED_MONEY_RISK;
 }
 
 double NormalizeVolume(const string symbol, double volume)
@@ -3545,6 +3560,13 @@ string LotSizingStatusLine()
       return "Lot sizing: current balance risk " + DoubleToString(RiskPerTradePercent, 2) +
              "% of " + DoubleToString(balance, 2) +
              " = " + DoubleToString(risk_amount, 2) + "\n";
+   }
+
+   if(LotMode == COPIER_LOT_FIXED_MONEY_RISK)
+   {
+      return "Lot sizing: fixed money risk " +
+             DoubleToString(MathMax(0.0, FixedRiskMoneyPerTrade), 2) +
+             " per trade from sender entry to copied SL\n";
    }
 
    return "Lot sizing: exact sender lot x " + DoubleToString(EffectiveLotMultiplier(), 2) +
