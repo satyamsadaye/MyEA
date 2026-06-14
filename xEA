@@ -122,6 +122,12 @@ enum ENUM_SLTP_METHOD
    SLTP_FIXED_POINTS       // Use Fixed Points
   };
 
+enum ENUM_GLOBAL_DOLLAR_SLTP_MODE
+  {
+   GLOBAL_DOLLAR_SYNTHETIC_SLTP, // Synthetic dollar exit + visible broker SL/TP from dollar settings
+   GLOBAL_DOLLAR_REAL_SLTP       // Real broker SL/TP calculated from configured dollar P&L
+  };
+
 enum ENUM_TRAILING_TRIGGER_MODE
   {
    TRAIL_MODE_PERCENTAGE,   // Percentage-based trailing trigger/move
@@ -300,10 +306,16 @@ input double InpFixedTPPoints = 300.0;                     // Fixed Take Profit 
 input bool   InpUseSyntheticSL = false;                    // Use synthetic SL instead of real SL for main trades
 
 input group "🎯 Global Dollar Exit Settings"
-input bool   InpGlobalDollarExitEnabled = false;           // Enable global dollar profit/loss exit (disables normal SL/TP)
-input double InpGlobalDollarProfitTarget = 10.0;           // Close all EA trades when floating profit reaches this USD amount
-input double InpGlobalDollarLossLimit = 10.0;              // Close all EA trades when floating loss reaches this USD amount
+input bool   InpGlobalDollarExitEnabled = false;           // Enable global dollar profit/loss exit
+input ENUM_GLOBAL_DOLLAR_SLTP_MODE InpGlobalDollarSLTPMode = GLOBAL_DOLLAR_SYNTHETIC_SLTP; // Synthetic dollar exit or real broker SL/TP behavior
+input double InpGlobalDollarProfitTarget = 10.0;           // Synthetic: EA closes at floating profit and sets visible TP dollars
+input double InpGlobalDollarLossLimit = 10.0;              // Synthetic: EA closes at floating loss and sets visible SL dollars
 input bool   InpGlobalDollarExitAllSymbols = true;         // Apply dollar exit to all symbols with this magic number
+input bool   InpGlobalDollarStopTradingEnabled = false;    // Stop new trading when total EA P&L reaches special dollar limits
+input double InpGlobalDollarStopTradingProfit = 100.0;     // Stop new trading when total EA profit reaches this amount
+input double InpGlobalDollarStopTradingLoss = 100.0;       // Stop new trading when total EA loss reaches this amount
+input bool   InpGlobalDollarStopTradingIncludeOpenPnL = true; // Include running/open trade P&L when checking special stop amounts
+input bool   InpGlobalDollarStopTradingCloseOpenPositions = true; // Close live EA positions when special stop is triggered
 
 input group "💰 Position Limits & Controls"
 input int    InpMaxOpenPositions = 1;                      // Max Open Positions for this EA (per symbol, per magic)
@@ -797,6 +809,9 @@ string MAN_BTN_BE = "MAN_BTN_BE";
 string MAN_DASH_PREFIX = "MAN_DASH_";
 bool manual_dashboard_created = false;
 bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result);
+double CalculateGlobalDollarStopTradingPnL(int &deal_count, int &position_count);
+bool IsGlobalDollarStopTradingActive();
+void EnforceGlobalDollarStopTrading();
 // Manual backtest signal file options
 input bool   InpManualSignalUseFile = false;              // Enable reading manual signals from file (backtester)
 input string InpManualSignalFileName = "manual_signals.csv"; // File placed in MQL5/Files or Common files
@@ -1341,7 +1356,7 @@ ulong OpenPosition(string symbol, ENUM_POSITION_TYPE position_type, double volum
     // Get market price for the order
     request.price = SymbolInfoDouble(symbol, (position_type == POSITION_TYPE_BUY) ? SYMBOL_ASK : SYMBOL_BID);
     
-    // Global dollar exit manages exits by floating P&L, so broker SL/TP stay disabled.
+    // Global dollar exit replaces these with dollar-based visible SL/TP in SendDollarExitAwareOrder().
     if(!InpGlobalDollarExitEnabled)
     {
         if(sl != 0) request.sl = sl;
@@ -1377,7 +1392,7 @@ ulong OpenPosition(string symbol, ENUM_POSITION_TYPE position_type, double volum
 //+------------------------------------------------------------------+
 //| Centralized ClosePosition function                                 |
 //+------------------------------------------------------------------+
-bool ClosePosition(ulong ticket)
+bool ClosePositionWithComment(ulong ticket, string close_comment = "")
 {
     if(!PositionSelectByTicket(ticket))
     {
@@ -1401,7 +1416,11 @@ bool ClosePosition(ulong ticket)
     request.deviation = InpMaxSlippagePoints;
     request.magic = InpMagicNumber;
     request.type_filling = GetSupportedFillingMode(symbol);
-    if(WasTrailingUsed(ticket))
+    if(close_comment != "")
+    {
+        request.comment = close_comment;
+    }
+    else if(WasTrailingUsed(ticket))
     {
         request.comment = "SatyamEA TRAILING_EXIT";
     }
@@ -1412,6 +1431,11 @@ bool ClosePosition(ulong ticket)
     {
         request.comment = StringFormat("✨HEDGE CLOSED P&L:%.2f$", 
                                      PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP));
+    }
+
+    if(close_comment != "")
+    {
+        request.comment = close_comment;
     }
     
     // Set closing order type (opposite to position type)
@@ -1441,6 +1465,11 @@ bool ClosePosition(ulong ticket)
     
     PrintFormat("Failed to close position #%d: RetCode=%d, Comment=%s", ticket, result.retcode, result.comment);
     return false;
+}
+
+bool ClosePosition(ulong ticket)
+{
+    return ClosePositionWithComment(ticket, "");
 }
 
 // Global for starting balance
@@ -1621,6 +1650,10 @@ struct TradeStats
 TradeStats g_stats;           // Global statistics object
 double g_max_balance = 0;     // Track maximum balance for drawdown calculation
 int g_last_history_count = 0; // Track number of historical trades processed
+bool g_globalDollarStopTradingTriggered = false;
+string g_globalDollarStopTradingReason = "";
+double g_globalDollarStopTradingPnL = 0.0;
+datetime g_globalDollarStopTradingStartTime = 0;
 
 // Add after global variables at top of file
 double g_minPriceChangePoints = 2;  // Minimum price change in points to update orders
@@ -2011,6 +2044,10 @@ int OnInit()
    g_currentRecoveryFactor = 1.0;
    g_inRecoveryMode = false;
    g_lastTradeCloseTime = 0;
+   g_globalDollarStopTradingTriggered = false;
+   g_globalDollarStopTradingReason = "";
+   g_globalDollarStopTradingPnL = 0.0;
+   g_globalDollarStopTradingStartTime = TimeCurrent();
 
     // Initialize multi-order recovery
     ArrayResize(MultiOrderGroups, 0);
@@ -2053,6 +2090,17 @@ int OnInit()
    PrintFormat("Risk Method: %s, Risk Per Trade: %.2f%%, Order Type: %s, Dev Mode: %s, SL Type: %s",
                EnumToString(InpRiskCalcMethod), InpRiskPerTradePercentage, EnumToString(InpOrderExecutionType), 
                InpDevelopmentMode ? "ON" : "OFF", InpUseSyntheticSL ? "SYNTHETIC" : "REAL");
+   PrintFormat("GLOBAL DOLLAR EXIT: %s, SL/TP mode: %s, Profit Target: %.2f, Loss Limit: %.2f",
+               InpGlobalDollarExitEnabled ? "ON" : "OFF",
+               EnumToString(InpGlobalDollarSLTPMode),
+               InpGlobalDollarProfitTarget,
+               InpGlobalDollarLossLimit);
+   PrintFormat("GLOBAL DOLLAR STOP TRADING: %s, Profit Stop: %.2f, Loss Stop: %.2f, Include Open P&L: %s, Close Open Positions: %s",
+               InpGlobalDollarStopTradingEnabled ? "ON" : "OFF",
+               InpGlobalDollarStopTradingProfit,
+               InpGlobalDollarStopTradingLoss,
+               InpGlobalDollarStopTradingIncludeOpenPnL ? "YES" : "NO",
+               InpGlobalDollarStopTradingCloseOpenPositions ? "YES" : "NO");
    
    // DEBUG: Show ATR multiplier values loaded from user settings
    PrintFormat("PARAMETER DEBUG: SL/TP Method = %s", 
@@ -2317,8 +2365,202 @@ bool IsGlobalDollarExitManagedSymbol(const string symbol)
    return InpGlobalDollarExitAllSymbols || symbol == _Symbol;
 }
 
+bool IsBuyOrderType(const ENUM_ORDER_TYPE order_type)
+{
+   return order_type == ORDER_TYPE_BUY ||
+          order_type == ORDER_TYPE_BUY_LIMIT ||
+          order_type == ORDER_TYPE_BUY_STOP ||
+          order_type == ORDER_TYPE_BUY_STOP_LIMIT;
+}
+
+ENUM_ORDER_TYPE ProfitCalcOrderType(const ENUM_ORDER_TYPE order_type)
+{
+   return IsBuyOrderType(order_type) ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+}
+
+double NormalizeSymbolPrice(const string symbol, const double price)
+{
+   if(price <= 0.0)
+      return 0.0;
+
+   return NormalizeDouble(price, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS));
+}
+
+double GlobalDollarEntryPriceForRequest(MqlTradeRequest &request)
+{
+   if(request.price > 0.0)
+      return request.price;
+
+   if(IsBuyOrderType(request.type))
+      return SymbolInfoDouble(request.symbol, SYMBOL_ASK);
+
+   return SymbolInfoDouble(request.symbol, SYMBOL_BID);
+}
+
+bool PriceForDollarPnL(const string symbol,
+                       const ENUM_ORDER_TYPE order_type,
+                       const double volume,
+                       const double entry,
+                       const double target_money,
+                       double &target_price)
+{
+   target_price = 0.0;
+   if(symbol == "" || volume <= 0.0 || entry <= 0.0 || target_money == 0.0)
+      return false;
+
+   double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   if(point <= 0.0)
+      point = 0.00001;
+
+   ENUM_ORDER_TYPE calc_type = ProfitCalcOrderType(order_type);
+   bool buy = (calc_type == ORDER_TYPE_BUY);
+   bool profit_target = (target_money > 0.0);
+   bool price_above_entry = (buy && profit_target) || (!buy && !profit_target);
+
+   double range = MathMax(point, entry * 0.001);
+   double low = entry;
+   double high = entry;
+   double probe = entry;
+   double profit = 0.0;
+
+   for(int i = 0; i < 60; i++)
+   {
+      probe = price_above_entry ? entry + range : entry - range;
+      if(probe <= 0.0)
+         return false;
+
+      if(!OrderCalcProfit(calc_type, symbol, volume, entry, probe, profit))
+         return false;
+
+      if((profit_target && profit >= target_money) ||
+         (!profit_target && profit <= target_money))
+         break;
+
+      range *= 2.0;
+   }
+
+   if((profit_target && profit < target_money) ||
+      (!profit_target && profit > target_money))
+      return false;
+
+   if(price_above_entry)
+   {
+      low = entry;
+      high = probe;
+   }
+   else
+   {
+      low = probe;
+      high = entry;
+   }
+
+   for(int i = 0; i < 80; i++)
+   {
+      double mid = (low + high) / 2.0;
+      if(!OrderCalcProfit(calc_type, symbol, volume, entry, mid, profit))
+         return false;
+
+      if(price_above_entry)
+      {
+         if((profit_target && profit < target_money) ||
+            (!profit_target && profit > target_money))
+            low = mid;
+         else
+            high = mid;
+      }
+      else
+      {
+         if((profit_target && profit < target_money) ||
+            (!profit_target && profit > target_money))
+            high = mid;
+         else
+            low = mid;
+      }
+   }
+
+   target_price = NormalizeSymbolPrice(symbol, (low + high) / 2.0);
+   return target_price > 0.0;
+}
+
+bool CalculateGlobalDollarSLTP(const string symbol,
+                               const ENUM_ORDER_TYPE order_type,
+                               const double volume,
+                               const double entry,
+                               double &sl,
+                               double &tp)
+{
+   sl = 0.0;
+   tp = 0.0;
+
+   double loss_limit = MathAbs(InpGlobalDollarLossLimit);
+   double profit_target = MathAbs(InpGlobalDollarProfitTarget);
+   bool ok = false;
+
+   if(loss_limit > 0.0)
+      ok = PriceForDollarPnL(symbol, order_type, volume, entry, -loss_limit, sl) || ok;
+
+   if(profit_target > 0.0)
+      ok = PriceForDollarPnL(symbol, order_type, volume, entry, profit_target, tp) || ok;
+
+   return ok;
+}
+
+bool ApplyGlobalDollarSLTPToRequest(MqlTradeRequest &request)
+{
+   if(!InpGlobalDollarExitEnabled)
+      return false;
+
+   double volume = request.volume;
+   ENUM_ORDER_TYPE order_type = request.type;
+   double entry = GlobalDollarEntryPriceForRequest(request);
+
+   if(request.action == TRADE_ACTION_SLTP && request.position > 0 && PositionSelectByTicket(request.position))
+   {
+      volume = PositionGetDouble(POSITION_VOLUME);
+      order_type = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+      entry = PositionGetDouble(POSITION_PRICE_OPEN);
+      request.symbol = PositionGetString(POSITION_SYMBOL);
+   }
+   else if(request.action == TRADE_ACTION_MODIFY && request.order > 0 && OrderSelect(request.order))
+   {
+      volume = OrderGetDouble(ORDER_VOLUME_CURRENT);
+      order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+      entry = request.price > 0.0 ? request.price : OrderGetDouble(ORDER_PRICE_OPEN);
+      request.symbol = OrderGetString(ORDER_SYMBOL);
+   }
+
+   double sl = 0.0;
+   double tp = 0.0;
+   if(!CalculateGlobalDollarSLTP(request.symbol, order_type, volume, entry, sl, tp))
+      return false;
+
+   request.sl = sl;
+   request.tp = tp;
+
+   PrintFormat("Global Dollar Exit: %s SL/TP for %s %.2f lot at %.5f -> SL %.5f ($%.2f), TP %.5f ($%.2f)",
+               EnumToString(InpGlobalDollarSLTPMode), request.symbol, volume, entry,
+               request.sl, MathAbs(InpGlobalDollarLossLimit), request.tp, MathAbs(InpGlobalDollarProfitTarget));
+   return true;
+}
+
 bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result)
 {
+   if(IsGlobalDollarStopTradingActive())
+   {
+      bool is_new_market_entry = (request.action == TRADE_ACTION_DEAL && request.position == 0);
+      bool is_new_pending_entry = (request.action == TRADE_ACTION_PENDING);
+
+      if(is_new_market_entry || is_new_pending_entry)
+      {
+         ZeroMemory(result);
+         result.retcode = TRADE_RETCODE_REJECT;
+         result.comment = "Global dollar stop trading active: " + g_globalDollarStopTradingReason;
+         PrintFormat("Global Dollar Stop Trading: blocked new %s order on %s. Reason: %s",
+                     EnumToString(request.action), request.symbol, g_globalDollarStopTradingReason);
+         return false;
+      }
+   }
+
    if(InpGlobalDollarExitEnabled)
    {
       bool managed_request = false;
@@ -2346,8 +2588,8 @@ bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result)
           request.action == TRADE_ACTION_MODIFY ||
           request.action == TRADE_ACTION_SLTP))
       {
-         request.sl = 0.0;
-         request.tp = 0.0;
+         if(!(request.action == TRADE_ACTION_DEAL && request.position > 0))
+            ApplyGlobalDollarSLTPToRequest(request);
       }
    }
 
@@ -2376,9 +2618,34 @@ double CalculateGlobalDollarExitPnL(int &position_count)
    return total_pnl;
 }
 
-void RemoveGlobalDollarExitSLTPFromPositions()
+double CalculateGlobalDollarStopTradingPnL(int &deal_count, int &position_count)
 {
-   if(!InpGlobalDollarExitEnabled) return;
+   double total_pnl = 0.0;
+   deal_count = 0;
+   position_count = 0;
+
+   datetime history_from = (g_globalDollarStopTradingStartTime > 0 ? g_globalDollarStopTradingStartTime : 0);
+   if(HistorySelect(history_from, TimeCurrent()))
+   {
+      int total_deals = HistoryDealsTotal();
+      for(int i = 0; i < total_deals; i++)
+      {
+         ulong deal_ticket = HistoryDealGetTicket(i);
+         if(deal_ticket == 0) continue;
+         if(HistoryDealGetInteger(deal_ticket, DEAL_MAGIC) != InpMagicNumber) continue;
+
+         string symbol = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+         if(symbol != "" && !IsGlobalDollarExitManagedSymbol(symbol)) continue;
+
+         total_pnl += HistoryDealGetDouble(deal_ticket, DEAL_PROFIT) +
+                      HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION) +
+                      HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
+         deal_count++;
+      }
+   }
+
+   if(!InpGlobalDollarStopTradingIncludeOpenPnL)
+      return total_pnl;
 
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
@@ -2390,9 +2657,159 @@ void RemoveGlobalDollarExitSLTPFromPositions()
       string symbol = PositionGetString(POSITION_SYMBOL);
       if(!IsGlobalDollarExitManagedSymbol(symbol)) continue;
 
+      total_pnl += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      position_count++;
+   }
+
+   return total_pnl;
+}
+
+bool IsGlobalDollarStopTradingActive()
+{
+   return InpGlobalDollarStopTradingEnabled && g_globalDollarStopTradingTriggered;
+}
+
+void CancelGlobalDollarStopTradingPendingOrders()
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0) continue;
+      if(!OrderSelect(ticket)) continue;
+      if(OrderGetInteger(ORDER_MAGIC) != InpMagicNumber) continue;
+
+      string symbol = OrderGetString(ORDER_SYMBOL);
+      if(!IsGlobalDollarExitManagedSymbol(symbol)) continue;
+
+      MqlTradeRequest request;
+      MqlTradeResult result;
+      ZeroMemory(request);
+      ZeroMemory(result);
+
+      request.action = TRADE_ACTION_REMOVE;
+      request.order = ticket;
+      request.symbol = symbol;
+      request.magic = InpMagicNumber;
+      request.comment = "Global dollar stop trading";
+
+      if(!OrderSend(request, result))
+      {
+         PrintFormat("Global Dollar Stop Trading: Failed to remove pending order #%d. Error: %d",
+                     ticket, GetLastError());
+      }
+      else if(result.retcode != TRADE_RETCODE_DONE)
+      {
+         PrintFormat("Global Dollar Stop Trading: Pending order remove rejected for #%d. Retcode: %d, Comment: %s",
+                     ticket, result.retcode, result.comment);
+      }
+   }
+}
+
+void CloseGlobalDollarStopTradingPositions()
+{
+   string close_comment = "GDStop " + g_globalDollarStopTradingReason;
+   if(StringLen(close_comment) > 31)
+      close_comment = StringSubstr(close_comment, 0, 31);
+
+   int closed_count = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      if(!IsGlobalDollarExitManagedSymbol(symbol)) continue;
+
+      PrintFormat("Global Dollar Stop Trading: Closing position #%d on %s. Reason: %s",
+                  ticket, symbol, g_globalDollarStopTradingReason);
+
+      if(ClosePositionWithComment(ticket, close_comment))
+         closed_count++;
+   }
+
+   PrintFormat("Global Dollar Stop Trading: Closed %d live position(s). Reason: %s",
+               closed_count, g_globalDollarStopTradingReason);
+}
+
+void EnforceGlobalDollarStopTrading()
+{
+   if(!InpGlobalDollarStopTradingEnabled)
+      return;
+
+   if(g_globalDollarStopTradingTriggered)
+   {
+      if(InpGlobalDollarStopTradingCloseOpenPositions)
+         CloseGlobalDollarStopTradingPositions();
+      CancelGlobalDollarStopTradingPendingOrders();
+      return;
+   }
+
+   int deal_count = 0;
+   int position_count = 0;
+   double total_pnl = CalculateGlobalDollarStopTradingPnL(deal_count, position_count);
+
+   double profit_limit = MathAbs(InpGlobalDollarStopTradingProfit);
+   double loss_limit = MathAbs(InpGlobalDollarStopTradingLoss);
+
+   if(profit_limit > 0.0 && total_pnl >= profit_limit)
+   {
+      g_globalDollarStopTradingTriggered = true;
+      g_globalDollarStopTradingPnL = total_pnl;
+      g_globalDollarStopTradingReason = "profit stop " + DoubleToString(total_pnl, 2) +
+                                        " >= " + DoubleToString(profit_limit, 2);
+   }
+   else if(loss_limit > 0.0 && total_pnl <= -loss_limit)
+   {
+      g_globalDollarStopTradingTriggered = true;
+      g_globalDollarStopTradingPnL = total_pnl;
+      g_globalDollarStopTradingReason = "loss stop " + DoubleToString(total_pnl, 2) +
+                                        " <= -" + DoubleToString(loss_limit, 2);
+   }
+
+   if(g_globalDollarStopTradingTriggered)
+   {
+      PrintFormat("Global Dollar Stop Trading triggered: %s. Deals=%d, counted open positions=%d. Close live positions: %s. Cancelling pending orders and blocking new trades.",
+                  g_globalDollarStopTradingReason, deal_count, position_count,
+                  InpGlobalDollarStopTradingCloseOpenPositions ? "YES" : "NO");
+      if(InpGlobalDollarStopTradingCloseOpenPositions)
+         CloseGlobalDollarStopTradingPositions();
+      CancelGlobalDollarStopTradingPendingOrders();
+   }
+}
+
+void ApplyGlobalDollarSLTPToPositions()
+{
+   if(!InpGlobalDollarExitEnabled)
+      return;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      if(!IsGlobalDollarExitManagedSymbol(symbol)) continue;
+
+      ENUM_ORDER_TYPE order_type = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+      double desired_sl = 0.0;
+      double desired_tp = 0.0;
+      if(!CalculateGlobalDollarSLTP(symbol, order_type, volume, entry, desired_sl, desired_tp))
+         continue;
+
+      double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+      if(point <= 0.0) point = 0.00001;
+
       double current_sl = PositionGetDouble(POSITION_SL);
       double current_tp = PositionGetDouble(POSITION_TP);
-      if(current_sl == 0.0 && current_tp == 0.0) continue;
+      if(MathAbs(current_sl - desired_sl) < point / 2.0 &&
+         MathAbs(current_tp - desired_tp) < point / 2.0)
+         continue;
 
       MqlTradeRequest request;
       MqlTradeResult result;
@@ -2402,31 +2819,33 @@ void RemoveGlobalDollarExitSLTPFromPositions()
       request.action = TRADE_ACTION_SLTP;
       request.position = ticket;
       request.symbol = symbol;
-      request.sl = 0.0;
-      request.tp = 0.0;
+      request.sl = desired_sl;
+      request.tp = desired_tp;
       request.magic = InpMagicNumber;
-      request.comment = "Global dollar exit: SL/TP disabled";
+      request.comment = "Global dollar exit: dollar SL/TP";
 
       if(!SendDollarExitAwareOrder(request, result))
       {
-         PrintFormat("Global Dollar Exit: Failed to remove SL/TP from position #%d. Error: %d",
+         PrintFormat("Global Dollar Exit: Failed to set dollar SL/TP for position #%d. Error: %d",
                      ticket, GetLastError());
       }
       else if(result.retcode != TRADE_RETCODE_DONE)
       {
-         PrintFormat("Global Dollar Exit: SL/TP remove rejected for position #%d. Retcode: %d, Comment: %s",
+         PrintFormat("Global Dollar Exit: Dollar SL/TP rejected for position #%d. Retcode: %d, Comment: %s",
                      ticket, result.retcode, result.comment);
       }
       else
       {
-         PrintFormat("Global Dollar Exit: Removed SL/TP from position #%d", ticket);
+         PrintFormat("Global Dollar Exit: Updated dollar SL/TP for position #%d to SL %.5f / TP %.5f",
+                     ticket, desired_sl, desired_tp);
       }
    }
 }
 
-void RemoveGlobalDollarExitSLTPFromPendingOrders()
+void ApplyGlobalDollarSLTPToPendingOrders()
 {
-   if(!InpGlobalDollarExitEnabled) return;
+   if(!InpGlobalDollarExitEnabled)
+      return;
 
    for(int i = OrdersTotal() - 1; i >= 0; i--)
    {
@@ -2438,9 +2857,22 @@ void RemoveGlobalDollarExitSLTPFromPendingOrders()
       string symbol = OrderGetString(ORDER_SYMBOL);
       if(!IsGlobalDollarExitManagedSymbol(symbol)) continue;
 
+      ENUM_ORDER_TYPE order_type = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+      double volume = OrderGetDouble(ORDER_VOLUME_CURRENT);
+      double entry = OrderGetDouble(ORDER_PRICE_OPEN);
+      double desired_sl = 0.0;
+      double desired_tp = 0.0;
+      if(!CalculateGlobalDollarSLTP(symbol, order_type, volume, entry, desired_sl, desired_tp))
+         continue;
+
+      double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+      if(point <= 0.0) point = 0.00001;
+
       double current_sl = OrderGetDouble(ORDER_SL);
       double current_tp = OrderGetDouble(ORDER_TP);
-      if(current_sl == 0.0 && current_tp == 0.0) continue;
+      if(MathAbs(current_sl - desired_sl) < point / 2.0 &&
+         MathAbs(current_tp - desired_tp) < point / 2.0)
+         continue;
 
       MqlTradeRequest request;
       MqlTradeResult result;
@@ -2450,10 +2882,10 @@ void RemoveGlobalDollarExitSLTPFromPendingOrders()
       request.action = TRADE_ACTION_MODIFY;
       request.order = ticket;
       request.symbol = symbol;
-      request.price = OrderGetDouble(ORDER_PRICE_OPEN);
+      request.price = entry;
       request.stoplimit = OrderGetDouble(ORDER_PRICE_STOPLIMIT);
-      request.sl = 0.0;
-      request.tp = 0.0;
+      request.sl = desired_sl;
+      request.tp = desired_tp;
       request.type_time = (ENUM_ORDER_TYPE_TIME)OrderGetInteger(ORDER_TYPE_TIME);
       request.expiration = (datetime)OrderGetInteger(ORDER_TIME_EXPIRATION);
       request.type_filling = GetSupportedFillingMode(symbol);
@@ -2461,17 +2893,18 @@ void RemoveGlobalDollarExitSLTPFromPendingOrders()
 
       if(!SendDollarExitAwareOrder(request, result))
       {
-         PrintFormat("Global Dollar Exit: Failed to remove SL/TP from pending order #%d. Error: %d",
+         PrintFormat("Global Dollar Exit: Failed to set dollar SL/TP for pending order #%d. Error: %d",
                      ticket, GetLastError());
       }
       else if(result.retcode != TRADE_RETCODE_DONE)
       {
-         PrintFormat("Global Dollar Exit: Pending order SL/TP remove rejected for #%d. Retcode: %d, Comment: %s",
+         PrintFormat("Global Dollar Exit: Pending dollar SL/TP rejected for #%d. Retcode: %d, Comment: %s",
                      ticket, result.retcode, result.comment);
       }
       else
       {
-         PrintFormat("Global Dollar Exit: Removed SL/TP from pending order #%d", ticket);
+         PrintFormat("Global Dollar Exit: Updated pending order #%d dollar SL/TP to SL %.5f / TP %.5f",
+                     ticket, desired_sl, desired_tp);
       }
    }
 }
@@ -2501,9 +2934,10 @@ void CloseGlobalDollarExitPositions(const string reason)
 void EnforceGlobalDollarExit()
 {
    if(!InpGlobalDollarExitEnabled) return;
+   if(IsGlobalDollarStopTradingActive()) return;
 
-   RemoveGlobalDollarExitSLTPFromPositions();
-   RemoveGlobalDollarExitSLTPFromPendingOrders();
+   ApplyGlobalDollarSLTPToPositions();
+   ApplyGlobalDollarSLTPToPendingOrders();
 
    int position_count = 0;
    double total_pnl = CalculateGlobalDollarExitPnL(position_count);
@@ -2533,6 +2967,7 @@ void OnTick()
    // Update manual dashboard each tick (lightweight)
    Manual_UpdateDashboard();
 
+   EnforceGlobalDollarStopTrading();
    EnforceGlobalDollarExit();
 
     // Trailing safety net: run from ticks too.
@@ -3026,6 +3461,12 @@ void OnTick()
     }
 
     // --- Main Logic on New Bar ---
+    if(IsGlobalDollarStopTradingActive())
+    {
+        PrintFormat("Global Dollar Stop Trading active: no new pattern trades. Reason: %s",
+                    g_globalDollarStopTradingReason);
+        return;
+    }
 
     // 1. Check if we should process new trade signals
     int ea_positions = CountPositionsWithMagicNumber();
@@ -8941,6 +9382,7 @@ void OnTimer()
          ApplyBreakeven();
          ApplyTrailingStop();
       }
+      EnforceGlobalDollarStopTrading();
       EnforceGlobalDollarExit();
       
       // Process multi-order recovery and synthetic SL
@@ -9031,6 +9473,7 @@ void OnTimer()
       ApplyCandleColorTrailing();
       ApplyCandleColorTrailing();
    }
+   EnforceGlobalDollarStopTrading();
    EnforceGlobalDollarExit();
    
    // Force cleanup any orphan DCA orders (timer check)
@@ -9101,6 +9544,13 @@ void OnTimer()
 //+------------------------------------------------------------------+
 void ExecuteTrade(string trade_action)
   {
+   if(IsGlobalDollarStopTradingActive())
+   {
+      PrintFormat("Trade action '%s' blocked because Global Dollar Stop Trading is active: %s",
+                  trade_action, g_globalDollarStopTradingReason);
+      return;
+   }
+
    // Apply Master Trade Direction Filter
    if ((trade_action == "buy" && InpTradeDirection == TRADE_DIR_SELL_ONLY) ||
        (trade_action == "sell" && InpTradeDirection == TRADE_DIR_BUY_ONLY))
@@ -9304,13 +9754,8 @@ void ExecuteTrade(string trade_action)
    request.type     = mt5_order_type;
    request.price    = order_request_price;
    
-   // Set or skip SL/TP based on synthetic SL and global dollar-exit settings.
-   if(InpGlobalDollarExitEnabled)
-   {
-      request.sl = 0;
-      request.tp = 0;
-   }
-   else if(InpUseSyntheticSL)
+   // Global dollar exit replaces these with dollar-based visible SL/TP in SendDollarExitAwareOrder().
+   if(!InpGlobalDollarExitEnabled && InpUseSyntheticSL)
       request.sl = 0; // No real SL if using synthetic SL
    else
       request.sl = sl_price; // Use calculated SL
@@ -9538,7 +9983,7 @@ void UpdateChartDisplay()
    string lines_to_display[];
    int line_idx = 0;
 
-   ArrayResize(lines_to_display, 50);  // Increased size for stats
+   ArrayResize(lines_to_display, 70);  // Increased size for stats and dollar stop status
 
    string ea_version_str = "1.31";
    lines_to_display[line_idx++] = "SatyamEA v" + ea_version_str + " - Active";
@@ -9568,6 +10013,28 @@ void UpdateChartDisplay()
    lines_to_display[line_idx++] = StringFormat("Commission: %.2f %s", g_stats.commission_total, currency);
    lines_to_display[line_idx++] = StringFormat("Net P&L: %.2f %s", g_stats.net_pnl, currency);
    lines_to_display[line_idx++] = StringFormat("Max Drawdown: %.2f%%", g_stats.max_drawdown);
+   if(InpGlobalDollarStopTradingEnabled)
+   {
+      lines_to_display[line_idx++] = StringFormat("Dollar Stop Mode: OpenPnL=%s CloseOpen=%s",
+                                                 InpGlobalDollarStopTradingIncludeOpenPnL ? "YES" : "NO",
+                                                 InpGlobalDollarStopTradingCloseOpenPositions ? "YES" : "NO");
+      if(g_globalDollarStopTradingTriggered)
+      {
+         lines_to_display[line_idx++] = "Dollar Stop Trading: STOPPED";
+         lines_to_display[line_idx++] = "Stop reason: " + g_globalDollarStopTradingReason;
+      }
+      else
+      {
+         int stop_deals = 0;
+         int stop_positions = 0;
+         double stop_pnl = CalculateGlobalDollarStopTradingPnL(stop_deals, stop_positions);
+         lines_to_display[line_idx++] = StringFormat("Dollar Stop Trading: %.2f / +%.2f / -%.2f %s",
+                                                    stop_pnl,
+                                                    MathAbs(InpGlobalDollarStopTradingProfit),
+                                                    MathAbs(InpGlobalDollarStopTradingLoss),
+                                                    currency);
+      }
+   }
 
    // Add recovery mode status to display
    if(InpRecoveryMode == RECOVERY_ENABLED)
