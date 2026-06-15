@@ -1,12 +1,12 @@
 //+------------------------------------------------------------------+
-//|                                             SatyamEA.mq5 |
-//|                                          Copyright 2025, Satyam  |
+//|                                             RohitEA.mq5 |
+//|                                          Copyright 2025, Rohit  |
 //|                                                                  |
 //+------------------------------------------------------------------+
-#property copyright "Copyright 2025, Satyam"
+#property copyright "Copyright 2025, Rohit"
 #property link      ""
 #property version   "1.31"
-#property description "SatyamEA - Versatile Multi-Pattern Trading System"
+#property description "RohitEA - Versatile Multi-Pattern Trading System"
 #property strict
 
 //--- Enums for Inputs
@@ -316,6 +316,9 @@ input double InpGlobalDollarStopTradingProfit = 100.0;     // Stop new trading w
 input double InpGlobalDollarStopTradingLoss = 100.0;       // Stop new trading when total EA loss reaches this amount
 input bool   InpGlobalDollarStopTradingIncludeOpenPnL = true; // Include running/open trade P&L when checking special stop amounts
 input bool   InpGlobalDollarStopTradingCloseOpenPositions = true; // Close live EA positions when special stop is triggered
+input bool   InpGlobalDollarLossStreakPauseEnabled = true; // Pause new trades after consecutive SL/loss closes for this magic number
+input int    InpGlobalDollarLossStreakCount = 3;           // Number of consecutive SL/loss trades before pausing
+input int    InpGlobalDollarLossStreakPauseHours = 24;     // Pause duration in server-time hours after loss streak
 
 input group "💰 Position Limits & Controls"
 input int    InpMaxOpenPositions = 1;                      // Max Open Positions for this EA (per symbol, per magic)
@@ -577,7 +580,7 @@ input group "📡 Copy Trading Settings"
 input bool InpSendTP = true; // Option to send TP in signal
 input bool InpSendSL = true; // Option to send SL in signal
 input bool   InpCopyTradeEnabled = false;                 // Enable copy trading signals
-input string InpWebhookURL = "https://satyam.site/webhook"; // Webhook URL for copy trading
+input string InpWebhookURL = "https://rohit.site/webhook"; // Webhook URL for copy trading
 input bool   InpSendTradeSignals = true;                  // Send trade open signals
 input bool   InpSendExitSignals = true;                   // Send trade exit signals
 input bool   InpInvertCopyDirection = false;              // Invert trade direction (BUY becomes SELL, SELL becomes BUY)
@@ -587,8 +590,8 @@ input group "📡 Spread Buffer Settings"
 input group "📡 Spread Buffer Settings"
 input bool InpWaitForBufferConfirmation = true; // Wait for buffer confirmation before sending signal (true = wait for buffer, false = send immediately)
 input bool   InpUseSpreadBuffer = false;                  // Enable spread buffer adjustment for SL/TP
-input double InpFollowerSpread = 0.0;                     // Follower account spread (points) - enter SatyamEA's spread
-input string InpSpreadBufferInfo = "Enter SatyamEA spread to adjust SL/TP for broker differences"; // Information
+input double InpFollowerSpread = 0.0;                     // Follower account spread (points) - enter RohitEA's spread
+input string InpSpreadBufferInfo = "Enter RohitEA spread to adjust SL/TP for broker differences"; // Information
 
 //  🖥️ DISPLAY & INTERFACE
 input group "🖥️ Chart Display Settings"
@@ -600,11 +603,11 @@ input int    InpDisplayLineSpacing = 2;                    // Additional spacing
 input ENUM_DISPLAY_ANCHOR InpDisplayAnchor = ANCHOR_TOP_LEFT; // Default anchor position
 
 // Constants for Display Objects
-const string DISPLAY_OBJECT_PREFIX = "SatyamEADisp_";
+const string DISPLAY_OBJECT_PREFIX = "RohitEADisp_";
 int ExtTotalDisplayLines = 0; // Will be updated in UpdateChartDisplay
 
 // --- State Persistence ---
-const string RECOVERY_STATE_FILE_PREFIX = "SatyamEARecoveryState_";
+const string RECOVERY_STATE_FILE_PREFIX = "RohitEARecoveryState_";
 
 // Global variables for chart display
 double ExtLastCalcMaxLoss = 0.0;
@@ -812,6 +815,12 @@ bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result);
 double CalculateGlobalDollarStopTradingPnL(int &deal_count, int &position_count);
 bool IsGlobalDollarStopTradingActive();
 void EnforceGlobalDollarStopTrading();
+bool IsGlobalDollarLossStreakPauseActive();
+string GlobalDollarLossStreakPauseReason();
+void UpdateGlobalDollarLossStreakPause();
+string GlobalDollarLossStreakStateKey(string suffix);
+void LoadGlobalDollarLossStreakState();
+void SaveGlobalDollarLossStreakState();
 // Manual backtest signal file options
 input bool   InpManualSignalUseFile = false;              // Enable reading manual signals from file (backtester)
 input string InpManualSignalFileName = "manual_signals.csv"; // File placed in MQL5/Files or Common files
@@ -1163,7 +1172,7 @@ void Manual_RegisterForRecovery(ulong ticket)
       req.action = TRADE_ACTION_SLTP;
       req.position = ticket;
       req.symbol = MultiOrderGroups[idx].symbol;
-      req.comment = "SatyamEA Multi-Order Recovery (Manual)";
+      req.comment = "RohitEA Multi-Order Recovery (Manual)";
 
       // Keep TP but remove real SL (use synthetic SL)
       req.tp = MultiOrderGroups[idx].original_tp;
@@ -1422,7 +1431,7 @@ bool ClosePositionWithComment(ulong ticket, string close_comment = "")
     }
     else if(WasTrailingUsed(ticket))
     {
-        request.comment = "SatyamEA TRAILING_EXIT";
+        request.comment = "RohitEA TRAILING_EXIT";
     }
     
     // Get original position comment to check if it's a hedge
@@ -1654,6 +1663,10 @@ bool g_globalDollarStopTradingTriggered = false;
 string g_globalDollarStopTradingReason = "";
 double g_globalDollarStopTradingPnL = 0.0;
 datetime g_globalDollarStopTradingStartTime = 0;
+int g_globalDollarLossStreak = 0;
+datetime g_globalDollarLossStreakPauseUntil = 0;
+datetime g_globalDollarLossStreakHistoryFrom = 0;
+ulong g_globalDollarLossStreakLastDeal = 0;
 
 // Add after global variables at top of file
 double g_minPriceChangePoints = 2;  // Minimum price change in points to update orders
@@ -2048,6 +2061,11 @@ int OnInit()
    g_globalDollarStopTradingReason = "";
    g_globalDollarStopTradingPnL = 0.0;
    g_globalDollarStopTradingStartTime = TimeCurrent();
+   g_globalDollarLossStreak = 0;
+   g_globalDollarLossStreakPauseUntil = 0;
+   g_globalDollarLossStreakHistoryFrom = TimeCurrent();
+   g_globalDollarLossStreakLastDeal = 0;
+   LoadGlobalDollarLossStreakState();
 
     // Initialize multi-order recovery
     ArrayResize(MultiOrderGroups, 0);
@@ -2084,7 +2102,7 @@ int OnInit()
    LoadRecoveryState();
 
    string ea_version_log_str = "1.31";
-   Print("SatyamEA initialized. Version ", ea_version_log_str,".");
+   Print("RohitEA initialized. Version ", ea_version_log_str,".");
    Print("Starting balance for risk calculation set to: ", g_startingBalance, " (Method: ", EnumToString(InpRiskCalcMethod), ")");
    PrintFormat("Signal Logic: %s", GetSelectedPatternSignalLogic());
    PrintFormat("Risk Method: %s, Risk Per Trade: %.2f%%, Order Type: %s, Dev Mode: %s, SL Type: %s",
@@ -2101,6 +2119,10 @@ int OnInit()
                InpGlobalDollarStopTradingLoss,
                InpGlobalDollarStopTradingIncludeOpenPnL ? "YES" : "NO",
                InpGlobalDollarStopTradingCloseOpenPositions ? "YES" : "NO");
+   PrintFormat("GLOBAL DOLLAR LOSS STREAK PAUSE: %s, Losses: %d, Pause: %d server-hour(s)",
+               InpGlobalDollarLossStreakPauseEnabled ? "ON" : "OFF",
+               MathMax(1, InpGlobalDollarLossStreakCount),
+               MathMax(1, InpGlobalDollarLossStreakPauseHours));
    
    // DEBUG: Show ATR multiplier values loaded from user settings
    PrintFormat("PARAMETER DEBUG: SL/TP Method = %s", 
@@ -2248,6 +2270,7 @@ void OnDeinit(const int reason)
    
    // Save recovery state before deinitializing
    SaveRecoveryState();
+   SaveGlobalDollarLossStreakState();
    
    // Clean up all EA-related chart objects
    CleanupAllEAObjects();
@@ -2322,7 +2345,7 @@ void OnDeinit(const int reason)
       ObjectDelete(current_chart_id, MAN_DASH_PREFIX + "BG");
       for(int _i = 0; _i < 6; _i++) ObjectDelete(current_chart_id, MAN_DASH_PREFIX + "TEXT_" + (string)_i);
    
-   Print("SatyamEA deinitialized. Reason: ", reason);
+   Print("RohitEA deinitialized. Reason: ", reason);
 }
 
 //+------------------------------------------------------------------+
@@ -2545,6 +2568,8 @@ bool ApplyGlobalDollarSLTPToRequest(MqlTradeRequest &request)
 
 bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result)
 {
+   UpdateGlobalDollarLossStreakPause();
+
    if(IsGlobalDollarStopTradingActive())
    {
       bool is_new_market_entry = (request.action == TRADE_ACTION_DEAL && request.position == 0);
@@ -2557,6 +2582,23 @@ bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result)
          result.comment = "Global dollar stop trading active: " + g_globalDollarStopTradingReason;
          PrintFormat("Global Dollar Stop Trading: blocked new %s order on %s. Reason: %s",
                      EnumToString(request.action), request.symbol, g_globalDollarStopTradingReason);
+         return false;
+      }
+   }
+
+   if(IsGlobalDollarLossStreakPauseActive())
+   {
+      bool is_new_market_entry = (request.action == TRADE_ACTION_DEAL && request.position == 0);
+      bool is_new_pending_entry = (request.action == TRADE_ACTION_PENDING);
+
+      if(is_new_market_entry || is_new_pending_entry)
+      {
+         string pause_reason = GlobalDollarLossStreakPauseReason();
+         ZeroMemory(result);
+         result.retcode = TRADE_RETCODE_REJECT;
+         result.comment = "Global dollar loss streak pause active";
+         PrintFormat("Global Dollar Loss Streak Pause: blocked new %s order on %s. Reason: %s",
+                     EnumToString(request.action), request.symbol, pause_reason);
          return false;
       }
    }
@@ -2667,6 +2709,137 @@ double CalculateGlobalDollarStopTradingPnL(int &deal_count, int &position_count)
 bool IsGlobalDollarStopTradingActive()
 {
    return InpGlobalDollarStopTradingEnabled && g_globalDollarStopTradingTriggered;
+}
+
+string GlobalDollarLossStreakStateKey(string suffix)
+{
+   return "RohitEA_GDLS_" +
+          IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + "_" +
+          IntegerToString(InpMagicNumber) + "_" +
+          suffix;
+}
+
+void LoadGlobalDollarLossStreakState()
+{
+   string streak_key = GlobalDollarLossStreakStateKey("streak");
+   string pause_key = GlobalDollarLossStreakStateKey("pause_until");
+   string last_deal_key = GlobalDollarLossStreakStateKey("last_deal");
+
+   if(GlobalVariableCheck(streak_key))
+      g_globalDollarLossStreak = (int)GlobalVariableGet(streak_key);
+   if(GlobalVariableCheck(pause_key))
+      g_globalDollarLossStreakPauseUntil = (datetime)GlobalVariableGet(pause_key);
+   if(GlobalVariableCheck(last_deal_key))
+      g_globalDollarLossStreakLastDeal = (ulong)GlobalVariableGet(last_deal_key);
+}
+
+void SaveGlobalDollarLossStreakState()
+{
+   GlobalVariableSet(GlobalDollarLossStreakStateKey("streak"), (double)g_globalDollarLossStreak);
+   GlobalVariableSet(GlobalDollarLossStreakStateKey("pause_until"), (double)g_globalDollarLossStreakPauseUntil);
+   GlobalVariableSet(GlobalDollarLossStreakStateKey("last_deal"), (double)g_globalDollarLossStreakLastDeal);
+}
+
+bool IsGlobalDollarLossStreakPauseActive()
+{
+   if(!InpGlobalDollarLossStreakPauseEnabled)
+      return false;
+
+   if(g_globalDollarLossStreakPauseUntil <= 0)
+      return false;
+
+   datetime now = TimeCurrent();
+   if(now < g_globalDollarLossStreakPauseUntil)
+      return true;
+
+   PrintFormat("Global Dollar Loss Streak Pause ended at server time %s. New trades are allowed.",
+               TimeToString(now, TIME_DATE|TIME_SECONDS));
+   g_globalDollarLossStreakPauseUntil = 0;
+   g_globalDollarLossStreak = 0;
+   SaveGlobalDollarLossStreakState();
+   return false;
+}
+
+string GlobalDollarLossStreakPauseReason()
+{
+   if(!IsGlobalDollarLossStreakPauseActive())
+      return "";
+
+   int remaining_seconds = (int)(g_globalDollarLossStreakPauseUntil - TimeCurrent());
+   int remaining_minutes = (int)MathCeil((double)MathMax(0, remaining_seconds) / 60.0);
+   return StringFormat("loss streak pause active: %d consecutive loss/SL trades, resumes %s server time (~%d min)",
+                       g_globalDollarLossStreak,
+                       TimeToString(g_globalDollarLossStreakPauseUntil, TIME_DATE|TIME_MINUTES),
+                       remaining_minutes);
+}
+
+void UpdateGlobalDollarLossStreakPause()
+{
+   if(!InpGlobalDollarLossStreakPauseEnabled)
+      return;
+
+   datetime now = TimeCurrent();
+   if(IsGlobalDollarLossStreakPauseActive())
+      return;
+
+   datetime history_from = (g_globalDollarLossStreakHistoryFrom > 0 ? g_globalDollarLossStreakHistoryFrom : now);
+   if(!HistorySelect(history_from, now))
+      return;
+
+   int total_deals = HistoryDealsTotal();
+   for(int i = 0; i < total_deals; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0 || deal_ticket <= g_globalDollarLossStreakLastDeal) continue;
+      if(HistoryDealGetInteger(deal_ticket, DEAL_MAGIC) != InpMagicNumber) continue;
+
+      ENUM_DEAL_TYPE deal_type = (ENUM_DEAL_TYPE)HistoryDealGetInteger(deal_ticket, DEAL_TYPE);
+      if(deal_type != DEAL_TYPE_BUY && deal_type != DEAL_TYPE_SELL) continue;
+
+      ENUM_DEAL_ENTRY deal_entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(deal_entry != DEAL_ENTRY_OUT && deal_entry != DEAL_ENTRY_INOUT && deal_entry != DEAL_ENTRY_OUT_BY) continue;
+
+      string symbol = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+
+      double net_profit = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT) +
+                          HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION) +
+                          HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
+      ENUM_DEAL_REASON deal_reason = (ENUM_DEAL_REASON)HistoryDealGetInteger(deal_ticket, DEAL_REASON);
+      bool loss_or_sl_close = (net_profit < 0.0 || deal_reason == DEAL_REASON_SL);
+
+      g_globalDollarLossStreakLastDeal = deal_ticket;
+      g_globalDollarLossStreakHistoryFrom = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      SaveGlobalDollarLossStreakState();
+
+      if(loss_or_sl_close)
+      {
+         g_globalDollarLossStreak++;
+         PrintFormat("Global Dollar Loss Streak: closed loss/SL deal #%d on %s, net %.2f. Streak %d/%d.",
+                     deal_ticket, symbol, net_profit, g_globalDollarLossStreak, MathMax(1, InpGlobalDollarLossStreakCount));
+         SaveGlobalDollarLossStreakState();
+      }
+      else if(net_profit > 0.0)
+      {
+         if(g_globalDollarLossStreak > 0)
+            PrintFormat("Global Dollar Loss Streak reset by profitable close deal #%d on %s, net %.2f.",
+                        deal_ticket, symbol, net_profit);
+         g_globalDollarLossStreak = 0;
+         SaveGlobalDollarLossStreakState();
+      }
+
+      int streak_limit = MathMax(1, InpGlobalDollarLossStreakCount);
+      if(g_globalDollarLossStreak >= streak_limit)
+      {
+         int pause_seconds = MathMax(1, InpGlobalDollarLossStreakPauseHours) * 3600;
+         g_globalDollarLossStreakPauseUntil = now + pause_seconds;
+         PrintFormat("Global Dollar Loss Streak Pause triggered after %d consecutive loss/SL trades for magic %d. Pausing new trades until %s server time.",
+                     g_globalDollarLossStreak,
+                     InpMagicNumber,
+                     TimeToString(g_globalDollarLossStreakPauseUntil, TIME_DATE|TIME_SECONDS));
+         SaveGlobalDollarLossStreakState();
+         break;
+      }
+   }
 }
 
 void CancelGlobalDollarStopTradingPendingOrders()
@@ -2966,6 +3139,10 @@ void OnTick()
     datetime current_time = TimeCurrent();
    // Update manual dashboard each tick (lightweight)
    Manual_UpdateDashboard();
+
+   UpdateGlobalDollarLossStreakPause();
+   if(IsGlobalDollarLossStreakPauseActive())
+      CancelGlobalDollarStopTradingPendingOrders();
 
    EnforceGlobalDollarStopTrading();
    EnforceGlobalDollarExit();
@@ -3468,6 +3645,13 @@ void OnTick()
         return;
     }
 
+    if(IsGlobalDollarLossStreakPauseActive())
+    {
+        PrintFormat("Global Dollar Loss Streak Pause active: no new pattern trades. Reason: %s",
+                    GlobalDollarLossStreakPauseReason());
+        return;
+    }
+
     // 1. Check if we should process new trade signals
     int ea_positions = CountPositionsWithMagicNumber();
     bool stop_new_signals = false;
@@ -3689,7 +3873,7 @@ bool ExecutePattern9BuyOrder(double fallPercent)
         request.tp = takeProfit;
         request.deviation = InpMaxSlippagePoints;
         request.magic = InpMagicNumber;
-        request.comment = StringFormat("SatyamEA P9-Fall%.2f", fallPercent);
+        request.comment = StringFormat("RohitEA P9-Fall%.2f", fallPercent);
         request.type_filling = GetSupportedFillingMode(_Symbol);
 
         if(IsSpreadAcceptable())
@@ -3753,7 +3937,7 @@ bool ExecutePattern9SellOrder(double risePercent)
         request.tp = takeProfit;
         request.deviation = InpMaxSlippagePoints;
         request.magic = InpMagicNumber;
-        request.comment = StringFormat("SatyamEA P9-Rise%.2f", risePercent);
+        request.comment = StringFormat("RohitEA P9-Rise%.2f", risePercent);
         request.type_filling = GetSupportedFillingMode(_Symbol);
 
         if(IsSpreadAcceptable())
@@ -4255,7 +4439,7 @@ bool ExecutePattern10SellOrder(double changePercent)
         request.tp = takeProfit;
         request.deviation = InpMaxSlippagePoints;
         request.magic = InpMagicNumber;
-        request.comment = StringFormat("SatyamEA P10-%s%.2f", InpPattern10Invert ? "Rise" : "Fall", changePercent);
+        request.comment = StringFormat("RohitEA P10-%s%.2f", InpPattern10Invert ? "Rise" : "Fall", changePercent);
         request.type_filling = GetSupportedFillingMode(_Symbol);
 
         if(!IsSpreadAcceptable())
@@ -5077,7 +5261,7 @@ void HandlePattern14_BreakLowVolume()
             request.tp = takeProfit;
             request.deviation = InpMaxSlippagePoints;
             request.magic = InpMagicNumber;
-            request.comment = "SatyamEA P14-Buy";
+            request.comment = "RohitEA P14-Buy";
             request.type_filling = GetSupportedFillingMode(_Symbol);
             if(IsSpreadAcceptable())
             {
@@ -5125,7 +5309,7 @@ void HandlePattern14_BreakLowVolume()
             request.tp = takeProfit;
             request.deviation = InpMaxSlippagePoints;
             request.magic = InpMagicNumber;
-            request.comment = "SatyamEA P14-Sell";
+            request.comment = "RohitEA P14-Sell";
             request.type_filling = GetSupportedFillingMode(_Symbol);
             if(IsSpreadAcceptable())
             {
@@ -5336,7 +5520,7 @@ void ExecutePattern15Trade(ENUM_POSITION_TYPE tradeType = POSITION_TYPE_BUY)
       request.tp = takeProfit;
       request.deviation = InpMaxSlippagePoints;
       request.magic = InpMagicNumber;
-      request.comment = "SatyamEA P15-VolOsc";
+      request.comment = "RohitEA P15-VolOsc";
       request.type_filling = GetSupportedFillingMode(_Symbol);
 
       if(IsSpreadAcceptable())
@@ -5493,7 +5677,7 @@ void ExecutePattern16Trade()
       request.tp = takeProfit;
       request.deviation = InpMaxSlippagePoints;
       request.magic = InpMagicNumber;
-      request.comment = "SatyamEA P16-GrnBrk";
+      request.comment = "RohitEA P16-GrnBrk";
       request.type_filling = GetSupportedFillingMode(_Symbol);
 
       if(IsSpreadAcceptable())
@@ -7029,7 +7213,7 @@ void HandlePattern2()
                   request.sl = sellSL;
                   request.tp = sellTP;
                   request.magic = InpMagicNumber;
-                  request.comment = "SatyamEA Gamma";
+                  request.comment = "RohitEA Gamma";
                   if(!IsSpreadAcceptable()) return;
                   if(SendDollarExitAwareOrder(request, result)) { g_sellStopTicket = result.order; PrintFormat("Placed reversed sell limit order #%d at %.5f", g_sellStopTicket, sellLimitPrice); g_lastSignalTime = current_bar_time; }
                   else { PrintFormat("Failed to place reversed sell limit. Error: %d", GetLastError()); }
@@ -7071,7 +7255,7 @@ void HandlePattern2()
                buyRequest.sl = buySL;
                buyRequest.tp = buyTP;
                buyRequest.magic = InpMagicNumber;
-               buyRequest.comment = "SatyamEA Beta";
+               buyRequest.comment = "RohitEA Beta";
                buyRequest.type_filling = GetSupportedFillingMode(_Symbol);
 
                if(!IsSpreadAcceptable()) return;
@@ -7120,7 +7304,7 @@ void HandlePattern2()
                   request.sl = buySL;
                   request.tp = buyTP;
                   request.magic = InpMagicNumber;
-                  request.comment = "SatyamEA Delta";
+                  request.comment = "RohitEA Delta";
                   if(!IsSpreadAcceptable()) return;
                   if(SendDollarExitAwareOrder(request, result)) { g_buyStopTicket = result.order; PrintFormat("Placed reversed buy limit order #%d at %.5f", g_buyStopTicket, buyLimitPrice); g_lastSignalTime = current_bar_time; }
                   else { PrintFormat("Failed to place reversed buy limit. Error: %d", GetLastError()); }
@@ -7162,7 +7346,7 @@ void HandlePattern2()
                sellRequest.sl = sellSL;
                sellRequest.tp = sellTP;
                sellRequest.magic = InpMagicNumber;
-               sellRequest.comment = "SatyamEA Epsilon";
+               sellRequest.comment = "RohitEA Epsilon";
                sellRequest.type_filling = GetSupportedFillingMode(_Symbol);
 
                if(!IsSpreadAcceptable()) return;
@@ -7305,7 +7489,7 @@ void HandlePattern3()
                        request.sl = sellSL;
                        request.tp = sellTP;
                        request.magic = InpMagicNumber;
-                       request.comment = "SatyamEA Zeta";
+                       request.comment = "RohitEA Zeta";
                        if(!IsSpreadAcceptable()) return;
                        if(SendDollarExitAwareOrder(request, result)) { g_p3_sellStopTicket = result.order; PrintFormat("Pattern 3: Placed reversed sell limit #%d at %.5f", g_p3_sellStopTicket, sellLimitPrice); g_lastSignalTime = current_bar_time; }
                        else { PrintFormat("Pattern 3: Failed to place reversed sell limit. Error: %d", GetLastError()); }
@@ -7340,7 +7524,7 @@ void HandlePattern3()
                        request.sl = buySL;
                        request.tp = buyTP;
                        request.magic = InpMagicNumber;
-                       request.comment = "SatyamEA Eta";
+                       request.comment = "RohitEA Eta";
                        if(!IsSpreadAcceptable()) return;
                        if(SendDollarExitAwareOrder(request, result)) { g_p3_buyStopTicket = result.order; PrintFormat("Pattern 3: Placed reversed buy limit #%d at %.5f", g_p3_buyStopTicket, buyLimitPrice); g_lastSignalTime = current_bar_time; }
                        else { PrintFormat("Pattern 3: Failed to place reversed buy limit. Error: %d", GetLastError()); }
@@ -7383,7 +7567,7 @@ void HandlePattern3()
                      buyRequest.sl = buySL;
                      buyRequest.tp = buyTP;
                      buyRequest.magic = InpMagicNumber;
-                     buyRequest.comment = "SatyamEA Theta";
+                     buyRequest.comment = "RohitEA Theta";
                      buyRequest.type_filling = GetSupportedFillingMode(_Symbol);
 
                      if(!IsSpreadAcceptable()) return;
@@ -7438,7 +7622,7 @@ void HandlePattern3()
                      sellRequest.sl = sellSL;
                      sellRequest.tp = sellTP;
                      sellRequest.magic = InpMagicNumber;
-                     sellRequest.comment = "SatyamEA Iota";
+                     sellRequest.comment = "RohitEA Iota";
                      sellRequest.type_filling = GetSupportedFillingMode(_Symbol);
 
                      if(!IsSpreadAcceptable()) return;
@@ -7626,7 +7810,7 @@ void HandlePattern4()
                 request.tp = takeProfit;
                 request.deviation = InpMaxSlippagePoints;
                 request.magic = InpMagicNumber;
-                request.comment = isReversed ? "SatyamEA Iota" : "SatyamEA Kappa";
+                request.comment = isReversed ? "RohitEA Iota" : "RohitEA Kappa";
                 request.type_filling = GetSupportedFillingMode(_Symbol);
 
                 // Apply master trade direction filter
@@ -7714,7 +7898,7 @@ void HandlePattern4()
                 request.tp = takeProfit;
                 request.deviation = InpMaxSlippagePoints;
                 request.magic = InpMagicNumber;
-                request.comment = isReversed ? "SatyamEA Lambda" : "SatyamEA Mu";
+                request.comment = isReversed ? "RohitEA Lambda" : "RohitEA Mu";
                 request.type_filling = GetSupportedFillingMode(_Symbol);
 
                 // Apply master trade direction filter
@@ -8163,7 +8347,7 @@ void HandlePattern5()
             request.tp = takeProfit;
             request.deviation = InpMaxSlippagePoints;
             request.magic = InpMagicNumber;
-            request.comment = "SatyamEA ST-Stoch BUY";
+            request.comment = "RohitEA ST-Stoch BUY";
             
             // Try different filling modes based on broker support
             int filling_modes = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
@@ -8285,7 +8469,7 @@ void HandlePattern5()
             request.tp = takeProfit;
             request.deviation = InpMaxSlippagePoints;
             request.magic = InpMagicNumber;
-            request.comment = "SatyamEA ST-Stoch SELL";
+            request.comment = "RohitEA ST-Stoch SELL";
             request.type_filling = GetSupportedFillingMode(_Symbol);
             
             if(!IsSpreadAcceptable()) return;
@@ -8408,7 +8592,7 @@ void HandlePattern5_OLD()
                 request.tp = takeProfit;
                 request.deviation = InpMaxSlippagePoints;
                 request.magic = InpMagicNumber;
-                request.comment = "SatyamEA Nu";
+                request.comment = "RohitEA Nu";
                 request.type_filling = GetSupportedFillingMode(_Symbol);
                 
                 // Apply master trade direction filter
@@ -8488,7 +8672,7 @@ void HandlePattern5_OLD()
                 request.tp = takeProfit;
                 request.deviation = InpMaxSlippagePoints;
                 request.magic = InpMagicNumber;
-                request.comment = "SatyamEA Omicron";
+                request.comment = "RohitEA Omicron";
                 request.type_filling = GetSupportedFillingMode(_Symbol);
                 
                 // Apply master trade direction filter
@@ -8575,7 +8759,7 @@ void HandlePattern5_OLD()
                 request.tp = takeProfit;
                 request.deviation = InpMaxSlippagePoints;
                 request.magic = InpMagicNumber;
-                request.comment = "SatyamEA Pi";
+                request.comment = "RohitEA Pi";
                 request.type_filling = GetSupportedFillingMode(_Symbol);
                 
                 // Apply master trade direction filter
@@ -8655,7 +8839,7 @@ void HandlePattern5_OLD()
                 request.tp = takeProfit;
                 request.deviation = InpMaxSlippagePoints;
                 request.magic = InpMagicNumber;
-                request.comment = "SatyamEA Xi";
+                request.comment = "RohitEA Xi";
                 request.type_filling = GetSupportedFillingMode(_Symbol);
                 
                 // Apply master trade direction filter
@@ -9177,7 +9361,7 @@ void HandlePattern8_HeikinAshiConsecutive()
                 request.tp = takeProfit;
                 request.deviation = InpMaxSlippagePoints;
                 request.magic = InpMagicNumber;
-                request.comment = StringFormat("SatyamEA P8-HA%dG", consecutiveCandles);
+                request.comment = StringFormat("RohitEA P8-HA%dG", consecutiveCandles);
                 request.type_filling = GetSupportedFillingMode(_Symbol);
                 
                 if(!IsSpreadAcceptable()) return;
@@ -9301,7 +9485,7 @@ void HandlePattern8_HeikinAshiConsecutive()
                 request.tp = takeProfit;
                 request.deviation = InpMaxSlippagePoints;
                 request.magic = InpMagicNumber;
-                request.comment = StringFormat("SatyamEA P8-HA%dR", consecutiveCandles);
+                request.comment = StringFormat("RohitEA P8-HA%dR", consecutiveCandles);
                 request.type_filling = GetSupportedFillingMode(_Symbol);
                 
                 if(!IsSpreadAcceptable()) return;
@@ -9371,6 +9555,10 @@ void HandlePattern8_HeikinAshiConsecutive()
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+   UpdateGlobalDollarLossStreakPause();
+   if(IsGlobalDollarLossStreakPauseActive())
+      CancelGlobalDollarStopTradingPendingOrders();
+
    // Skip timer updates during backtesting except for essential functions
    if(g_is_backtesting)
    {
@@ -9764,7 +9952,7 @@ void ExecuteTrade(string trade_action)
       request.tp = tp_price;
    request.deviation= InpMaxSlippagePoints;
    request.magic    = InpMagicNumber;
-   request.comment  = "SatyamEA";
+   request.comment  = "RohitEA";
    request.type_filling = GetSupportedFillingMode(_Symbol);
    request.type_time    = ORDER_TIME_GTC;
 
@@ -9986,7 +10174,7 @@ void UpdateChartDisplay()
    ArrayResize(lines_to_display, 70);  // Increased size for stats and dollar stop status
 
    string ea_version_str = "1.31";
-   lines_to_display[line_idx++] = "SatyamEA v" + ea_version_str + " - Active";
+   lines_to_display[line_idx++] = "RohitEA v" + ea_version_str + " - Active";
    lines_to_display[line_idx++] = "------------------------------------";
 
    // Trading Statistics Panel
@@ -10033,6 +10221,17 @@ void UpdateChartDisplay()
                                                     MathAbs(InpGlobalDollarStopTradingProfit),
                                                     MathAbs(InpGlobalDollarStopTradingLoss),
                                                     currency);
+      }
+   }
+   if(InpGlobalDollarLossStreakPauseEnabled)
+   {
+      lines_to_display[line_idx++] = StringFormat("Loss Streak Pause: %d/%d losses",
+                                                 g_globalDollarLossStreak,
+                                                 MathMax(1, InpGlobalDollarLossStreakCount));
+      if(IsGlobalDollarLossStreakPauseActive())
+      {
+         lines_to_display[line_idx++] = "Trade Pause: ACTIVE";
+         lines_to_display[line_idx++] = "Pause until: " + TimeToString(g_globalDollarLossStreakPauseUntil, TIME_DATE|TIME_MINUTES);
       }
    }
 
@@ -10399,7 +10598,7 @@ bool ClosePositionsByTypeForCandleExit(ENUM_POSITION_TYPE positionTypeToClose)
         request.volume = PositionGetDouble(POSITION_VOLUME);
         request.deviation = InpMaxSlippagePoints;
         request.magic = InpMagicNumber;
-        request.comment = "SatyamEA CandleExit";
+        request.comment = "RohitEA CandleExit";
         request.type_filling = GetSupportedFillingMode(_Symbol);
 
         if ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
@@ -10830,7 +11029,7 @@ void ApplyLossProtection()
             request.position = ticket;
             request.sl = new_sl;
             request.tp = PositionGetDouble(POSITION_TP);
-            request.comment = "SatyamEA Loss Protection";
+            request.comment = "RohitEA Loss Protection";
 
             if(SendDollarExitAwareOrder(request, result))
             {
@@ -10999,7 +11198,7 @@ void ApplyBreakeven()
             request.position = ticket;
             request.sl = new_sl;
             request.tp = PositionGetDouble(POSITION_TP);
-            request.comment = "SatyamEA Breakeven";
+            request.comment = "RohitEA Breakeven";
 
             if(SendDollarExitAwareOrder(request, result))
             {
@@ -11814,7 +12013,7 @@ void ApplyTrailingStop()
                }
                else
                {
-                  ulong scale_ticket = OpenPosition(symbol, position_type, scale_volume, desired_sl, scale_tp, "SatyamEA Trailing Scale");
+                  ulong scale_ticket = OpenPosition(symbol, position_type, scale_volume, desired_sl, scale_tp, "RohitEA Trailing Scale");
                   if(scale_ticket > 0)
                   {
                      if(ExtTrailingScaleGroups[scale_group_idx].scale_count < TRAILING_SCALE_ORDER_SLOTS)
@@ -11881,7 +12080,7 @@ void ApplyTrailingStop()
          request.magic = InpMagicNumber;
          request.sl = desired_sl;
          request.tp = position_tp;
-         request.comment = "SatyamEA Trailing SL";
+         request.comment = "RohitEA Trailing SL";
 
          bool sent = SendDollarExitAwareOrder(request, result);
          modified = (sent && (result.retcode == 10009 || result.retcode == 10008)); // DONE / PLACED
@@ -12047,7 +12246,7 @@ void ApplyKillSwitch()
             request.volume = PositionGetDouble(POSITION_VOLUME);
             request.deviation = InpMaxSlippagePoints;
             request.magic = InpMagicNumber;
-            request.comment = "SatyamEA Kill Switch (ATR)";
+            request.comment = "RohitEA Kill Switch (ATR)";
             request.type_filling = GetSupportedFillingMode(_Symbol);
             
             if(pos_type == POSITION_TYPE_BUY)
@@ -12095,7 +12294,7 @@ void ApplyKillSwitch()
             request.volume = PositionGetDouble(POSITION_VOLUME);
             request.deviation = InpMaxSlippagePoints;
             request.magic = InpMagicNumber;
-            request.comment = "SatyamEA Kill Switch (%)";
+            request.comment = "RohitEA Kill Switch (%)";
             request.type_filling = GetSupportedFillingMode(_Symbol);
             
             if(pos_type == POSITION_TYPE_BUY)
@@ -14478,7 +14677,7 @@ void UpdateMultiOrderGroups()
             request.action = TRADE_ACTION_SLTP;
             request.position = ticket;
             request.symbol = MultiOrderGroups[new_index].symbol;
-            request.comment = "SatyamEA Multi-Order Recovery";
+            request.comment = "RohitEA Multi-Order Recovery";
             
             // Keep the original TP but remove the SL (use synthetic SL)
             request.tp = MultiOrderGroups[new_index].original_tp; // Keep the original TP
@@ -14865,7 +15064,7 @@ void CloseAllPositionsInGroup(MultiOrderGroup &group)
          request.volume = PositionGetDouble(POSITION_VOLUME);
          request.deviation = InpMaxSlippagePoints;
          request.magic = InpMagicNumber;
-         request.comment = StringFormat("SatyamEA Close (%s)", group.close_reason);
+         request.comment = StringFormat("RohitEA Close (%s)", group.close_reason);
          
          // Try different filling modes on retries
          if(retry_count == 0)
@@ -16267,7 +16466,7 @@ void HandleMultiOrderRecovery()
                     }
                     
                     modifyRequest.action = TRADE_ACTION_SLTP;
-                    modifyRequest.comment = "SatyamEA Final Recovery SL";
+                    modifyRequest.comment = "RohitEA Final Recovery SL";
                     long position_ticket = HistoryDealGetInteger(result.deal, DEAL_POSITION_ID);
                     if(position_ticket > 0)
                     {
@@ -20431,7 +20630,7 @@ void SendTradeOpenSignal(string symbol, ENUM_POSITION_TYPE position_type, double
          // Invert direction for copy
          direction = (position_type == POSITION_TYPE_BUY) ? "sell" : "buy";
          if(position_type == POSITION_TYPE_BUY) {
-            // X BUY, SatyamEA SELL: wait for price >= entry + buffer
+            // X BUY, RohitEA SELL: wait for price >= entry + buffer
             trigger_price = entry_price + buffer;
             PrintFormat("[DEBUG] Waiting for buffer: X BUY (inverted to SELL). Waiting for ASK >= %.5f", trigger_price);
             while(SymbolInfoDouble(symbol, SYMBOL_ASK) < trigger_price) {
@@ -20446,7 +20645,7 @@ void SendTradeOpenSignal(string symbol, ENUM_POSITION_TYPE position_type, double
             }
             PrintFormat("[DEBUG] Buffer met: ASK >= %.5f (current: %.5f). Sending SELL signal.", trigger_price, SymbolInfoDouble(symbol, SYMBOL_ASK));
          } else {
-            // X SELL, SatyamEA BUY: wait for price <= entry - buffer
+            // X SELL, RohitEA BUY: wait for price <= entry - buffer
             trigger_price = entry_price - buffer;
             PrintFormat("[DEBUG] Waiting for buffer: X SELL (inverted to BUY). Waiting for BID <= %.5f", trigger_price);
             while(SymbolInfoDouble(symbol, SYMBOL_BID) > trigger_price) {
@@ -20464,7 +20663,7 @@ void SendTradeOpenSignal(string symbol, ENUM_POSITION_TYPE position_type, double
       } else {
          direction = (position_type == POSITION_TYPE_BUY) ? "buy" : "sell";
          if(position_type == POSITION_TYPE_BUY) {
-            // X BUY, SatyamEA BUY: wait for price <= entry - buffer
+            // X BUY, RohitEA BUY: wait for price <= entry - buffer
             trigger_price = entry_price - buffer;
             PrintFormat("[DEBUG] Waiting for buffer: X BUY. Waiting for BID <= %.5f", trigger_price);
             while(SymbolInfoDouble(symbol, SYMBOL_BID) > trigger_price) {
@@ -20479,7 +20678,7 @@ void SendTradeOpenSignal(string symbol, ENUM_POSITION_TYPE position_type, double
             }
             PrintFormat("[DEBUG] Buffer met: BID <= %.5f (current: %.5f). Sending BUY signal.", trigger_price, SymbolInfoDouble(symbol, SYMBOL_BID));
          } else {
-            // X SELL, SatyamEA SELL: wait for price >= entry + buffer
+            // X SELL, RohitEA SELL: wait for price >= entry + buffer
             trigger_price = entry_price + buffer;
             PrintFormat("[DEBUG] Waiting for buffer: X SELL. Waiting for ASK >= %.5f", trigger_price);
             while(SymbolInfoDouble(symbol, SYMBOL_ASK) < trigger_price) {
@@ -21113,7 +21312,7 @@ void ApplyCandleColorTrailing()
          req.position = ticket;
          req.sl = new_sl;
          req.tp = PositionGetDouble(POSITION_TP);
-         req.comment = "SatyamEA CandleColorTrail";
+         req.comment = "RohitEA CandleColorTrail";
 
          if(SendDollarExitAwareOrder(req, res))
          {
