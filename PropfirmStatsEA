@@ -28,7 +28,7 @@ input int PanelWidth = 620;
 input int FontSize = 9;
 
 #define PS_PREFIX "PROP_STATS_EA_"
-#define PS_LINE_COUNT 24
+#define PS_LINE_COUNT 25
 
 color PanelColor()  { return C'16,18,24'; }
 color HeaderColor() { return C'28,32,42'; }
@@ -455,7 +455,7 @@ void CreateDashboard()
    int panel_width = PanelWidth;
    if(panel_width < 620)
       panel_width = 620;
-   int panel_height = 440;
+   int panel_height = 455;
    EnsureBox(PS_PREFIX + "BG", PanelX, PanelY, panel_width, panel_height, PanelColor(), BorderColor());
    EnsureBox(PS_PREFIX + "HEADER", PanelX, PanelY, panel_width, 42, HeaderColor(), HeaderColor());
    EnsureBox(PS_PREFIX + "ACCENT", PanelX, PanelY, 4, panel_height, GoodColor(), GoodColor());
@@ -488,6 +488,25 @@ string TradeLine(const ClosedTrade &trade)
    return StringFormat("%02d/%02d %02d:%02d   %-8s %-4s   %s",
                        parts.mon, parts.day, parts.hour, parts.min,
                        trade.symbol, side, SignedMoney(trade.net));
+}
+
+void RecentLosingTradeStats(const ClosedTrade &trades[], int sample_size, double &average_loss, int &sample_count)
+{
+   average_loss = 0.0;
+   sample_count = 0;
+
+   int count = ArraySize(trades);
+   for(int i = 0; i < count && sample_count < sample_size; i++)
+   {
+      if(trades[i].net >= -0.005)
+         continue;
+
+      average_loss += MathAbs(trades[i].net);
+      sample_count++;
+   }
+
+   if(sample_count > 0)
+      average_loss /= sample_count;
 }
 
 void UpdateDashboard()
@@ -574,6 +593,12 @@ void UpdateDashboard()
    double daily_dd_left = equity - daily_floor;
    double target_left = MathMax(0.0, TargetEquity - equity);
    double daily_used = MathMax(0.0, g_daily_start_equity - MathMin(equity, g_daily_min_equity));
+   double recent_avg_loss = 0.0;
+   int recent_loss_count = 0;
+   RecentLosingTradeStats(trades, 5, recent_avg_loss, recent_loss_count);
+   int losses_left_today = (recent_avg_loss > 0.0 ? (int)MathFloor(MathMax(0.0, daily_dd_left) / recent_avg_loss) : -1);
+   string losses_left_text = (recent_loss_count > 0 ? (string)losses_left_today : "--");
+   string avg_loss_text = (recent_loss_count > 0 ? Money(recent_avg_loss) : "--");
 
    ObjectSetString(0, PS_PREFIX + "TITLE", OBJPROP_TEXT, "Prop Stats  |  " + AccountInfoString(ACCOUNT_NAME));
 
@@ -586,6 +611,7 @@ void UpdateDashboard()
    SetLine(line++, "RISK LIMITS", MutedColor());
    SetLine(line++, "Max DD floor   " + Money(total_floor) + "        Left          " + Money(total_dd_left), StatusColor(total_dd_left, MaxTotalDrawdownMoney));
    SetLine(line++, "Daily floor    " + Money(daily_floor) + "        Left          " + Money(daily_dd_left), StatusColor(daily_dd_left, MaxDailyDrawdownMoney));
+   SetLine(line++, "Losses left    " + losses_left_text + "        Avg L5 loss   " + avg_loss_text, (losses_left_today < 0 ? MutedColor() : StatusColor(daily_dd_left, MaxDailyDrawdownMoney)));
    SetLine(line++, "Daily start    " + Money(g_daily_start_equity) + "        Used          " + Money(daily_used));
    SetLine(line++, "UTC reset      " + TimeLeftToUtcReset() + "              Reset time    00:00");
    SetLine(line++, " ");
