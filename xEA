@@ -12410,21 +12410,6 @@ void UpdateStatistics()
       }
       else if(deal_entry == DEAL_ENTRY_OUT)
       {
-         if(deal_reason == DEAL_REASON_SL)
-         {
-            bool trailing_exit = WasTrailingUsedByPositionId(deal_position_id) || WasTrailingUsed(deal_position_id);
-            if(trailing_exit)
-            {
-               PrintFormat("Exit Comment: EXITED_BY_TRAILING_SL | Position #%I64u | Deal #%I64u | Profit %.2f",
-                          deal_position_id, deal_ticket, deal_profit);
-            }
-            else
-            {
-               PrintFormat("Exit Comment: NORMAL_SL | Position #%I64u | Deal #%I64u | Profit %.2f",
-                          deal_position_id, deal_ticket, deal_profit);
-            }
-         }
-
          if(trade_count > 0)
          {
             // Find matching entry
