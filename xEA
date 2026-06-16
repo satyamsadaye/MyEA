@@ -128,6 +128,12 @@ enum ENUM_GLOBAL_DOLLAR_SLTP_MODE
    GLOBAL_DOLLAR_REAL_SLTP       // Real broker SL/TP calculated from configured dollar P&L
   };
 
+enum ENUM_GLOBAL_DOLLAR_LOSS_STREAK_PAUSE_MODE
+  {
+   GDLS_PAUSE_FIXED_HOURS,      // Fixed hours
+   GDLS_PAUSE_UNTIL_UTC_RESET   // Until UTC reset
+  };
+
 enum ENUM_TRAILING_TRIGGER_MODE
   {
    TRAIL_MODE_PERCENTAGE,   // Percentage-based trailing trigger/move
@@ -318,7 +324,10 @@ input bool   InpGlobalDollarStopTradingIncludeOpenPnL = true; // Include running
 input bool   InpGlobalDollarStopTradingCloseOpenPositions = true; // Close live EA positions when special stop is triggered
 input bool   InpGlobalDollarLossStreakPauseEnabled = true; // Pause new trades after consecutive SL/loss closes for this magic number
 input int    InpGlobalDollarLossStreakCount = 3;           // Number of consecutive SL/loss trades before pausing
+input ENUM_GLOBAL_DOLLAR_LOSS_STREAK_PAUSE_MODE InpGlobalDollarLossStreakPauseMode = GDLS_PAUSE_FIXED_HOURS; // Pause mode: fixed hours or UTC reset
 input int    InpGlobalDollarLossStreakPauseHours = 24;     // Pause duration in server-time hours after loss streak
+input int    InpGlobalDollarLossStreakResetUtcHour = 0;    // UTC daily reset hour for prop firm pause mode (0-23)
+input int    InpGlobalDollarLossStreakResetUtcMinute = 0;  // UTC daily reset minute for prop firm pause mode (0-59)
 
 input group "💰 Position Limits & Controls"
 input int    InpMaxOpenPositions = 1;                      // Max Open Positions for this EA (per symbol, per magic)
@@ -818,6 +827,12 @@ void EnforceGlobalDollarStopTrading();
 bool IsGlobalDollarLossStreakPauseActive();
 string GlobalDollarLossStreakPauseReason();
 void UpdateGlobalDollarLossStreakPause();
+datetime GetGlobalDollarLossStreakPauseUntil();
+string GlobalDollarLossStreakPauseModeText();
+string FormatGlobalDollarLossStreakUtcResetTime();
+datetime GetNextGlobalDollarUtcResetTime();
+string FormatGlobalDollarResetRemainingTime(const int remaining_seconds);
+void LogGlobalDollarUtcResetCountdown(bool force_log = false);
 string GlobalDollarLossStreakStateKey(string suffix);
 void LoadGlobalDollarLossStreakState();
 void SaveGlobalDollarLossStreakState();
@@ -1667,6 +1682,7 @@ int g_globalDollarLossStreak = 0;
 datetime g_globalDollarLossStreakPauseUntil = 0;
 datetime g_globalDollarLossStreakHistoryFrom = 0;
 ulong g_globalDollarLossStreakLastDeal = 0;
+datetime g_globalDollarUtcResetLastLogTime = 0;
 
 // Add after global variables at top of file
 double g_minPriceChangePoints = 2;  // Minimum price change in points to update orders
@@ -2119,10 +2135,13 @@ int OnInit()
                InpGlobalDollarStopTradingLoss,
                InpGlobalDollarStopTradingIncludeOpenPnL ? "YES" : "NO",
                InpGlobalDollarStopTradingCloseOpenPositions ? "YES" : "NO");
-   PrintFormat("GLOBAL DOLLAR LOSS STREAK PAUSE: %s, Losses: %d, Pause: %d server-hour(s)",
+   PrintFormat("GLOBAL DOLLAR LOSS STREAK PAUSE: %s, Losses: %d, Mode: %s, Fixed Pause: %d server-hour(s), UTC Reset: %s",
                InpGlobalDollarLossStreakPauseEnabled ? "ON" : "OFF",
                MathMax(1, InpGlobalDollarLossStreakCount),
-               MathMax(1, InpGlobalDollarLossStreakPauseHours));
+               GlobalDollarLossStreakPauseModeText(),
+               MathMax(1, InpGlobalDollarLossStreakPauseHours),
+               FormatGlobalDollarLossStreakUtcResetTime());
+   LogGlobalDollarUtcResetCountdown(true);
    
    // DEBUG: Show ATR multiplier values loaded from user settings
    PrintFormat("PARAMETER DEBUG: SL/TP Method = %s", 
@@ -2740,6 +2759,98 @@ void SaveGlobalDollarLossStreakState()
    GlobalVariableSet(GlobalDollarLossStreakStateKey("last_deal"), (double)g_globalDollarLossStreakLastDeal);
 }
 
+string GlobalDollarLossStreakPauseModeText()
+{
+   if(InpGlobalDollarLossStreakPauseMode == GDLS_PAUSE_UNTIL_UTC_RESET)
+      return "Until UTC daily reset";
+
+   return "Fixed server-time hours";
+}
+
+string FormatGlobalDollarLossStreakUtcResetTime()
+{
+   int reset_hour = InpGlobalDollarLossStreakResetUtcHour;
+   int reset_minute = InpGlobalDollarLossStreakResetUtcMinute;
+   if(reset_hour < 0) reset_hour = 0;
+   if(reset_hour > 23) reset_hour = 23;
+   if(reset_minute < 0) reset_minute = 0;
+   if(reset_minute > 59) reset_minute = 59;
+   return StringFormat("%02d:%02d UTC", reset_hour, reset_minute);
+}
+
+datetime GetNextGlobalDollarUtcResetTime()
+{
+   datetime utc_now = TimeGMT();
+   int reset_hour = InpGlobalDollarLossStreakResetUtcHour;
+   int reset_minute = InpGlobalDollarLossStreakResetUtcMinute;
+   if(reset_hour < 0) reset_hour = 0;
+   if(reset_hour > 23) reset_hour = 23;
+   if(reset_minute < 0) reset_minute = 0;
+   if(reset_minute > 59) reset_minute = 59;
+
+   MqlDateTime utc_reset;
+   TimeToStruct(utc_now, utc_reset);
+   utc_reset.hour = reset_hour;
+   utc_reset.min = reset_minute;
+   utc_reset.sec = 0;
+
+   datetime next_reset_utc = StructToTime(utc_reset);
+   if(next_reset_utc <= utc_now)
+      next_reset_utc += 24 * 3600;
+
+   return next_reset_utc;
+}
+
+string FormatGlobalDollarResetRemainingTime(const int remaining_seconds)
+{
+   int safe_seconds = remaining_seconds;
+   if(safe_seconds < 0) safe_seconds = 0;
+   int days = safe_seconds / 86400;
+   int hours = (safe_seconds % 86400) / 3600;
+   int minutes = (safe_seconds % 3600) / 60;
+
+   if(days > 0)
+      return StringFormat("%dd %dh %dm", days, hours, minutes);
+
+   return StringFormat("%dh %dm", hours, minutes);
+}
+
+void LogGlobalDollarUtcResetCountdown(bool force_log = false)
+{
+   if(!InpGlobalDollarExitEnabled)
+      return;
+
+   datetime server_now = TimeCurrent();
+   if(!force_log && g_globalDollarUtcResetLastLogTime > 0 && (server_now - g_globalDollarUtcResetLastLogTime) < 1800)
+      return;
+
+   datetime utc_now = TimeGMT();
+   datetime next_reset_utc = GetNextGlobalDollarUtcResetTime();
+   int remaining_seconds = (int)(next_reset_utc - utc_now);
+   if(remaining_seconds < 0) remaining_seconds = 0;
+
+   PrintFormat("GLOBAL DOLLAR EXIT: UTC daily drawdown reset countdown. Reset time: %s, Current UTC: %s, Next reset UTC: %s, Time remaining: %s.",
+               FormatGlobalDollarLossStreakUtcResetTime(),
+               TimeToString(utc_now, TIME_DATE|TIME_MINUTES),
+               TimeToString(next_reset_utc, TIME_DATE|TIME_MINUTES),
+               FormatGlobalDollarResetRemainingTime(remaining_seconds));
+
+   g_globalDollarUtcResetLastLogTime = server_now;
+}
+
+datetime GetGlobalDollarLossStreakPauseUntil()
+{
+   datetime server_now = TimeCurrent();
+
+   if(InpGlobalDollarLossStreakPauseMode != GDLS_PAUSE_UNTIL_UTC_RESET)
+      return server_now + MathMax(1, InpGlobalDollarLossStreakPauseHours) * 3600;
+
+   datetime utc_now = TimeGMT();
+   datetime next_reset_utc = GetNextGlobalDollarUtcResetTime();
+
+   return next_reset_utc + (server_now - utc_now);
+}
+
 bool IsGlobalDollarLossStreakPauseActive()
 {
    if(!InpGlobalDollarLossStreakPauseEnabled)
@@ -2767,9 +2878,13 @@ string GlobalDollarLossStreakPauseReason()
 
    int remaining_seconds = (int)(g_globalDollarLossStreakPauseUntil - TimeCurrent());
    int remaining_minutes = (int)MathCeil((double)MathMax(0, remaining_seconds) / 60.0);
-   return StringFormat("loss streak pause active: %d consecutive loss/SL trades, resumes %s server time (~%d min)",
+   string reset_info = InpGlobalDollarLossStreakPauseMode == GDLS_PAUSE_UNTIL_UTC_RESET ?
+                       " (" + FormatGlobalDollarLossStreakUtcResetTime() + ")" :
+                       "";
+   return StringFormat("loss streak pause active: %d consecutive loss/SL trades, resumes %s server time%s (~%d min)",
                        g_globalDollarLossStreak,
                        TimeToString(g_globalDollarLossStreakPauseUntil, TIME_DATE|TIME_MINUTES),
+                       reset_info,
                        remaining_minutes);
 }
 
@@ -2830,11 +2945,12 @@ void UpdateGlobalDollarLossStreakPause()
       int streak_limit = MathMax(1, InpGlobalDollarLossStreakCount);
       if(g_globalDollarLossStreak >= streak_limit)
       {
-         int pause_seconds = MathMax(1, InpGlobalDollarLossStreakPauseHours) * 3600;
-         g_globalDollarLossStreakPauseUntil = now + pause_seconds;
-         PrintFormat("Global Dollar Loss Streak Pause triggered after %d consecutive loss/SL trades for magic %d. Pausing new trades until %s server time.",
+         g_globalDollarLossStreakPauseUntil = GetGlobalDollarLossStreakPauseUntil();
+         PrintFormat("Global Dollar Loss Streak Pause triggered after %d consecutive loss/SL trades for magic %d. Mode: %s, UTC Reset: %s. Pausing new trades until %s server time.",
                      g_globalDollarLossStreak,
                      InpMagicNumber,
+                     GlobalDollarLossStreakPauseModeText(),
+                     FormatGlobalDollarLossStreakUtcResetTime(),
                      TimeToString(g_globalDollarLossStreakPauseUntil, TIME_DATE|TIME_SECONDS));
          SaveGlobalDollarLossStreakState();
          break;
@@ -9556,6 +9672,7 @@ void HandlePattern8_HeikinAshiConsecutive()
 void OnTimer()
 {
    UpdateGlobalDollarLossStreakPause();
+   LogGlobalDollarUtcResetCountdown(false);
    if(IsGlobalDollarLossStreakPauseActive())
       CancelGlobalDollarStopTradingPendingOrders();
 
@@ -10171,7 +10288,7 @@ void UpdateChartDisplay()
    string lines_to_display[];
    int line_idx = 0;
 
-   ArrayResize(lines_to_display, 70);  // Increased size for stats and dollar stop status
+   ArrayResize(lines_to_display, 75);  // Increased size for stats and dollar stop status
 
    string ea_version_str = "1.31";
    lines_to_display[line_idx++] = "RohitEA v" + ea_version_str + " - Active";
@@ -10228,6 +10345,9 @@ void UpdateChartDisplay()
       lines_to_display[line_idx++] = StringFormat("Loss Streak Pause: %d/%d losses",
                                                  g_globalDollarLossStreak,
                                                  MathMax(1, InpGlobalDollarLossStreakCount));
+      lines_to_display[line_idx++] = "Pause Mode: " + GlobalDollarLossStreakPauseModeText();
+      if(InpGlobalDollarLossStreakPauseMode == GDLS_PAUSE_UNTIL_UTC_RESET)
+         lines_to_display[line_idx++] = "Prop Reset: " + FormatGlobalDollarLossStreakUtcResetTime();
       if(IsGlobalDollarLossStreakPauseActive())
       {
          lines_to_display[line_idx++] = "Trade Pause: ACTIVE";
