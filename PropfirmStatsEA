@@ -392,6 +392,25 @@ string TimeLeftToUtcReset()
    return StringFormat("%02d:%02d:%02d", hours, minutes, seconds);
 }
 
+string FormatAmPm(datetime value)
+{
+   MqlDateTime parts;
+   TimeToStruct(value, parts);
+
+   string suffix = (parts.hour >= 12 ? "PM" : "AM");
+   int hour = parts.hour % 12;
+   if(hour == 0)
+      hour = 12;
+
+   return StringFormat("%02d/%02d %02d:%02d %s", parts.mon, parts.day, hour, parts.min, suffix);
+}
+
+string NextUtcResetInIst()
+{
+   datetime next_reset = UtcDayStart(TimeGMT()) + 86400;
+   return FormatAmPm(next_reset + 5 * 3600 + 30 * 60);
+}
+
 color StatusColor(double left, double limit)
 {
    if(left < 0.0)
@@ -530,11 +549,9 @@ void UpdateDashboard()
    int wins = 0;
    int losses = 0;
    int breakevens = 0;
-   int rr_count = 0;
    double gross_profit = 0.0;
    double gross_loss = 0.0;
    double net_profit = 0.0;
-   double rr_sum = 0.0;
    for(int i = 0; i < count; i++)
    {
       net_profit += trades[i].net;
@@ -550,12 +567,6 @@ void UpdateDashboard()
          losses++;
          gross_loss += MathAbs(trades[i].net);
       }
-
-      if(trades[i].risk_money > 0.0)
-      {
-         rr_sum += trades[i].rr;
-         rr_count++;
-      }
    }
 
    int decisive = wins + losses;
@@ -563,7 +574,7 @@ void UpdateDashboard()
    double avg_win = (wins > 0 ? gross_profit / wins : 0.0);
    double avg_loss = (losses > 0 ? gross_loss / losses : 0.0);
    double ev = (decisive > 0 ? (gross_profit - gross_loss) / decisive : 0.0);
-   double average_rr = (rr_count > 0 ? rr_sum / rr_count : (avg_loss > 0.0 ? avg_win / avg_loss : 0.0));
+   double average_rr = (avg_loss > 0.0 ? avg_win / avg_loss : 0.0);
    double profit_factor = (gross_loss > 0.0 ? gross_profit / gross_loss : (gross_profit > 0.0 ? 999.0 : 0.0));
 
    ClosedTrade asc[];
@@ -613,7 +624,7 @@ void UpdateDashboard()
    SetLine(line++, "Daily floor    " + Money(daily_floor) + "        Left          " + Money(daily_dd_left), StatusColor(daily_dd_left, MaxDailyDrawdownMoney));
    SetLine(line++, "Losses left    " + losses_left_text + "        Avg L5 loss   " + avg_loss_text, (losses_left_today < 0 ? MutedColor() : StatusColor(daily_dd_left, MaxDailyDrawdownMoney)));
    SetLine(line++, "Daily start    " + Money(g_daily_start_equity) + "        Used          " + Money(daily_used));
-   SetLine(line++, "UTC reset      " + TimeLeftToUtcReset() + "              Reset time    00:00");
+   SetLine(line++, "UTC reset      00:00 in " + TimeLeftToUtcReset() + "    IST reset  " + NextUtcResetInIst());
    SetLine(line++, " ");
    SetLine(line++, "PERFORMANCE", MutedColor());
    SetLine(line++, "Trades         " + (string)count + "        Wins " + (string)wins + " / Losses " + (string)losses + " / BE " + (string)breakevens);
