@@ -8,11 +8,28 @@ enum ENUM_PROP_STATS_SCOPE
    PROP_STATS_CURRENT_SYMBOL = 1    // Current chart symbol only
 };
 
+enum ENUM_DRAWDOWN_LIMIT_MODE
+{
+   DD_LIMIT_FIXED_MONEY = 0,         // Limit input is account-currency money
+   DD_LIMIT_PERCENT_OF_BASE = 1,     // Limit input is percent of the rule baseline
+   DD_LIMIT_PERCENT_OF_START = 2     // Limit input is percent of initial starting balance
+};
+
+enum ENUM_MAX_DRAWDOWN_FLOOR_MODE
+{
+   MAX_DD_FIXED_STARTING_BALANCE = 0, // Starting balance - max DD
+   MAX_DD_TRAILING_BALANCE_PEAK = 1,  // Highest closed balance - max DD
+   MAX_DD_TRAILING_EQUITY_PEAK = 2    // Highest observed equity - max DD
+};
+
 input group "Prop Account Targets"
 input double StartingBalance = 5000.0;          // Starting balance
 input double TargetEquity = 5500.0;             // Target equity
-input double MaxTotalDrawdownMoney = 500.0;     // Max total equity drawdown money
-input double MaxDailyDrawdownMoney = 250.0;     // Max daily equity drawdown money
+input ENUM_DRAWDOWN_LIMIT_MODE MaxDrawdownLimitMode = DD_LIMIT_PERCENT_OF_START; // Max DD limit mode
+input double MaxTotalDrawdownValue = 10.0;      // Max DD value (money or percent)
+input ENUM_MAX_DRAWDOWN_FLOOR_MODE MaxDrawdownFloorMode = MAX_DD_TRAILING_EQUITY_PEAK; // Max DD baseline rule
+input ENUM_DRAWDOWN_LIMIT_MODE DailyDrawdownLimitMode = DD_LIMIT_PERCENT_OF_START; // Daily DD limit mode
+input double MaxDailyDrawdownValue = 5.0;        // Daily DD value (money or percent)
 
 input group "History Filters"
 input ENUM_PROP_STATS_SCOPE StatsScope = PROP_STATS_ALL_SYMBOLS;
@@ -62,6 +79,7 @@ struct ClosedTrade
 datetime g_current_utc_day = 0;
 double g_daily_start_equity = 0.0;
 double g_daily_min_equity = 0.0;
+double g_equity_peak = 0.0;
 bool g_objects_created = false;
 
 string Money(double value)
@@ -96,6 +114,11 @@ string DateKey(datetime utc_day)
 string GlobalPrefix()
 {
    return "PropStatsEA_" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "_";
+}
+
+string EquityPeakKey()
+{
+   return GlobalPrefix() + "equity_peak";
 }
 
 string DailyEquityKey(datetime utc_day)
@@ -240,7 +263,7 @@ void SortTradesByCloseTimeAsc(ClosedTrade &trades[])
    }
 }
 
-int BuildClosedTrades(datetime from_time, datetime to_time, ClosedTrade &trades[])
+int BuildClosedTrades(datetime from_time, datetime to_time, ClosedTrade &trades[], bool apply_filters = true)
 {
    ArrayResize(trades, 0);
    if(!HistorySelect(from_time, to_time))
@@ -254,7 +277,7 @@ int BuildClosedTrades(datetime from_time, datetime to_time, ClosedTrade &trades[
          continue;
 
       string symbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
-      if(!ScopeAllowsSymbol(symbol))
+      if(apply_filters && !ScopeAllowsSymbol(symbol))
          continue;
 
       ulong position_id = (ulong)HistoryDealGetInteger(ticket, DEAL_POSITION_ID);
@@ -287,7 +310,7 @@ int BuildClosedTrades(datetime from_time, datetime to_time, ClosedTrade &trades[
    for(int t = 0; t < count; t++)
    {
       FillEntryDetails(trades[t]);
-      if(FilterByMagicNumber && trades[t].magic != MagicNumber)
+      if(apply_filters && FilterByMagicNumber && trades[t].magic != MagicNumber)
          continue;
 
       trades[t].net = trades[t].profit + trades[t].commission + trades[t].swap;
@@ -351,6 +374,7 @@ void LoadOrResetDailyState()
    string equity_key = DailyEquityKey(utc_day);
    string min_key = DailyMinEquityKey(utc_day);
    double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double current_balance = AccountInfoDouble(ACCOUNT_BALANCE);
 
    if(!new_day && GlobalVariableCheck(equity_key))
       g_daily_start_equity = GlobalVariableGet(equity_key);
@@ -360,7 +384,7 @@ void LoadOrResetDailyState()
    {
       double reconstructed_balance = 0.0;
       datetime reset_in_server_time = ServerTimeForUtc(utc_day);
-      g_daily_start_equity = (had_loaded_day && new_day ? current_equity : (BalanceAtTime(reset_in_server_time, reconstructed_balance) ? reconstructed_balance : current_equity));
+      g_daily_start_equity = (had_loaded_day && new_day ? MathMax(current_balance, current_equity) : (BalanceAtTime(reset_in_server_time, reconstructed_balance) ? reconstructed_balance : MathMax(current_balance, current_equity)));
       GlobalVariableSet(equity_key, g_daily_start_equity);
    }
 
@@ -418,6 +442,16 @@ color StatusColor(double left, double limit)
    if(left <= MathMax(1.0, limit * 0.2))
       return WarnColor();
    return GoodColor();
+}
+
+double DrawdownLimitMoney(ENUM_DRAWDOWN_LIMIT_MODE mode, double value, double baseline)
+{
+   if(mode == DD_LIMIT_PERCENT_OF_BASE)
+      return MathMax(0.0, baseline * value / 100.0);
+   if(mode == DD_LIMIT_PERCENT_OF_START)
+      return MathMax(0.0, StartingBalance * value / 100.0);
+
+   return MathMax(0.0, value);
 }
 
 void DeleteDashboard()
@@ -595,11 +629,49 @@ void UpdateDashboard()
          max_realized_dd = dd;
    }
 
+   double account_balance_peak = StartingBalance;
+   if(MaxDrawdownFloorMode == MAX_DD_TRAILING_BALANCE_PEAK || MaxDrawdownFloorMode == MAX_DD_TRAILING_EQUITY_PEAK)
+   {
+      ClosedTrade account_trades[];
+      int account_count = BuildClosedTrades(0, now, account_trades, false);
+      SortTradesByCloseTimeAsc(account_trades);
+      double account_curve = StartingBalance;
+      for(int p = 0; p < account_count; p++)
+      {
+         account_curve += account_trades[p].net;
+         if(account_curve > account_balance_peak)
+            account_balance_peak = account_curve;
+      }
+   }
+
    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double floating = AccountInfoDouble(ACCOUNT_PROFIT);
-   double total_floor = StartingBalance - MaxTotalDrawdownMoney;
-   double daily_floor = g_daily_start_equity - MaxDailyDrawdownMoney;
+
+   if(g_equity_peak <= 0.0)
+   {
+      if(GlobalVariableCheck(EquityPeakKey()))
+         g_equity_peak = GlobalVariableGet(EquityPeakKey());
+      else
+         g_equity_peak = StartingBalance;
+   }
+
+   if(equity > g_equity_peak)
+   {
+      g_equity_peak = equity;
+      GlobalVariableSet(EquityPeakKey(), g_equity_peak);
+   }
+
+   double total_baseline = StartingBalance;
+   if(MaxDrawdownFloorMode == MAX_DD_TRAILING_BALANCE_PEAK)
+      total_baseline = MathMax(StartingBalance, account_balance_peak);
+   else if(MaxDrawdownFloorMode == MAX_DD_TRAILING_EQUITY_PEAK)
+      total_baseline = MathMax(MathMax(StartingBalance, account_balance_peak), g_equity_peak);
+
+   double total_limit_money = DrawdownLimitMoney(MaxDrawdownLimitMode, MaxTotalDrawdownValue, total_baseline);
+   double daily_limit_money = DrawdownLimitMoney(DailyDrawdownLimitMode, MaxDailyDrawdownValue, g_daily_start_equity);
+   double total_floor = total_baseline - total_limit_money;
+   double daily_floor = g_daily_start_equity - daily_limit_money;
    double total_dd_left = equity - total_floor;
    double daily_dd_left = equity - daily_floor;
    double target_left = MathMax(0.0, TargetEquity - equity);
@@ -620,9 +692,9 @@ void UpdateDashboard()
    SetLine(line++, "Target equity  " + Money(TargetEquity) + "        Left          " + Money(target_left), (target_left <= 0.0 ? GoodColor() : TextColor()));
    SetLine(line++, " ");
    SetLine(line++, "RISK LIMITS", MutedColor());
-   SetLine(line++, "Max DD floor   " + Money(total_floor) + "        Left          " + Money(total_dd_left), StatusColor(total_dd_left, MaxTotalDrawdownMoney));
-   SetLine(line++, "Daily floor    " + Money(daily_floor) + "        Left          " + Money(daily_dd_left), StatusColor(daily_dd_left, MaxDailyDrawdownMoney));
-   SetLine(line++, "Losses left    " + losses_left_text + "        Avg L5 loss   " + avg_loss_text, (losses_left_today < 0 ? MutedColor() : StatusColor(daily_dd_left, MaxDailyDrawdownMoney)));
+   SetLine(line++, "Max DD floor   " + Money(total_floor) + "        Left          " + Money(total_dd_left), StatusColor(total_dd_left, total_limit_money));
+   SetLine(line++, "Daily floor    " + Money(daily_floor) + "        Left          " + Money(daily_dd_left), StatusColor(daily_dd_left, daily_limit_money));
+   SetLine(line++, "Losses left    " + losses_left_text + "        Avg L5 loss   " + avg_loss_text, (losses_left_today < 0 ? MutedColor() : StatusColor(daily_dd_left, daily_limit_money)));
    SetLine(line++, "Daily start    " + Money(g_daily_start_equity) + "        Used          " + Money(daily_used));
    SetLine(line++, "UTC reset      00:00 in " + TimeLeftToUtcReset() + "    IST reset  " + NextUtcResetInIst());
    SetLine(line++, " ");
@@ -651,6 +723,12 @@ void UpdateDashboard()
 int OnInit()
 {
    g_current_utc_day = 0;
+   g_equity_peak = (GlobalVariableCheck(EquityPeakKey()) ? GlobalVariableGet(EquityPeakKey()) : StartingBalance);
+   if(AccountInfoDouble(ACCOUNT_EQUITY) > g_equity_peak)
+   {
+      g_equity_peak = AccountInfoDouble(ACCOUNT_EQUITY);
+      GlobalVariableSet(EquityPeakKey(), g_equity_peak);
+   }
    LoadOrResetDailyState();
    CreateDashboard();
    UpdateDashboard();
