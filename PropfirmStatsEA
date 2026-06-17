@@ -48,9 +48,10 @@ input int PanelX = 18;
 input int PanelY = 28;
 input int PanelWidth = 620;
 input int FontSize = 9;
+input int ClosedTradesToShow = 10;              // Closed trades to show
 
 #define PS_PREFIX "PROP_STATS_EA_"
-#define PS_LINE_COUNT 28
+#define PS_LINE_COUNT 64
 
 color PanelColor()  { return C'16,18,24'; }
 color HeaderColor() { return C'28,32,42'; }
@@ -528,9 +529,10 @@ void CreateDashboard()
       return;
 
    int panel_width = PanelWidth;
-   if(panel_width < 620)
-      panel_width = 620;
-   int panel_height = 500;
+   if(panel_width < 700)
+      panel_width = 700;
+   int display_trades = (int)MathMax(1, MathMin(ClosedTradesToShow, PS_LINE_COUNT - 22));
+   int panel_height = (int)MathMax(500, 86 + (22 + display_trades) * 15);
    EnsureBox(PS_PREFIX + "BG", PanelX, PanelY, panel_width, panel_height, PanelColor(), BorderColor());
    EnsureBox(PS_PREFIX + "HEADER", PanelX, PanelY, panel_width, 42, HeaderColor(), HeaderColor());
    EnsureBox(PS_PREFIX + "ACCENT", PanelX, PanelY, 4, panel_height, GoodColor(), GoodColor());
@@ -555,14 +557,42 @@ void SetLine(int index, string text, color text_color = clrNONE)
    ObjectSetInteger(0, name, OBJPROP_COLOR, (text_color == clrNONE ? TextColor() : text_color));
 }
 
+double TradeLagPercent(const ClosedTrade &trade, bool &has_lag)
+{
+   has_lag = false;
+
+   if(trade.net > 0.005)
+   {
+      if(PlannedWinMoney <= 0.0)
+         return 0.0;
+
+      has_lag = true;
+      return 100.0 * (PlannedWinMoney - trade.net) / PlannedWinMoney;
+   }
+
+   if(trade.net < -0.005)
+   {
+      if(PlannedLossMoney <= 0.0)
+         return 0.0;
+
+      has_lag = true;
+      return 100.0 * (MathAbs(trade.net) - PlannedLossMoney) / PlannedLossMoney;
+   }
+
+   return 0.0;
+}
+
 string TradeLine(const ClosedTrade &trade)
 {
    MqlDateTime parts;
    TimeToStruct(trade.close_time, parts);
    string side = (trade.type == DEAL_TYPE_BUY ? "BUY " : (trade.type == DEAL_TYPE_SELL ? "SELL" : "    "));
-   return StringFormat("%02d/%02d %02d:%02d   %-8s %-4s   %s",
+   bool has_lag = false;
+   double lag = TradeLagPercent(trade, has_lag);
+   string lag_text = (has_lag ? SignedPercent(lag) : "--");
+   return StringFormat("%02d/%02d %02d:%02d   %-8s %-4s   %-14s Lag %s",
                        parts.mon, parts.day, parts.hour, parts.min,
-                       trade.symbol, side, SignedMoney(trade.net));
+                       trade.symbol, side, SignedMoney(trade.net), lag_text);
 }
 
 void RecentLosingTradeStats(const ClosedTrade &trades[], int sample_size, double &average_loss, int &sample_count)
@@ -810,9 +840,10 @@ void UpdateDashboard()
    SetLine(line++, "No-lag P/L     " + SignedMoney(no_lag_pl) + "        Actual P/L    " + SignedMoney(lag_actual_pl), (no_lag_gap > 0.0 ? BadColor() : GoodColor()));
    SetLine(line++, "Realized DD    " + Money(max_realized_dd) + "        Scope         " + (StatsScope == PROP_STATS_CURRENT_SYMBOL ? _Symbol : "All symbols"));
    SetLine(line++, " ");
-   SetLine(line++, "LAST 5 CLOSED TRADES", MutedColor());
+   int display_trades = (int)MathMax(1, MathMin(ClosedTradesToShow, PS_LINE_COUNT - line - 1));
+   SetLine(line++, "LAST " + (string)display_trades + " CLOSED TRADES", MutedColor());
 
-   for(int j = 0; j < 5; j++)
+   for(int j = 0; j < display_trades; j++)
    {
       if(j < count)
          SetLine(line++, TradeLine(trades[j]), (trades[j].net >= 0.0 ? GoodColor() : BadColor()));
