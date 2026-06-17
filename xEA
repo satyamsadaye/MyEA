@@ -140,6 +140,26 @@ enum ENUM_GLOBAL_DOLLAR_STREAK_PAUSE_TRIGGER
    GDSP_TRIGGER_WINNING_STREAK  // Winning streak
   };
 
+enum ENUM_PROP_STATS_SCOPE
+{
+   PROP_STATS_ALL_SYMBOLS = 0,      // All symbols
+   PROP_STATS_CURRENT_SYMBOL = 1    // Current chart symbol only
+};
+
+enum ENUM_DRAWDOWN_LIMIT_MODE
+{
+   DD_LIMIT_FIXED_MONEY = 0,         // Limit input is account-currency money
+   DD_LIMIT_PERCENT_OF_BASE = 1,     // Limit input is percent of the rule baseline
+   DD_LIMIT_PERCENT_OF_START = 2     // Limit input is percent of initial starting balance
+};
+
+enum ENUM_MAX_DRAWDOWN_FLOOR_MODE
+{
+   MAX_DD_FIXED_STARTING_BALANCE = 0, // Starting balance - max DD
+   MAX_DD_TRAILING_BALANCE_PEAK = 1,  // Highest closed balance - max DD
+   MAX_DD_TRAILING_EQUITY_PEAK = 2    // Highest observed equity - max DD
+};
+
 enum ENUM_TRAILING_TRIGGER_MODE
   {
    TRAIL_MODE_PERCENTAGE,   // Percentage-based trailing trigger/move
@@ -335,6 +355,29 @@ input ENUM_GLOBAL_DOLLAR_LOSS_STREAK_PAUSE_MODE InpGlobalDollarLossStreakPauseMo
 input int    InpGlobalDollarLossStreakPauseHours = 24;     // Pause duration in server-time hours after selected streak
 input int    InpGlobalDollarLossStreakResetUtcHour = 0;    // UTC daily reset hour for prop firm pause mode (0-23)
 input int    InpGlobalDollarLossStreakResetUtcMinute = 0;  // UTC daily reset minute for prop firm pause mode (0-59)
+input string InpGlobalDollarPanelSection = "---------------- Dashboard / Prop Stats ----------------"; // Visual separator
+input bool   InpGlobalDollarShowPanel = true;              // Show styled panel when global dollar exit is enabled
+input double InpGlobalDollarPanelStartingBalance = 5000.0; // Prop stats starting balance
+input double InpGlobalDollarPanelTargetEquity = 5500.0;    // Prop stats target equity
+input ENUM_DRAWDOWN_LIMIT_MODE InpGlobalDollarPanelMaxDrawdownLimitMode = DD_LIMIT_PERCENT_OF_START; // Max DD limit mode
+input double InpGlobalDollarPanelMaxTotalDrawdownValue = 10.0; // Max DD value (money or percent)
+input ENUM_MAX_DRAWDOWN_FLOOR_MODE InpGlobalDollarPanelMaxDrawdownFloorMode = MAX_DD_TRAILING_EQUITY_PEAK; // Max DD baseline rule
+input ENUM_DRAWDOWN_LIMIT_MODE InpGlobalDollarPanelDailyDrawdownLimitMode = DD_LIMIT_PERCENT_OF_START; // Daily DD limit mode
+input double InpGlobalDollarPanelMaxDailyDrawdownValue = 5.0; // Daily DD value (money or percent)
+input ENUM_PROP_STATS_SCOPE InpGlobalDollarPanelStatsScope = PROP_STATS_ALL_SYMBOLS; // Prop stats symbol scope
+input bool   InpGlobalDollarPanelFilterByMagicNumber = false; // Filter prop stats by magic number
+input long   InpGlobalDollarPanelMagicNumber = 0;        // Prop stats magic filter (0 = use this EA magic)
+input double InpGlobalDollarPanelPlannedWinMoney = 100.0; // Planned money to make on each win
+input double InpGlobalDollarPanelPlannedLossMoney = 100.0; // Planned money to lose on each loss
+input double InpGlobalDollarPanelLagQualificationPercent = 70.0; // Min percent of planned P/L to count lag stats
+input bool   InpGlobalDollarDailyDDTradePauseEnabled = false; // Pause new trades when daily DD planned-loss trades left is low
+input int    InpGlobalDollarDailyDDTradesLeftStopAt = 1; // Stop new trades when daily DD planned-loss trades left <= this
+input int    InpGlobalDollarPanelCorner = CORNER_LEFT_UPPER; // Panel chart corner
+input int    InpGlobalDollarPanelX = 18;                 // Panel X position
+input int    InpGlobalDollarPanelY = 60;                 // Panel Y position
+input int    InpGlobalDollarPanelWidth = 760;            // Panel width
+input int    InpGlobalDollarPanelFontSize = 9;           // Panel font size
+input int    InpGlobalDollarPanelClosedTradesToShow = 10; // Closed trades to show
 
 input group "💰 Position Limits & Controls"
 input int    InpMaxOpenPositions = 1;                      // Max Open Positions for this EA (per symbol, per magic)
@@ -624,6 +667,44 @@ const string DISPLAY_BG_OBJECT = "RohitEADisp_BG";
 const int DISPLAY_MAX_LINES = 100;
 int ExtTotalDisplayLines = 0; // Will be updated in UpdateChartDisplay
 
+#define GDPS_PREFIX "GLOBAL_DOLLAR_PROP_STATS_"
+#define GDPS_LINE_COUNT 72
+
+color GDPanelColor()  { return C'16,18,24'; }
+color GDHeaderColor() { return C'28,32,42'; }
+color GDBorderColor() { return C'74,85,104'; }
+color GDTextColor()   { return C'236,239,244'; }
+color GDMutedColor()  { return C'158,166,180'; }
+color GDGoodColor()   { return C'125,211,252'; }
+color GDWarnColor()   { return C'245,180,85'; }
+color GDBadColor()    { return C'254,202,202'; }
+
+struct GDPanelClosedTrade
+{
+   ulong position_id;
+   datetime open_time;
+   datetime close_time;
+   string symbol;
+   long type;
+   long magic;
+   double volume;
+   double open_price;
+   double close_price;
+   double entry_sl;
+   double profit;
+   double commission;
+   double swap;
+   double net;
+   double risk_money;
+   double rr;
+};
+
+datetime g_gdPanelCurrentUtcDay = 0;
+double g_gdPanelDailyStartEquity = 0.0;
+double g_gdPanelDailyMinEquity = 0.0;
+double g_gdPanelEquityPeak = 0.0;
+bool g_gdPanelObjectsCreated = false;
+
 // --- State Persistence ---
 const string RECOVERY_STATE_FILE_PREFIX = "RohitEARecoveryState_";
 
@@ -849,6 +930,16 @@ void LogGlobalDollarUtcResetCountdown(bool force_log = false);
 string GlobalDollarLossStreakStateKey(string suffix);
 void LoadGlobalDollarLossStreakState();
 void SaveGlobalDollarLossStreakState();
+string GDPanelEquityPeakKey();
+void GDPanelLoadOrResetDailyState();
+void GDPanelSaveDailyState();
+void GDPanelCreateDashboard();
+void GDPanelUpdateDashboard();
+void GDPanelDeleteDashboard();
+double GDPanelDrawdownLimitMoney(ENUM_DRAWDOWN_LIMIT_MODE mode, double value, double baseline);
+int GlobalDollarDailyDrawdownTradesLeft(double &daily_dd_left, double &planned_loss);
+bool IsGlobalDollarDailyDrawdownTradePauseActive();
+string GlobalDollarDailyDrawdownTradePauseReason();
 // Manual backtest signal file options
 input bool   InpManualSignalUseFile = false;              // Enable reading manual signals from file (backtester)
 input string InpManualSignalFileName = "manual_signals.csv"; // File placed in MQL5/Files or Common files
@@ -1378,6 +1469,12 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       else if(sparam == MAN_BTN_CLOSE) { Manual_CloseAll(); ObjectSetInteger(ChartID(), MAN_BTN_CLOSE, OBJPROP_STATE, 0); }
       else if(sparam == MAN_BTN_BE) { Manual_MoveToBreakeven(); ObjectSetInteger(ChartID(), MAN_BTN_BE, OBJPROP_STATE, 0); }
       ChartRedraw(ChartID());
+   }
+   else if(id == CHARTEVENT_CHART_CHANGE)
+   {
+      g_gdPanelObjectsCreated = false;
+      GDPanelCreateDashboard();
+      GDPanelUpdateDashboard();
    }
 }
 
@@ -2104,6 +2201,14 @@ int OnInit()
    g_globalDollarLossStreakHistoryFrom = TimeCurrent();
    g_globalDollarLossStreakLastDeal = 0;
    LoadGlobalDollarLossStreakState();
+   g_gdPanelCurrentUtcDay = 0;
+   g_gdPanelEquityPeak = (GlobalVariableCheck(GDPanelEquityPeakKey()) ? GlobalVariableGet(GDPanelEquityPeakKey()) : InpGlobalDollarPanelStartingBalance);
+   if(AccountInfoDouble(ACCOUNT_EQUITY) > g_gdPanelEquityPeak)
+   {
+      g_gdPanelEquityPeak = AccountInfoDouble(ACCOUNT_EQUITY);
+      GlobalVariableSet(GDPanelEquityPeakKey(), g_gdPanelEquityPeak);
+   }
+   GDPanelLoadOrResetDailyState();
 
     // Initialize multi-order recovery
     ArrayResize(MultiOrderGroups, 0);
@@ -2313,7 +2418,9 @@ void OnDeinit(const int reason)
    // Save recovery state before deinitializing
    SaveRecoveryState();
    SaveGlobalDollarLossStreakState();
+   GDPanelSaveDailyState();
    ClearChartDisplayObjects();
+   GDPanelDeleteDashboard();
    
    // Clean up all EA-related chart objects
    CleanupAllEAObjects();
@@ -2647,6 +2754,23 @@ bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result)
       }
    }
 
+   if(IsGlobalDollarDailyDrawdownTradePauseActive())
+   {
+      bool is_new_market_entry = (request.action == TRADE_ACTION_DEAL && request.position == 0);
+      bool is_new_pending_entry = (request.action == TRADE_ACTION_PENDING);
+
+      if(is_new_market_entry || is_new_pending_entry)
+      {
+         string pause_reason = GlobalDollarDailyDrawdownTradePauseReason();
+         ZeroMemory(result);
+         result.retcode = TRADE_RETCODE_REJECT;
+         result.comment = "Daily DD trades-left pause active";
+         PrintFormat("Global Dollar Daily DD Trade Pause: blocked new %s order on %s. Reason: %s",
+                     EnumToString(request.action), request.symbol, pause_reason);
+         return false;
+      }
+   }
+
    if(InpGlobalDollarExitEnabled)
    {
       bool managed_request = false;
@@ -2948,6 +3072,58 @@ string GlobalDollarLossStreakPauseReason()
                        TimeToString(g_globalDollarLossStreakPauseUntil, TIME_DATE|TIME_MINUTES),
                        reset_info,
                        remaining_minutes);
+}
+
+int GlobalDollarDailyDrawdownTradesLeft(double &daily_dd_left, double &planned_loss)
+{
+   daily_dd_left = 0.0;
+   planned_loss = MathAbs(InpGlobalDollarPanelPlannedLossMoney);
+
+   if(planned_loss <= 0.0)
+      return -1;
+
+   GDPanelLoadOrResetDailyState();
+
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double daily_limit_money = GDPanelDrawdownLimitMoney(InpGlobalDollarPanelDailyDrawdownLimitMode,
+                                                        InpGlobalDollarPanelMaxDailyDrawdownValue,
+                                                        g_gdPanelDailyStartEquity);
+   double daily_floor = g_gdPanelDailyStartEquity - daily_limit_money;
+   daily_dd_left = equity - daily_floor;
+
+   return (int)MathFloor(MathMax(0.0, daily_dd_left) / planned_loss);
+}
+
+bool IsGlobalDollarDailyDrawdownTradePauseActive()
+{
+   if(!InpGlobalDollarExitEnabled || !InpGlobalDollarDailyDDTradePauseEnabled)
+      return false;
+
+   double daily_dd_left = 0.0;
+   double planned_loss = 0.0;
+   int trades_left = GlobalDollarDailyDrawdownTradesLeft(daily_dd_left, planned_loss);
+   if(trades_left < 0)
+      return false;
+
+   return trades_left <= MathMax(0, InpGlobalDollarDailyDDTradesLeftStopAt);
+}
+
+string GlobalDollarDailyDrawdownTradePauseReason()
+{
+   if(!InpGlobalDollarExitEnabled || !InpGlobalDollarDailyDDTradePauseEnabled)
+      return "";
+
+   double daily_dd_left = 0.0;
+   double planned_loss = 0.0;
+   int trades_left = GlobalDollarDailyDrawdownTradesLeft(daily_dd_left, planned_loss);
+   if(trades_left < 0)
+      return "planned loss money is not configured";
+
+   return StringFormat("daily DD planned-loss trades left %d <= stop setting %d (daily DD left %.2f, planned loss %.2f)",
+                       trades_left,
+                       MathMax(0, InpGlobalDollarDailyDDTradesLeftStopAt),
+                       daily_dd_left,
+                       planned_loss);
 }
 
 void UpdateGlobalDollarLossStreakPause()
@@ -3322,6 +3498,8 @@ void OnTick()
 
    UpdateGlobalDollarLossStreakPause();
    if(IsGlobalDollarLossStreakPauseActive())
+      CancelGlobalDollarStopTradingPendingOrders();
+   if(IsGlobalDollarDailyDrawdownTradePauseActive())
       CancelGlobalDollarStopTradingPendingOrders();
 
    EnforceGlobalDollarStopTrading();
@@ -3829,6 +4007,13 @@ void OnTick()
     {
         PrintFormat("Global Dollar %s Streak Pause active: no new pattern trades. Reason: %s",
                     GlobalDollarStreakPauseTriggerText(), GlobalDollarLossStreakPauseReason());
+        return;
+    }
+
+    if(IsGlobalDollarDailyDrawdownTradePauseActive())
+    {
+        PrintFormat("Global Dollar Daily DD Trade Pause active: no new pattern trades. Reason: %s",
+                    GlobalDollarDailyDrawdownTradePauseReason());
         return;
     }
 
@@ -9739,6 +9924,8 @@ void OnTimer()
    LogGlobalDollarUtcResetCountdown(false);
    if(IsGlobalDollarLossStreakPauseActive())
       CancelGlobalDollarStopTradingPendingOrders();
+   if(IsGlobalDollarDailyDrawdownTradePauseActive())
+      CancelGlobalDollarStopTradingPendingOrders();
 
    // Skip timer updates during backtesting except for essential functions
    if(g_is_backtesting)
@@ -10256,6 +10443,796 @@ void CreateOrUpdateDisplayBox(long chart_id, int x, int y, int width, int height
    ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_BACK, false);
 }
 
+string GDPanelMoney(double value)
+{
+   string currency = AccountInfoString(ACCOUNT_CURRENCY);
+   return currency + " " + DoubleToString(value, 2);
+}
+
+string GDPanelSignedMoney(double value)
+{
+   string sign = (value > 0.0 ? "+" : "");
+   return sign + GDPanelMoney(value);
+}
+
+string GDPanelSignedPercent(double value)
+{
+   string sign = (value > 0.0 ? "+" : "");
+   return sign + DoubleToString(value, 1) + "%";
+}
+
+datetime GDPanelUtcDayStart(datetime utc_time)
+{
+   MqlDateTime parts;
+   TimeToStruct(utc_time, parts);
+   parts.hour = 0;
+   parts.min = 0;
+   parts.sec = 0;
+   return StructToTime(parts);
+}
+
+string GDPanelDateKey(datetime utc_day)
+{
+   MqlDateTime parts;
+   TimeToStruct(utc_day, parts);
+   return StringFormat("%04d%02d%02d", parts.year, parts.mon, parts.day);
+}
+
+string GDPanelGlobalPrefix()
+{
+   return "GlobalDollarPropStats_" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "_" + IntegerToString(InpMagicNumber) + "_";
+}
+
+string GDPanelEquityPeakKey()
+{
+   return GDPanelGlobalPrefix() + "equity_peak";
+}
+
+string GDPanelDailyEquityKey(datetime utc_day)
+{
+   return GDPanelGlobalPrefix() + "daily_start_equity_" + GDPanelDateKey(utc_day);
+}
+
+string GDPanelDailyMinEquityKey(datetime utc_day)
+{
+   return GDPanelGlobalPrefix() + "daily_min_equity_" + GDPanelDateKey(utc_day);
+}
+
+datetime GDPanelServerTimeForUtc(datetime utc_time)
+{
+   datetime server_now = TimeTradeServer();
+   if(server_now <= 0)
+      server_now = TimeCurrent();
+   return utc_time + (server_now - TimeGMT());
+}
+
+bool GDPanelIsTradeCloseDeal(ulong deal_ticket)
+{
+   long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+   if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY && entry != DEAL_ENTRY_INOUT)
+      return false;
+
+   long type = HistoryDealGetInteger(deal_ticket, DEAL_TYPE);
+   return (type == DEAL_TYPE_BUY || type == DEAL_TYPE_SELL);
+}
+
+bool GDPanelScopeAllowsSymbol(string symbol)
+{
+   if(InpGlobalDollarPanelStatsScope == PROP_STATS_CURRENT_SYMBOL && symbol != _Symbol)
+      return false;
+   return true;
+}
+
+long GDPanelMagicFilter()
+{
+   return (InpGlobalDollarPanelMagicNumber != 0 ? InpGlobalDollarPanelMagicNumber : InpMagicNumber);
+}
+
+int GDPanelFindTradeIndex(const GDPanelClosedTrade &trades[], ulong position_id)
+{
+   int count = ArraySize(trades);
+   for(int i = 0; i < count; i++)
+   {
+      if(trades[i].position_id == position_id)
+         return i;
+   }
+   return -1;
+}
+
+void GDPanelInitClosedTrade(GDPanelClosedTrade &trade, ulong position_id)
+{
+   trade.position_id = position_id;
+   trade.open_time = 0;
+   trade.close_time = 0;
+   trade.symbol = "";
+   trade.type = -1;
+   trade.magic = 0;
+   trade.volume = 0.0;
+   trade.open_price = 0.0;
+   trade.close_price = 0.0;
+   trade.entry_sl = 0.0;
+   trade.profit = 0.0;
+   trade.commission = 0.0;
+   trade.swap = 0.0;
+   trade.net = 0.0;
+   trade.risk_money = 0.0;
+   trade.rr = 0.0;
+}
+
+void GDPanelFillEntryDetails(GDPanelClosedTrade &trade)
+{
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+      if((ulong)HistoryDealGetInteger(ticket, DEAL_POSITION_ID) != trade.position_id)
+         continue;
+
+      long entry = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_IN && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      trade.open_time = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+      trade.symbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
+      trade.type = HistoryDealGetInteger(ticket, DEAL_TYPE);
+      trade.magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
+      trade.volume = HistoryDealGetDouble(ticket, DEAL_VOLUME);
+      trade.open_price = HistoryDealGetDouble(ticket, DEAL_PRICE);
+      trade.entry_sl = HistoryDealGetDouble(ticket, DEAL_SL);
+      return;
+   }
+}
+
+double GDPanelEstimateRiskMoney(const GDPanelClosedTrade &trade)
+{
+   if(trade.entry_sl <= 0.0 || trade.open_price <= 0.0 || trade.volume <= 0.0 || trade.symbol == "")
+      return 0.0;
+
+   double tick_size = SymbolInfoDouble(trade.symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tick_value = SymbolInfoDouble(trade.symbol, SYMBOL_TRADE_TICK_VALUE);
+   if(tick_size <= 0.0 || tick_value <= 0.0)
+      return 0.0;
+
+   double price_risk = MathAbs(trade.open_price - trade.entry_sl);
+   return (price_risk / tick_size) * tick_value * trade.volume;
+}
+
+void GDPanelSortTradesByCloseTimeDesc(GDPanelClosedTrade &trades[])
+{
+   int count = ArraySize(trades);
+   for(int i = 0; i < count - 1; i++)
+   {
+      for(int j = i + 1; j < count; j++)
+      {
+         if(trades[j].close_time > trades[i].close_time)
+         {
+            GDPanelClosedTrade temp = trades[i];
+            trades[i] = trades[j];
+            trades[j] = temp;
+         }
+      }
+   }
+}
+
+void GDPanelSortTradesByCloseTimeAsc(GDPanelClosedTrade &trades[])
+{
+   int count = ArraySize(trades);
+   for(int i = 0; i < count - 1; i++)
+   {
+      for(int j = i + 1; j < count; j++)
+      {
+         if(trades[j].close_time < trades[i].close_time)
+         {
+            GDPanelClosedTrade temp = trades[i];
+            trades[i] = trades[j];
+            trades[j] = temp;
+         }
+      }
+   }
+}
+
+int GDPanelBuildClosedTrades(datetime from_time, datetime to_time, GDPanelClosedTrade &trades[], bool apply_filters = true)
+{
+   ArrayResize(trades, 0);
+   if(!HistorySelect(from_time, to_time))
+      return 0;
+
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0 || !GDPanelIsTradeCloseDeal(ticket))
+         continue;
+
+      string symbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
+      if(apply_filters && !GDPanelScopeAllowsSymbol(symbol))
+         continue;
+
+      ulong position_id = (ulong)HistoryDealGetInteger(ticket, DEAL_POSITION_ID);
+      if(position_id == 0)
+         continue;
+
+      int index = GDPanelFindTradeIndex(trades, position_id);
+      if(index < 0)
+      {
+         index = ArraySize(trades);
+         ArrayResize(trades, index + 1);
+         GDPanelInitClosedTrade(trades[index], position_id);
+      }
+
+      datetime close_time = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+      if(close_time > trades[index].close_time)
+      {
+         trades[index].close_time = close_time;
+         trades[index].close_price = HistoryDealGetDouble(ticket, DEAL_PRICE);
+      }
+
+      trades[index].symbol = symbol;
+      trades[index].profit += HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      trades[index].commission += HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+      trades[index].swap += HistoryDealGetDouble(ticket, DEAL_SWAP);
+   }
+
+   int count = ArraySize(trades);
+   int kept = 0;
+   long magic_filter = GDPanelMagicFilter();
+   for(int t = 0; t < count; t++)
+   {
+      GDPanelFillEntryDetails(trades[t]);
+      if(apply_filters && InpGlobalDollarPanelFilterByMagicNumber && trades[t].magic != magic_filter)
+         continue;
+
+      trades[t].net = trades[t].profit + trades[t].commission + trades[t].swap;
+      trades[t].risk_money = GDPanelEstimateRiskMoney(trades[t]);
+      trades[t].rr = (trades[t].risk_money > 0.0 ? trades[t].net / trades[t].risk_money : 0.0);
+
+      if(kept != t)
+         trades[kept] = trades[t];
+      kept++;
+   }
+
+   ArrayResize(trades, kept);
+   return kept;
+}
+
+double GDPanelDealBalanceChange(ulong ticket)
+{
+   return HistoryDealGetDouble(ticket, DEAL_PROFIT) +
+          HistoryDealGetDouble(ticket, DEAL_COMMISSION) +
+          HistoryDealGetDouble(ticket, DEAL_SWAP);
+}
+
+bool GDPanelBalanceAtTime(datetime balance_time, double &balance)
+{
+   datetime now = TimeCurrent();
+   if(!HistorySelect(0, now))
+      return false;
+
+   double later_changes = 0.0;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      datetime deal_time = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+      if(deal_time < balance_time || deal_time > now)
+         continue;
+
+      later_changes += GDPanelDealBalanceChange(ticket);
+   }
+
+   balance = AccountInfoDouble(ACCOUNT_BALANCE) - later_changes;
+   return true;
+}
+
+void GDPanelSaveDailyState()
+{
+   GlobalVariableSet(GDPanelDailyEquityKey(g_gdPanelCurrentUtcDay), g_gdPanelDailyStartEquity);
+   GlobalVariableSet(GDPanelDailyMinEquityKey(g_gdPanelCurrentUtcDay), g_gdPanelDailyMinEquity);
+}
+
+void GDPanelLoadOrResetDailyState()
+{
+   datetime utc_day = GDPanelUtcDayStart(TimeGMT());
+   bool had_loaded_day = (g_gdPanelCurrentUtcDay != 0);
+   bool new_day = (utc_day != g_gdPanelCurrentUtcDay);
+   g_gdPanelCurrentUtcDay = utc_day;
+
+   string equity_key = GDPanelDailyEquityKey(utc_day);
+   string min_key = GDPanelDailyMinEquityKey(utc_day);
+   double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double current_balance = AccountInfoDouble(ACCOUNT_BALANCE);
+
+   if(!new_day && GlobalVariableCheck(equity_key))
+      g_gdPanelDailyStartEquity = GlobalVariableGet(equity_key);
+   else if(GlobalVariableCheck(equity_key))
+      g_gdPanelDailyStartEquity = GlobalVariableGet(equity_key);
+   else
+   {
+      double reconstructed_balance = 0.0;
+      datetime reset_in_server_time = GDPanelServerTimeForUtc(utc_day);
+      g_gdPanelDailyStartEquity = (had_loaded_day && new_day ? MathMax(current_balance, current_equity) : (GDPanelBalanceAtTime(reset_in_server_time, reconstructed_balance) ? reconstructed_balance : MathMax(current_balance, current_equity)));
+      GlobalVariableSet(equity_key, g_gdPanelDailyStartEquity);
+   }
+
+   if(!new_day && GlobalVariableCheck(min_key))
+      g_gdPanelDailyMinEquity = GlobalVariableGet(min_key);
+   else if(GlobalVariableCheck(min_key))
+      g_gdPanelDailyMinEquity = GlobalVariableGet(min_key);
+   else
+   {
+      g_gdPanelDailyMinEquity = current_equity;
+      GlobalVariableSet(min_key, g_gdPanelDailyMinEquity);
+   }
+
+   if(current_equity < g_gdPanelDailyMinEquity)
+   {
+      g_gdPanelDailyMinEquity = current_equity;
+      GDPanelSaveDailyState();
+   }
+}
+
+string GDPanelTimeLeftToUtcReset()
+{
+   datetime now = TimeGMT();
+   datetime next_reset = GDPanelUtcDayStart(now) + 86400;
+   int seconds_left = (int)MathMax(0, next_reset - now);
+   int hours = seconds_left / 3600;
+   int minutes = (seconds_left % 3600) / 60;
+   int seconds = seconds_left % 60;
+   return StringFormat("%02d:%02d:%02d", hours, minutes, seconds);
+}
+
+string GDPanelFormatAmPm(datetime value)
+{
+   MqlDateTime parts;
+   TimeToStruct(value, parts);
+   string suffix = (parts.hour >= 12 ? "PM" : "AM");
+   int hour = parts.hour % 12;
+   if(hour == 0)
+      hour = 12;
+   return StringFormat("%02d/%02d %02d:%02d %s", parts.mon, parts.day, hour, parts.min, suffix);
+}
+
+string GDPanelNextUtcResetInIst()
+{
+   datetime next_reset = GDPanelUtcDayStart(TimeGMT()) + 86400;
+   return GDPanelFormatAmPm(next_reset + 5 * 3600 + 30 * 60);
+}
+
+color GDPanelStatusColor(double left, double limit)
+{
+   if(left < 0.0)
+      return GDBadColor();
+   if(left <= MathMax(1.0, limit * 0.2))
+      return GDWarnColor();
+   return GDGoodColor();
+}
+
+color GDPanelLagColor(double lag_percent, int sample_count)
+{
+   if(sample_count <= 0)
+      return GDMutedColor();
+   if(lag_percent > 0.0)
+      return GDBadColor();
+   if(lag_percent < 0.0)
+      return GDGoodColor();
+   return GDTextColor();
+}
+
+double GDPanelDrawdownLimitMoney(ENUM_DRAWDOWN_LIMIT_MODE mode, double value, double baseline)
+{
+   if(mode == DD_LIMIT_PERCENT_OF_BASE)
+      return MathMax(0.0, baseline * value / 100.0);
+   if(mode == DD_LIMIT_PERCENT_OF_START)
+      return MathMax(0.0, InpGlobalDollarPanelStartingBalance * value / 100.0);
+   return MathMax(0.0, value);
+}
+
+void GDPanelDeleteDashboard()
+{
+   for(int i = ObjectsTotal(0, 0, -1) - 1; i >= 0; i--)
+   {
+      string name = ObjectName(0, i, 0, -1);
+      if(StringFind(name, GDPS_PREFIX) == 0)
+         ObjectDelete(0, name);
+   }
+   g_gdPanelObjectsCreated = false;
+}
+
+void GDPanelEnsureBox(string name, int x, int y, int width, int height, color background, color border)
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, InpGlobalDollarPanelCorner);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, background);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, border);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 0);
+   ObjectSetString(0, name, OBJPROP_TEXT, "");
+}
+
+void GDPanelEnsureLabel(string name, int x, int y, int font_size, color text_color, string font = "Consolas")
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, InpGlobalDollarPanelCorner);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, font_size);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, text_color);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 10);
+   ObjectSetString(0, name, OBJPROP_FONT, font);
+}
+
+void GDPanelCreateDashboard()
+{
+   if(!InpGlobalDollarExitEnabled || !InpGlobalDollarShowPanel)
+      return;
+
+   int panel_width = InpGlobalDollarPanelWidth;
+   if(panel_width < 760)
+      panel_width = 760;
+   int display_trades = (int)MathMax(1, MathMin(InpGlobalDollarPanelClosedTradesToShow, GDPS_LINE_COUNT - 28));
+   int panel_height = (int)MathMax(610, 116 + (28 + display_trades) * 15);
+   int x = InpGlobalDollarPanelX;
+   int y = InpGlobalDollarPanelY;
+
+   GDPanelEnsureBox(GDPS_PREFIX + "BG", x, y, panel_width, panel_height, GDPanelColor(), GDBorderColor());
+   GDPanelEnsureBox(GDPS_PREFIX + "HEADER", x, y, panel_width, 42, GDHeaderColor(), GDHeaderColor());
+   GDPanelEnsureBox(GDPS_PREFIX + "ACCENT", x, y, 4, panel_height, GDGoodColor(), GDGoodColor());
+   GDPanelEnsureBox(GDPS_PREFIX + "SEP_1", x + 18, y + 139, panel_width - 36, 1, GDBorderColor(), GDBorderColor());
+   GDPanelEnsureBox(GDPS_PREFIX + "SEP_2", x + 18, y + 229, panel_width - 36, 1, GDBorderColor(), GDBorderColor());
+   GDPanelEnsureBox(GDPS_PREFIX + "SEP_3", x + 18, y + 319, panel_width - 36, 1, GDBorderColor(), GDBorderColor());
+   GDPanelEnsureBox(GDPS_PREFIX + "SEP_4", x + 18, y + 456, panel_width - 36, 1, GDBorderColor(), GDBorderColor());
+
+   GDPanelEnsureLabel(GDPS_PREFIX + "TITLE", x + 18, y + 12, InpGlobalDollarPanelFontSize + 4, GDTextColor(), "Arial Bold");
+   for(int i = 0; i < GDPS_LINE_COUNT; i++)
+      GDPanelEnsureLabel(GDPS_PREFIX + "LINE_" + (string)i, x + 18, y + 56 + i * 15, InpGlobalDollarPanelFontSize, GDTextColor());
+
+   g_gdPanelObjectsCreated = true;
+}
+
+void GDPanelSetLine(int index, string text, color text_color = clrNONE)
+{
+   if(index < 0 || index >= GDPS_LINE_COUNT)
+      return;
+
+   string name = GDPS_PREFIX + "LINE_" + (string)index;
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, (text_color == clrNONE ? GDTextColor() : text_color));
+}
+
+double GDPanelTradeLagPercent(const GDPanelClosedTrade &trade, bool &has_lag)
+{
+   has_lag = false;
+   if(trade.net > 0.005)
+   {
+      if(InpGlobalDollarPanelPlannedWinMoney <= 0.0)
+         return 0.0;
+      has_lag = true;
+      return 100.0 * (InpGlobalDollarPanelPlannedWinMoney - trade.net) / InpGlobalDollarPanelPlannedWinMoney;
+   }
+
+   if(trade.net < -0.005)
+   {
+      if(InpGlobalDollarPanelPlannedLossMoney <= 0.0)
+         return 0.0;
+      has_lag = true;
+      return 100.0 * (MathAbs(trade.net) - InpGlobalDollarPanelPlannedLossMoney) / InpGlobalDollarPanelPlannedLossMoney;
+   }
+
+   return 0.0;
+}
+
+string GDPanelTradeLine(const GDPanelClosedTrade &trade)
+{
+   MqlDateTime parts;
+   TimeToStruct(trade.close_time, parts);
+   string side = (trade.type == DEAL_TYPE_BUY ? "BUY " : (trade.type == DEAL_TYPE_SELL ? "SELL" : "    "));
+   bool has_lag = false;
+   double lag = GDPanelTradeLagPercent(trade, has_lag);
+   string lag_text = (has_lag ? GDPanelSignedPercent(lag) : "--");
+   return StringFormat("%02d/%02d %02d:%02d   %-8s %-4s   %-14s Lag %s",
+                       parts.mon, parts.day, parts.hour, parts.min,
+                       trade.symbol, side, GDPanelSignedMoney(trade.net), lag_text);
+}
+
+void GDPanelRecentLosingTradeStats(const GDPanelClosedTrade &trades[], int sample_size, double &average_loss, int &sample_count)
+{
+   average_loss = 0.0;
+   sample_count = 0;
+   int count = ArraySize(trades);
+   for(int i = 0; i < count && sample_count < sample_size; i++)
+   {
+      if(trades[i].net >= -0.005)
+         continue;
+      average_loss += MathAbs(trades[i].net);
+      sample_count++;
+   }
+   if(sample_count > 0)
+      average_loss /= sample_count;
+}
+
+void GDPanelSpreadCostLagStats(const GDPanelClosedTrade &trades[],
+                               double &average_lag,
+                               double &average_win_lag,
+                               double &average_loss_lag,
+                               double &qualified_net,
+                               int &sample_count,
+                               int &win_sample_count,
+                               int &loss_sample_count)
+{
+   average_lag = 0.0;
+   average_win_lag = 0.0;
+   average_loss_lag = 0.0;
+   qualified_net = 0.0;
+   sample_count = 0;
+   win_sample_count = 0;
+   loss_sample_count = 0;
+
+   int count = ArraySize(trades);
+   double qualify_percent = MathMax(0.0, InpGlobalDollarPanelLagQualificationPercent) / 100.0;
+   for(int i = 0; i < count; i++)
+   {
+      double lag = 0.0;
+      if(trades[i].net > 0.005)
+      {
+         if(InpGlobalDollarPanelPlannedWinMoney <= 0.0)
+            continue;
+         if(trades[i].net < InpGlobalDollarPanelPlannedWinMoney * qualify_percent)
+            continue;
+
+         lag = 100.0 * (InpGlobalDollarPanelPlannedWinMoney - trades[i].net) / InpGlobalDollarPanelPlannedWinMoney;
+         average_win_lag += lag;
+         win_sample_count++;
+      }
+      else if(trades[i].net < -0.005)
+      {
+         if(InpGlobalDollarPanelPlannedLossMoney <= 0.0)
+            continue;
+         if(MathAbs(trades[i].net) < InpGlobalDollarPanelPlannedLossMoney * qualify_percent)
+            continue;
+
+         lag = 100.0 * (MathAbs(trades[i].net) - InpGlobalDollarPanelPlannedLossMoney) / InpGlobalDollarPanelPlannedLossMoney;
+         average_loss_lag += lag;
+         loss_sample_count++;
+      }
+      else
+         continue;
+
+      average_lag += lag;
+      qualified_net += trades[i].net;
+      sample_count++;
+   }
+
+   if(win_sample_count > 0)
+      average_win_lag /= win_sample_count;
+   if(loss_sample_count > 0)
+      average_loss_lag /= loss_sample_count;
+   if(sample_count > 0)
+      average_lag /= sample_count;
+}
+
+void GDPanelUpdateDashboard()
+{
+   if(!InpGlobalDollarExitEnabled || !InpGlobalDollarShowPanel)
+   {
+      GDPanelDeleteDashboard();
+      return;
+   }
+
+   if(!g_gdPanelObjectsCreated)
+      GDPanelCreateDashboard();
+
+   GDPanelLoadOrResetDailyState();
+
+   datetime now = TimeCurrent();
+   GDPanelClosedTrade trades[];
+   int count = GDPanelBuildClosedTrades(0, now, trades);
+   GDPanelSortTradesByCloseTimeDesc(trades);
+
+   int wins = 0;
+   int losses = 0;
+   int breakevens = 0;
+   double gross_profit = 0.0;
+   double gross_loss = 0.0;
+   double net_profit = 0.0;
+   for(int i = 0; i < count; i++)
+   {
+      net_profit += trades[i].net;
+      if(MathAbs(trades[i].net) < 0.005)
+         breakevens++;
+      else if(trades[i].net > 0.0)
+      {
+         wins++;
+         gross_profit += trades[i].net;
+      }
+      else
+      {
+         losses++;
+         gross_loss += MathAbs(trades[i].net);
+      }
+   }
+
+   int decisive = wins + losses;
+   double win_rate = (decisive > 0 ? 100.0 * wins / decisive : 0.0);
+   double avg_win = (wins > 0 ? gross_profit / wins : 0.0);
+   double avg_loss = (losses > 0 ? gross_loss / losses : 0.0);
+   double ev = (decisive > 0 ? (gross_profit - gross_loss) / decisive : 0.0);
+   double average_rr = (avg_loss > 0.0 ? avg_win / avg_loss : 0.0);
+   double profit_factor = (gross_loss > 0.0 ? gross_profit / gross_loss : (gross_profit > 0.0 ? 999.0 : 0.0));
+
+   GDPanelClosedTrade asc[];
+   ArrayResize(asc, count);
+   for(int a = 0; a < count; a++)
+      asc[a] = trades[a];
+   GDPanelSortTradesByCloseTimeAsc(asc);
+   double curve = InpGlobalDollarPanelStartingBalance;
+   double peak = InpGlobalDollarPanelStartingBalance;
+   double max_realized_dd = 0.0;
+   for(int c = 0; c < ArraySize(asc); c++)
+   {
+      curve += asc[c].net;
+      if(curve > peak)
+         peak = curve;
+      double dd = peak - curve;
+      if(dd > max_realized_dd)
+         max_realized_dd = dd;
+   }
+
+   double account_balance_peak = InpGlobalDollarPanelStartingBalance;
+   if(InpGlobalDollarPanelMaxDrawdownFloorMode == MAX_DD_TRAILING_BALANCE_PEAK || InpGlobalDollarPanelMaxDrawdownFloorMode == MAX_DD_TRAILING_EQUITY_PEAK)
+   {
+      GDPanelClosedTrade account_trades[];
+      int account_count = GDPanelBuildClosedTrades(0, now, account_trades, false);
+      GDPanelSortTradesByCloseTimeAsc(account_trades);
+      double account_curve = InpGlobalDollarPanelStartingBalance;
+      for(int p = 0; p < account_count; p++)
+      {
+         account_curve += account_trades[p].net;
+         if(account_curve > account_balance_peak)
+            account_balance_peak = account_curve;
+      }
+   }
+
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double floating = AccountInfoDouble(ACCOUNT_PROFIT);
+
+   if(g_gdPanelEquityPeak <= 0.0)
+   {
+      if(GlobalVariableCheck(GDPanelEquityPeakKey()))
+         g_gdPanelEquityPeak = GlobalVariableGet(GDPanelEquityPeakKey());
+      else
+         g_gdPanelEquityPeak = InpGlobalDollarPanelStartingBalance;
+   }
+
+   if(equity > g_gdPanelEquityPeak)
+   {
+      g_gdPanelEquityPeak = equity;
+      GlobalVariableSet(GDPanelEquityPeakKey(), g_gdPanelEquityPeak);
+   }
+
+   double total_baseline = InpGlobalDollarPanelStartingBalance;
+   if(InpGlobalDollarPanelMaxDrawdownFloorMode == MAX_DD_TRAILING_BALANCE_PEAK)
+      total_baseline = MathMax(InpGlobalDollarPanelStartingBalance, account_balance_peak);
+   else if(InpGlobalDollarPanelMaxDrawdownFloorMode == MAX_DD_TRAILING_EQUITY_PEAK)
+      total_baseline = MathMax(MathMax(InpGlobalDollarPanelStartingBalance, account_balance_peak), g_gdPanelEquityPeak);
+
+   double total_limit_money = GDPanelDrawdownLimitMoney(InpGlobalDollarPanelMaxDrawdownLimitMode, InpGlobalDollarPanelMaxTotalDrawdownValue, total_baseline);
+   double daily_limit_money = GDPanelDrawdownLimitMoney(InpGlobalDollarPanelDailyDrawdownLimitMode, InpGlobalDollarPanelMaxDailyDrawdownValue, g_gdPanelDailyStartEquity);
+   double total_floor = total_baseline - total_limit_money;
+   double daily_floor = g_gdPanelDailyStartEquity - daily_limit_money;
+   double total_dd_left = equity - total_floor;
+   double daily_dd_left = equity - daily_floor;
+   double target_left = MathMax(0.0, InpGlobalDollarPanelTargetEquity - equity);
+   double daily_used = MathMax(0.0, g_gdPanelDailyStartEquity - MathMin(equity, g_gdPanelDailyMinEquity));
+
+   double recent_avg_loss = 0.0;
+   int recent_loss_count = 0;
+   GDPanelRecentLosingTradeStats(trades, 5, recent_avg_loss, recent_loss_count);
+   int losses_left_today = (recent_avg_loss > 0.0 ? (int)MathFloor(MathMax(0.0, daily_dd_left) / recent_avg_loss) : -1);
+   string losses_left_text = (recent_loss_count > 0 ? (string)losses_left_today : "--");
+   string avg_loss_text = (recent_loss_count > 0 ? GDPanelMoney(recent_avg_loss) : "--");
+   double planned_loss_money = MathAbs(InpGlobalDollarPanelPlannedLossMoney);
+   int planned_loss_trades_left = (planned_loss_money > 0.0 ? (int)MathFloor(MathMax(0.0, daily_dd_left) / planned_loss_money) : -1);
+   string planned_loss_trades_left_text = (planned_loss_trades_left >= 0 ? (string)planned_loss_trades_left : "--");
+
+   double spread_cost_lag = 0.0;
+   double win_lag = 0.0;
+   double loss_lag = 0.0;
+   double lag_actual_pl = 0.0;
+   int lag_count = 0;
+   int win_lag_count = 0;
+   int loss_lag_count = 0;
+   GDPanelSpreadCostLagStats(trades, spread_cost_lag, win_lag, loss_lag, lag_actual_pl, lag_count, win_lag_count, loss_lag_count);
+   string spread_cost_lag_text = (lag_count > 0 ? GDPanelSignedPercent(spread_cost_lag) : "--");
+   string win_lag_text = (win_lag_count > 0 ? GDPanelSignedPercent(win_lag) : "--");
+   string loss_lag_text = (loss_lag_count > 0 ? GDPanelSignedPercent(loss_lag) : "--");
+   double split_lag_color_value = 0.0;
+   if(win_lag_count > 0 && loss_lag_count > 0)
+      split_lag_color_value = (win_lag > loss_lag ? win_lag : loss_lag);
+   else if(win_lag_count > 0)
+      split_lag_color_value = win_lag;
+   else if(loss_lag_count > 0)
+      split_lag_color_value = loss_lag;
+   int split_lag_count = win_lag_count + loss_lag_count;
+   double no_lag_pl = win_lag_count * InpGlobalDollarPanelPlannedWinMoney - loss_lag_count * InpGlobalDollarPanelPlannedLossMoney;
+   double no_lag_gap = no_lag_pl - lag_actual_pl;
+
+   int dollar_exit_positions = 0;
+   double dollar_exit_pnl = CalculateGlobalDollarExitPnL(dollar_exit_positions);
+   string dollar_scope = InpGlobalDollarExitAllSymbols ? "All symbols" : _Symbol;
+   string stats_scope = InpGlobalDollarPanelStatsScope == PROP_STATS_CURRENT_SYMBOL ? _Symbol : "All symbols";
+
+   ObjectSetString(0, GDPS_PREFIX + "TITLE", OBJPROP_TEXT, "Global Dollar + Prop Stats  |  " + AccountInfoString(ACCOUNT_NAME));
+
+   int line = 0;
+   GDPanelSetLine(line++, "GLOBAL DOLLAR EXIT", GDMutedColor());
+   GDPanelSetLine(line++, "Status         ON        Reverse original signal  " + (InpReverseSignal ? "TRUE" : "FALSE"), (InpReverseSignal ? GDWarnColor() : GDTextColor()));
+   GDPanelSetLine(line++, "Pattern        " + EnumToString(InpPatternType) + "        Magic         " + IntegerToString(InpMagicNumber));
+   GDPanelSetLine(line++, "Dollar P/L     " + GDPanelSignedMoney(dollar_exit_pnl) + "        Positions     " + (string)dollar_exit_positions);
+   GDPanelSetLine(line++, "Target         " + GDPanelMoney(MathAbs(InpGlobalDollarProfitTarget)) + "        Loss limit    " + GDPanelMoney(MathAbs(InpGlobalDollarLossLimit)));
+   GDPanelSetLine(line++, "SL/TP mode     " + EnumToString(InpGlobalDollarSLTPMode) + "        Scope         " + dollar_scope);
+   GDPanelSetLine(line++, "Risk method    " + EnumToString(InpRiskCalcMethod) + "        Fixed lot     " + DoubleToString(InpFixedLotSize, 2));
+   GDPanelSetLine(line++, "Risk percent   " + DoubleToString(InpRiskPerTradePercentage, 2) + "%        Max positions " + IntegerToString(InpMaxOpenPositions));
+   GDPanelSetLine(line++, "Streak pause   " + (InpGlobalDollarLossStreakPauseEnabled ? GlobalDollarStreakPauseTriggerText() : "OFF") + "        Count         " + IntegerToString(MathMax(1, InpGlobalDollarLossStreakCount)));
+   GDPanelSetLine(line++, "DD trade pause " + (InpGlobalDollarDailyDDTradePauseEnabled ? "ON" : "OFF") + "        Stop <=       " + IntegerToString(MathMax(0, InpGlobalDollarDailyDDTradesLeftStopAt)));
+   GDPanelSetLine(line++, " ");
+   GDPanelSetLine(line++, "ACCOUNT", GDMutedColor());
+   GDPanelSetLine(line++, "Balance        " + GDPanelMoney(balance) + "        Equity        " + GDPanelMoney(equity));
+   GDPanelSetLine(line++, "Floating P/L   " + GDPanelSignedMoney(floating) + "        Net closed    " + GDPanelSignedMoney(net_profit), (net_profit >= 0.0 ? GDGoodColor() : GDBadColor()));
+   GDPanelSetLine(line++, "Target equity  " + GDPanelMoney(InpGlobalDollarPanelTargetEquity) + "        Left          " + GDPanelMoney(target_left), (target_left <= 0.0 ? GDGoodColor() : GDTextColor()));
+   GDPanelSetLine(line++, " ");
+   GDPanelSetLine(line++, "RISK LIMITS", GDMutedColor());
+   GDPanelSetLine(line++, "Max DD floor   " + GDPanelMoney(total_floor) + "        Left          " + GDPanelMoney(total_dd_left), GDPanelStatusColor(total_dd_left, total_limit_money));
+   GDPanelSetLine(line++, "Daily floor    " + GDPanelMoney(daily_floor) + "        Left          " + GDPanelMoney(daily_dd_left), GDPanelStatusColor(daily_dd_left, daily_limit_money));
+   GDPanelSetLine(line++, "Losses left    " + losses_left_text + "        Avg L5 loss   " + avg_loss_text, (losses_left_today < 0 ? GDMutedColor() : GDPanelStatusColor(daily_dd_left, daily_limit_money)));
+   GDPanelSetLine(line++, "Planned left   " + planned_loss_trades_left_text + "        Planned loss  " + GDPanelMoney(planned_loss_money), (planned_loss_trades_left < 0 ? GDMutedColor() : GDPanelStatusColor(daily_dd_left, daily_limit_money)));
+   GDPanelSetLine(line++, "Daily start    " + GDPanelMoney(g_gdPanelDailyStartEquity) + "        Used          " + GDPanelMoney(daily_used));
+   GDPanelSetLine(line++, "UTC reset      00:00 in " + GDPanelTimeLeftToUtcReset() + "    IST reset  " + GDPanelNextUtcResetInIst());
+   GDPanelSetLine(line++, " ");
+   GDPanelSetLine(line++, "PERFORMANCE", GDMutedColor());
+   GDPanelSetLine(line++, "Trades         " + (string)count + "        Wins " + (string)wins + " / Losses " + (string)losses + " / BE " + (string)breakevens);
+   GDPanelSetLine(line++, "Win rate       " + DoubleToString(win_rate, 1) + "%        Avg RR        " + DoubleToString(average_rr, 2) + "R");
+   GDPanelSetLine(line++, "EV / trade     " + GDPanelMoney(ev) + "        Profit factor " + DoubleToString(profit_factor, 2));
+   GDPanelSetLine(line++, "P/L lag avg    " + spread_cost_lag_text + "        Samples       " + (string)lag_count, GDPanelLagColor(spread_cost_lag, lag_count));
+   GDPanelSetLine(line++, "Win lag        " + win_lag_text + "        Loss lag      " + loss_lag_text, GDPanelLagColor(split_lag_color_value, split_lag_count));
+   GDPanelSetLine(line++, "No-lag P/L     " + GDPanelSignedMoney(no_lag_pl) + "        Actual P/L    " + GDPanelSignedMoney(lag_actual_pl), (no_lag_gap > 0.0 ? GDBadColor() : GDGoodColor()));
+   GDPanelSetLine(line++, "Realized DD    " + GDPanelMoney(max_realized_dd) + "        Stats scope   " + stats_scope);
+   GDPanelSetLine(line++, " ");
+
+   int display_trades = (int)MathMax(1, MathMin(InpGlobalDollarPanelClosedTradesToShow, GDPS_LINE_COUNT - line - 1));
+   GDPanelSetLine(line++, "LAST " + (string)display_trades + " CLOSED TRADES", GDMutedColor());
+   for(int j = 0; j < display_trades; j++)
+   {
+      if(j < count)
+         GDPanelSetLine(line++, GDPanelTradeLine(trades[j]), (trades[j].net >= 0.0 ? GDGoodColor() : GDBadColor()));
+      else
+         GDPanelSetLine(line++, "--");
+   }
+
+   for(; line < GDPS_LINE_COUNT; line++)
+      GDPanelSetLine(line, " ");
+
+   ChartRedraw(0);
+}
+
 void CalculateActivePositionMetrics()
 {
    ExtCurrentMaxLoss = 0.0;
@@ -10377,171 +11354,8 @@ void UpdateChartDisplay()
    if(g_is_backtesting)
       return;
 
-   if(!InpGlobalDollarExitEnabled)
-   {
-      ClearChartDisplayObjects();
-      return;
-   }
-
-   long current_chart_id = ChartID();
-   string lines_to_display[];
-   int line_idx = 0;
-   string currency = AccountInfoString(ACCOUNT_CURRENCY);
-
-   ArrayResize(lines_to_display, 40);
-
-   int dollar_exit_positions = 0;
-   double dollar_exit_pnl = CalculateGlobalDollarExitPnL(dollar_exit_positions);
-
-   lines_to_display[line_idx++] = "GLOBAL DOLLAR EXIT";
-   lines_to_display[line_idx++] = StringFormat("Pattern: %s", EnumToString(InpPatternType));
-   lines_to_display[line_idx++] = StringFormat("Magic: %d | Scope: %s",
-                                               InpMagicNumber,
-                                               InpGlobalDollarExitAllSymbols ? "All symbols" : _Symbol);
-   lines_to_display[line_idx++] = StringFormat("SL/TP Mode: %s", EnumToString(InpGlobalDollarSLTPMode));
-   lines_to_display[line_idx++] = StringFormat("Floating P&L: %.2f %s (%d position%s)",
-                                               dollar_exit_pnl,
-                                               currency,
-                                               dollar_exit_positions,
-                                               dollar_exit_positions == 1 ? "" : "s");
-   lines_to_display[line_idx++] = StringFormat("Target: +%.2f %s | Limit: -%.2f %s",
-                                               MathAbs(InpGlobalDollarProfitTarget),
-                                               currency,
-                                               MathAbs(InpGlobalDollarLossLimit),
-                                               currency);
-
-   lines_to_display[line_idx++] = StringFormat("Risk Method: %s", EnumToString(InpRiskCalcMethod));
-   if(InpRiskCalcMethod == RISK_CALC_FIXED_LOT)
-      lines_to_display[line_idx++] = StringFormat("Lot: fixed %.2f | Min %.2f | Max %.2f",
-                                                  InpFixedLotSize,
-                                                  InpMinLot,
-                                                  InpMaxLot);
-   else
-      lines_to_display[line_idx++] = StringFormat("Risk: %.2f%% | Fixed Lot setting: %.2f",
-                                                  InpRiskPerTradePercentage,
-                                                  InpFixedLotSize);
-   if(InpRiskCalcMethod == RISK_CALC_STARTING_BALANCE)
-      lines_to_display[line_idx++] = StringFormat("Risk Base: Starting %.2f %s",
-                                                  InpStartingBalance,
-                                                  currency);
-   lines_to_display[line_idx++] = StringFormat("Max Positions: %d | Order: %s",
-                                               InpMaxOpenPositions,
-                                               EnumToString(InpOrderExecutionType));
-
-   if(InpGlobalDollarStopTradingEnabled)
-   {
-      lines_to_display[line_idx++] = StringFormat("Stop Trading: ON | OpenPnL=%s | CloseOpen=%s",
-                                                  InpGlobalDollarStopTradingIncludeOpenPnL ? "YES" : "NO",
-                                                  InpGlobalDollarStopTradingCloseOpenPositions ? "YES" : "NO");
-      if(g_globalDollarStopTradingTriggered)
-      {
-         lines_to_display[line_idx++] = "Stop Status: STOPPED";
-         lines_to_display[line_idx++] = "Reason: " + g_globalDollarStopTradingReason;
-      }
-      else
-      {
-         int stop_deals = 0;
-         int stop_positions = 0;
-         double stop_pnl = CalculateGlobalDollarStopTradingPnL(stop_deals, stop_positions);
-         lines_to_display[line_idx++] = StringFormat("Stop P&L: %.2f / +%.2f / -%.2f %s",
-                                                     stop_pnl,
-                                                     MathAbs(InpGlobalDollarStopTradingProfit),
-                                                     MathAbs(InpGlobalDollarStopTradingLoss),
-                                                     currency);
-      }
-   }
-   else
-   {
-      lines_to_display[line_idx++] = "Stop Trading: OFF";
-   }
-
-   if(InpGlobalDollarLossStreakPauseEnabled)
-   {
-      lines_to_display[line_idx++] = StringFormat("%s Streak Pause: %d/%d %s closes",
-                                                  GlobalDollarStreakPauseTriggerText(),
-                                                  g_globalDollarLossStreak,
-                                                  MathMax(1, InpGlobalDollarLossStreakCount),
-                                                  GlobalDollarStreakPauseOutcomeText());
-      lines_to_display[line_idx++] = "Pause Mode: " + GlobalDollarLossStreakPauseModeText();
-      if(InpGlobalDollarLossStreakPauseMode == GDLS_PAUSE_UNTIL_UTC_RESET)
-         lines_to_display[line_idx++] = "Prop Reset: " + FormatGlobalDollarLossStreakUtcResetTime();
-      if(IsGlobalDollarLossStreakPauseActive())
-      {
-         lines_to_display[line_idx++] = "Trade Pause: ACTIVE";
-         lines_to_display[line_idx++] = "Pause until: " + TimeToString(g_globalDollarLossStreakPauseUntil, TIME_DATE|TIME_MINUTES);
-      }
-   }
-   else
-   {
-      lines_to_display[line_idx++] = "Streak Pause: OFF";
-   }
-
-   lines_to_display[line_idx++] = StringFormat("Copy Trade: %s | Direction: %s",
-                                               InpCopyTradeEnabled ? "ON" : "OFF",
-                                               InpInvertCopyDirection ? "INVERTED" : "Normal");
-   lines_to_display[line_idx++] = "Server Time: " + TimeToString(TimeCurrent(), TIME_SECONDS);
-
-   ArrayResize(lines_to_display, line_idx);
-   ExtTotalDisplayLines = line_idx;
-
-   ENUM_BASE_CORNER actual_corner;
-   int base_x_offset;
-   int base_y_offset;
-   int line_height = InpDisplayFontSize + InpDisplayLineSpacing;
-   int padding = 8;
-   int max_text_width_estimate = 0;
-   double avg_char_width_factor = 0.65;
-
-   for(int w = 0; w < line_idx; w++)
-   {
-      int current_width_estimate = (int)(StringLen(lines_to_display[w]) * InpDisplayFontSize * avg_char_width_factor);
-      if(current_width_estimate > max_text_width_estimate)
-         max_text_width_estimate = current_width_estimate;
-   }
-
-   if(InpDisplayAnchor == ANCHOR_CENTER_CHART)
-   {
-      actual_corner = CORNER_LEFT_UPPER;
-      long chart_width = ChartGetInteger(current_chart_id, CHART_WIDTH_IN_PIXELS, 0);
-      long chart_height = ChartGetInteger(current_chart_id, CHART_HEIGHT_IN_PIXELS, 0);
-      base_x_offset = (int)((chart_width - max_text_width_estimate) / 2) + InpDisplayXOffset;
-      base_y_offset = (int)((chart_height - (ExtTotalDisplayLines * line_height + padding * 2)) / 2) + InpDisplayYOffset;
-      base_x_offset = MathMax(0, base_x_offset);
-      base_y_offset = MathMax(0, base_y_offset);
-   }
-   else if(InpDisplayAnchor == ANCHOR_BOTTOM_LEFT)
-   {
-      actual_corner = CORNER_LEFT_LOWER;
-      base_x_offset = InpDisplayXOffset;
-      base_y_offset = InpDisplayYOffset;
-   }
-   else
-   {
-      actual_corner = CORNER_LEFT_UPPER;
-      base_x_offset = InpDisplayXOffset;
-      base_y_offset = InpDisplayYOffset;
-   }
-
-   int box_width = MathMax(280, max_text_width_estimate + padding * 2);
-   int box_height = ExtTotalDisplayLines * line_height + padding * 2;
-   CreateOrUpdateDisplayBox(current_chart_id, base_x_offset, base_y_offset, box_width, box_height, actual_corner);
-
-   int label_x_offset = base_x_offset + padding;
-   int current_y_draw_offset = base_y_offset + padding;
-   for(int i = 0; i < ExtTotalDisplayLines; i++)
-   {
-      int y_pos_for_label = (actual_corner == CORNER_LEFT_LOWER) ? (base_y_offset + padding + i * line_height) : current_y_draw_offset;
-      CreateOrUpdateLabel(current_chart_id, DISPLAY_OBJECT_PREFIX + IntegerToString(i), lines_to_display[i],
-                          label_x_offset, y_pos_for_label,
-                          InpDisplayFontSize, InpDisplayFontColor, actual_corner);
-      if(actual_corner != CORNER_LEFT_LOWER)
-         current_y_draw_offset += line_height;
-   }
-
-   for(int i = ExtTotalDisplayLines; i < DISPLAY_MAX_LINES; i++)
-      ObjectDelete(current_chart_id, DISPLAY_OBJECT_PREFIX + IntegerToString(i));
-
-   ChartRedraw(current_chart_id);
+   ClearChartDisplayObjects();
+   GDPanelUpdateDashboard();
   }
 
 void UpdateChartDisplayLegacy()
