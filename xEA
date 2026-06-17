@@ -134,6 +134,12 @@ enum ENUM_GLOBAL_DOLLAR_LOSS_STREAK_PAUSE_MODE
    GDLS_PAUSE_UNTIL_UTC_RESET   // Until UTC reset
   };
 
+enum ENUM_GLOBAL_DOLLAR_STREAK_PAUSE_TRIGGER
+  {
+   GDSP_TRIGGER_LOSING_STREAK,  // Losing streak
+   GDSP_TRIGGER_WINNING_STREAK  // Winning streak
+  };
+
 enum ENUM_TRAILING_TRIGGER_MODE
   {
    TRAIL_MODE_PERCENTAGE,   // Percentage-based trailing trigger/move
@@ -322,10 +328,11 @@ input double InpGlobalDollarStopTradingProfit = 100.0;     // Stop new trading w
 input double InpGlobalDollarStopTradingLoss = 100.0;       // Stop new trading when total EA loss reaches this amount
 input bool   InpGlobalDollarStopTradingIncludeOpenPnL = true; // Include running/open trade P&L when checking special stop amounts
 input bool   InpGlobalDollarStopTradingCloseOpenPositions = true; // Close live EA positions when special stop is triggered
-input bool   InpGlobalDollarLossStreakPauseEnabled = true; // Pause new trades after consecutive SL/loss closes for this magic number
-input int    InpGlobalDollarLossStreakCount = 3;           // Number of consecutive SL/loss trades before pausing
+input bool   InpGlobalDollarLossStreakPauseEnabled = true; // Pause new trades after the selected consecutive close streak
+input ENUM_GLOBAL_DOLLAR_STREAK_PAUSE_TRIGGER InpGlobalDollarStreakPauseTrigger = GDSP_TRIGGER_LOSING_STREAK; // Pause after losing or winning streak
+input int    InpGlobalDollarLossStreakCount = 3;           // Number of selected consecutive closes before pausing
 input ENUM_GLOBAL_DOLLAR_LOSS_STREAK_PAUSE_MODE InpGlobalDollarLossStreakPauseMode = GDLS_PAUSE_FIXED_HOURS; // Pause mode: fixed hours or UTC reset
-input int    InpGlobalDollarLossStreakPauseHours = 24;     // Pause duration in server-time hours after loss streak
+input int    InpGlobalDollarLossStreakPauseHours = 24;     // Pause duration in server-time hours after selected streak
 input int    InpGlobalDollarLossStreakResetUtcHour = 0;    // UTC daily reset hour for prop firm pause mode (0-23)
 input int    InpGlobalDollarLossStreakResetUtcMinute = 0;  // UTC daily reset minute for prop firm pause mode (0-59)
 
@@ -613,6 +620,8 @@ input ENUM_DISPLAY_ANCHOR InpDisplayAnchor = ANCHOR_TOP_LEFT; // Default anchor 
 
 // Constants for Display Objects
 const string DISPLAY_OBJECT_PREFIX = "RohitEADisp_";
+const string DISPLAY_BG_OBJECT = "RohitEADisp_BG";
+const int DISPLAY_MAX_LINES = 100;
 int ExtTotalDisplayLines = 0; // Will be updated in UpdateChartDisplay
 
 // --- State Persistence ---
@@ -829,6 +838,10 @@ string GlobalDollarLossStreakPauseReason();
 void UpdateGlobalDollarLossStreakPause();
 datetime GetGlobalDollarLossStreakPauseUntil();
 string GlobalDollarLossStreakPauseModeText();
+string GlobalDollarStreakPauseTriggerText();
+string GlobalDollarStreakPauseOutcomeText();
+bool IsGlobalDollarSelectedStreakClose(const double net_profit, const ENUM_DEAL_REASON deal_reason);
+bool IsGlobalDollarOppositeStreakClose(const double net_profit, const ENUM_DEAL_REASON deal_reason);
 string FormatGlobalDollarLossStreakUtcResetTime();
 datetime GetNextGlobalDollarUtcResetTime();
 string FormatGlobalDollarResetRemainingTime(const int remaining_seconds);
@@ -907,6 +920,15 @@ void Manual_CreateDashboard()
    }
 
    manual_dashboard_created = true;
+}
+
+void Manual_DeleteDashboard()
+{
+   long chart_id = ChartID();
+   ObjectDelete(chart_id, MAN_DASH_PREFIX + "BG");
+   for(int i = 0; i < 6; i++)
+      ObjectDelete(chart_id, MAN_DASH_PREFIX + "TEXT_" + (string)i);
+   manual_dashboard_created = false;
 }
 
 void Manual_UpdateDashboard()
@@ -2048,9 +2070,9 @@ int OnInit()
    
    // Rest of initialization code
    EventSetTimer(1);
-   // Create manual trading buttons and dashboard
+   // Create manual trading buttons only; the old balance/equity dashboard is removed.
    Manual_CreateButtons();
-   Manual_CreateDashboard();
+   Manual_DeleteDashboard();
    
    // Set starting balance based on risk calculation method
    if(InpRiskCalcMethod == RISK_CALC_STARTING_BALANCE)
@@ -2135,8 +2157,9 @@ int OnInit()
                InpGlobalDollarStopTradingLoss,
                InpGlobalDollarStopTradingIncludeOpenPnL ? "YES" : "NO",
                InpGlobalDollarStopTradingCloseOpenPositions ? "YES" : "NO");
-   PrintFormat("GLOBAL DOLLAR LOSS STREAK PAUSE: %s, Losses: %d, Mode: %s, Fixed Pause: %d server-hour(s), UTC Reset: %s",
+   PrintFormat("GLOBAL DOLLAR STREAK PAUSE: %s, Selected Streak: %s, Count: %d, Mode: %s, Fixed Pause: %d server-hour(s), UTC Reset: %s",
                InpGlobalDollarLossStreakPauseEnabled ? "ON" : "OFF",
+               GlobalDollarStreakPauseTriggerText(),
                MathMax(1, InpGlobalDollarLossStreakCount),
                GlobalDollarLossStreakPauseModeText(),
                MathMax(1, InpGlobalDollarLossStreakPauseHours),
@@ -2290,6 +2313,7 @@ void OnDeinit(const int reason)
    // Save recovery state before deinitializing
    SaveRecoveryState();
    SaveGlobalDollarLossStreakState();
+   ClearChartDisplayObjects();
    
    // Clean up all EA-related chart objects
    CleanupAllEAObjects();
@@ -2615,8 +2639,9 @@ bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result)
          string pause_reason = GlobalDollarLossStreakPauseReason();
          ZeroMemory(result);
          result.retcode = TRADE_RETCODE_REJECT;
-         result.comment = "Global dollar loss streak pause active";
-         PrintFormat("Global Dollar Loss Streak Pause: blocked new %s order on %s. Reason: %s",
+         result.comment = "Global dollar streak pause active";
+         PrintFormat("Global Dollar %s Streak Pause: blocked new %s order on %s. Reason: %s",
+                     GlobalDollarStreakPauseTriggerText(),
                      EnumToString(request.action), request.symbol, pause_reason);
          return false;
       }
@@ -2732,9 +2757,11 @@ bool IsGlobalDollarStopTradingActive()
 
 string GlobalDollarLossStreakStateKey(string suffix)
 {
+   string trigger_key = (InpGlobalDollarStreakPauseTrigger == GDSP_TRIGGER_WINNING_STREAK ? "WIN" : "LOSS");
    return "RohitEA_GDLS_" +
           IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + "_" +
           IntegerToString(InpMagicNumber) + "_" +
+          trigger_key + "_" +
           suffix;
 }
 
@@ -2765,6 +2792,38 @@ string GlobalDollarLossStreakPauseModeText()
       return "Until UTC daily reset";
 
    return "Fixed server-time hours";
+}
+
+string GlobalDollarStreakPauseTriggerText()
+{
+   if(InpGlobalDollarStreakPauseTrigger == GDSP_TRIGGER_WINNING_STREAK)
+      return "Winning";
+
+   return "Losing";
+}
+
+string GlobalDollarStreakPauseOutcomeText()
+{
+   if(InpGlobalDollarStreakPauseTrigger == GDSP_TRIGGER_WINNING_STREAK)
+      return "profitable/winning";
+
+   return "loss/SL";
+}
+
+bool IsGlobalDollarSelectedStreakClose(const double net_profit, const ENUM_DEAL_REASON deal_reason)
+{
+   if(InpGlobalDollarStreakPauseTrigger == GDSP_TRIGGER_WINNING_STREAK)
+      return net_profit > 0.0;
+
+   return (net_profit < 0.0 || deal_reason == DEAL_REASON_SL);
+}
+
+bool IsGlobalDollarOppositeStreakClose(const double net_profit, const ENUM_DEAL_REASON deal_reason)
+{
+   if(InpGlobalDollarStreakPauseTrigger == GDSP_TRIGGER_WINNING_STREAK)
+      return (net_profit < 0.0 || deal_reason == DEAL_REASON_SL);
+
+   return net_profit > 0.0;
 }
 
 string FormatGlobalDollarLossStreakUtcResetTime()
@@ -2863,7 +2922,8 @@ bool IsGlobalDollarLossStreakPauseActive()
    if(now < g_globalDollarLossStreakPauseUntil)
       return true;
 
-   PrintFormat("Global Dollar Loss Streak Pause ended at server time %s. New trades are allowed.",
+   PrintFormat("Global Dollar %s Streak Pause ended at server time %s. New trades are allowed.",
+               GlobalDollarStreakPauseTriggerText(),
                TimeToString(now, TIME_DATE|TIME_SECONDS));
    g_globalDollarLossStreakPauseUntil = 0;
    g_globalDollarLossStreak = 0;
@@ -2881,8 +2941,10 @@ string GlobalDollarLossStreakPauseReason()
    string reset_info = InpGlobalDollarLossStreakPauseMode == GDLS_PAUSE_UNTIL_UTC_RESET ?
                        " (" + FormatGlobalDollarLossStreakUtcResetTime() + ")" :
                        "";
-   return StringFormat("loss streak pause active: %d consecutive loss/SL trades, resumes %s server time%s (~%d min)",
+   return StringFormat("%s streak pause active: %d consecutive %s closes, resumes %s server time%s (~%d min)",
+                       GlobalDollarStreakPauseTriggerText(),
                        g_globalDollarLossStreak,
+                       GlobalDollarStreakPauseOutcomeText(),
                        TimeToString(g_globalDollarLossStreakPauseUntil, TIME_DATE|TIME_MINUTES),
                        reset_info,
                        remaining_minutes);
@@ -2920,24 +2982,26 @@ void UpdateGlobalDollarLossStreakPause()
                           HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION) +
                           HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
       ENUM_DEAL_REASON deal_reason = (ENUM_DEAL_REASON)HistoryDealGetInteger(deal_ticket, DEAL_REASON);
-      bool loss_or_sl_close = (net_profit < 0.0 || deal_reason == DEAL_REASON_SL);
+      bool selected_streak_close = IsGlobalDollarSelectedStreakClose(net_profit, deal_reason);
+      bool opposite_streak_close = IsGlobalDollarOppositeStreakClose(net_profit, deal_reason);
 
       g_globalDollarLossStreakLastDeal = deal_ticket;
       g_globalDollarLossStreakHistoryFrom = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
       SaveGlobalDollarLossStreakState();
 
-      if(loss_or_sl_close)
+      if(selected_streak_close)
       {
          g_globalDollarLossStreak++;
-         PrintFormat("Global Dollar Loss Streak: closed loss/SL deal #%d on %s, net %.2f. Streak %d/%d.",
+         PrintFormat("Global Dollar %s Streak: closed %s deal #%d on %s, net %.2f. Streak %d/%d.",
+                     GlobalDollarStreakPauseTriggerText(), GlobalDollarStreakPauseOutcomeText(),
                      deal_ticket, symbol, net_profit, g_globalDollarLossStreak, MathMax(1, InpGlobalDollarLossStreakCount));
          SaveGlobalDollarLossStreakState();
       }
-      else if(net_profit > 0.0)
+      else if(opposite_streak_close)
       {
          if(g_globalDollarLossStreak > 0)
-            PrintFormat("Global Dollar Loss Streak reset by profitable close deal #%d on %s, net %.2f.",
-                        deal_ticket, symbol, net_profit);
+            PrintFormat("Global Dollar %s Streak reset by opposite close deal #%d on %s, net %.2f.",
+                        GlobalDollarStreakPauseTriggerText(), deal_ticket, symbol, net_profit);
          g_globalDollarLossStreak = 0;
          SaveGlobalDollarLossStreakState();
       }
@@ -2946,8 +3010,10 @@ void UpdateGlobalDollarLossStreakPause()
       if(g_globalDollarLossStreak >= streak_limit)
       {
          g_globalDollarLossStreakPauseUntil = GetGlobalDollarLossStreakPauseUntil();
-         PrintFormat("Global Dollar Loss Streak Pause triggered after %d consecutive loss/SL trades for magic %d. Mode: %s, UTC Reset: %s. Pausing new trades until %s server time.",
+         PrintFormat("Global Dollar %s Streak Pause triggered after %d consecutive %s closes for magic %d. Mode: %s, UTC Reset: %s. Pausing new trades until %s server time.",
+                     GlobalDollarStreakPauseTriggerText(),
                      g_globalDollarLossStreak,
+                     GlobalDollarStreakPauseOutcomeText(),
                      InpMagicNumber,
                      GlobalDollarLossStreakPauseModeText(),
                      FormatGlobalDollarLossStreakUtcResetTime(),
@@ -3251,10 +3317,8 @@ void EnforceGlobalDollarExit()
 
 void OnTick()
 {
-    // Get current time for all time-based checks
-    datetime current_time = TimeCurrent();
-   // Update manual dashboard each tick (lightweight)
-   Manual_UpdateDashboard();
+   // Get current time for all time-based checks
+   datetime current_time = TimeCurrent();
 
    UpdateGlobalDollarLossStreakPause();
    if(IsGlobalDollarLossStreakPauseActive())
@@ -3763,8 +3827,8 @@ void OnTick()
 
     if(IsGlobalDollarLossStreakPauseActive())
     {
-        PrintFormat("Global Dollar Loss Streak Pause active: no new pattern trades. Reason: %s",
-                    GlobalDollarLossStreakPauseReason());
+        PrintFormat("Global Dollar %s Streak Pause active: no new pattern trades. Reason: %s",
+                    GlobalDollarStreakPauseTriggerText(), GlobalDollarLossStreakPauseReason());
         return;
     }
 
@@ -10149,7 +10213,7 @@ void CreateOrUpdateLabel(long chart_id, string name, string text, int x, int y, 
       ObjectSetInteger(chart_id, name, OBJPROP_XDISTANCE, x);
       ObjectSetInteger(chart_id, name, OBJPROP_SELECTABLE, false);
       ObjectSetInteger(chart_id, name, OBJPROP_ZORDER, 1);
-      ObjectSetInteger(chart_id, name, OBJPROP_BACK, true);
+      ObjectSetInteger(chart_id, name, OBJPROP_BACK, false);
      }
    ObjectSetInteger(chart_id, name, OBJPROP_CORNER, corner_anchor);
    ObjectSetInteger(chart_id, name, OBJPROP_XDISTANCE, x);
@@ -10157,7 +10221,40 @@ void CreateOrUpdateLabel(long chart_id, string name, string text, int x, int y, 
    ObjectSetInteger(chart_id, name, OBJPROP_FONTSIZE, font_size);
    ObjectSetString(chart_id, name, OBJPROP_TEXT, text);
    ObjectSetInteger(chart_id, name, OBJPROP_COLOR, text_color);
+   ObjectSetInteger(chart_id, name, OBJPROP_BACK, false);
   }
+
+void ClearChartDisplayObjects()
+{
+   long chart_id = ChartID();
+   ObjectDelete(chart_id, DISPLAY_BG_OBJECT);
+   for(int i = 0; i < DISPLAY_MAX_LINES; i++)
+      ObjectDelete(chart_id, DISPLAY_OBJECT_PREFIX + IntegerToString(i));
+   ExtTotalDisplayLines = 0;
+}
+
+void CreateOrUpdateDisplayBox(long chart_id, int x, int y, int width, int height, ENUM_BASE_CORNER corner_anchor)
+{
+   if(ObjectFind(chart_id, DISPLAY_BG_OBJECT) < 0)
+   {
+      if(!ObjectCreate(chart_id, DISPLAY_BG_OBJECT, OBJ_RECTANGLE_LABEL, 0, 0, 0))
+      {
+         PrintFormat("Error creating display box %s: %d", DISPLAY_BG_OBJECT, GetLastError());
+         return;
+      }
+      ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_ZORDER, 0);
+   }
+
+   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_CORNER, corner_anchor);
+   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_XSIZE, width);
+   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_YSIZE, height);
+   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_BGCOLOR, C'245,245,245');
+   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_BORDER_COLOR, clrDimGray);
+   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_BACK, false);
+}
 
 void CalculateActivePositionMetrics()
 {
@@ -10277,6 +10374,178 @@ void CalculateActivePositionMetrics()
 }
 void UpdateChartDisplay()
   {
+   if(g_is_backtesting)
+      return;
+
+   if(!InpGlobalDollarExitEnabled)
+   {
+      ClearChartDisplayObjects();
+      return;
+   }
+
+   long current_chart_id = ChartID();
+   string lines_to_display[];
+   int line_idx = 0;
+   string currency = AccountInfoString(ACCOUNT_CURRENCY);
+
+   ArrayResize(lines_to_display, 40);
+
+   int dollar_exit_positions = 0;
+   double dollar_exit_pnl = CalculateGlobalDollarExitPnL(dollar_exit_positions);
+
+   lines_to_display[line_idx++] = "GLOBAL DOLLAR EXIT";
+   lines_to_display[line_idx++] = StringFormat("Pattern: %s", EnumToString(InpPatternType));
+   lines_to_display[line_idx++] = StringFormat("Magic: %d | Scope: %s",
+                                               InpMagicNumber,
+                                               InpGlobalDollarExitAllSymbols ? "All symbols" : _Symbol);
+   lines_to_display[line_idx++] = StringFormat("SL/TP Mode: %s", EnumToString(InpGlobalDollarSLTPMode));
+   lines_to_display[line_idx++] = StringFormat("Floating P&L: %.2f %s (%d position%s)",
+                                               dollar_exit_pnl,
+                                               currency,
+                                               dollar_exit_positions,
+                                               dollar_exit_positions == 1 ? "" : "s");
+   lines_to_display[line_idx++] = StringFormat("Target: +%.2f %s | Limit: -%.2f %s",
+                                               MathAbs(InpGlobalDollarProfitTarget),
+                                               currency,
+                                               MathAbs(InpGlobalDollarLossLimit),
+                                               currency);
+
+   lines_to_display[line_idx++] = StringFormat("Risk Method: %s", EnumToString(InpRiskCalcMethod));
+   if(InpRiskCalcMethod == RISK_CALC_FIXED_LOT)
+      lines_to_display[line_idx++] = StringFormat("Lot: fixed %.2f | Min %.2f | Max %.2f",
+                                                  InpFixedLotSize,
+                                                  InpMinLot,
+                                                  InpMaxLot);
+   else
+      lines_to_display[line_idx++] = StringFormat("Risk: %.2f%% | Fixed Lot setting: %.2f",
+                                                  InpRiskPerTradePercentage,
+                                                  InpFixedLotSize);
+   if(InpRiskCalcMethod == RISK_CALC_STARTING_BALANCE)
+      lines_to_display[line_idx++] = StringFormat("Risk Base: Starting %.2f %s",
+                                                  InpStartingBalance,
+                                                  currency);
+   lines_to_display[line_idx++] = StringFormat("Max Positions: %d | Order: %s",
+                                               InpMaxOpenPositions,
+                                               EnumToString(InpOrderExecutionType));
+
+   if(InpGlobalDollarStopTradingEnabled)
+   {
+      lines_to_display[line_idx++] = StringFormat("Stop Trading: ON | OpenPnL=%s | CloseOpen=%s",
+                                                  InpGlobalDollarStopTradingIncludeOpenPnL ? "YES" : "NO",
+                                                  InpGlobalDollarStopTradingCloseOpenPositions ? "YES" : "NO");
+      if(g_globalDollarStopTradingTriggered)
+      {
+         lines_to_display[line_idx++] = "Stop Status: STOPPED";
+         lines_to_display[line_idx++] = "Reason: " + g_globalDollarStopTradingReason;
+      }
+      else
+      {
+         int stop_deals = 0;
+         int stop_positions = 0;
+         double stop_pnl = CalculateGlobalDollarStopTradingPnL(stop_deals, stop_positions);
+         lines_to_display[line_idx++] = StringFormat("Stop P&L: %.2f / +%.2f / -%.2f %s",
+                                                     stop_pnl,
+                                                     MathAbs(InpGlobalDollarStopTradingProfit),
+                                                     MathAbs(InpGlobalDollarStopTradingLoss),
+                                                     currency);
+      }
+   }
+   else
+   {
+      lines_to_display[line_idx++] = "Stop Trading: OFF";
+   }
+
+   if(InpGlobalDollarLossStreakPauseEnabled)
+   {
+      lines_to_display[line_idx++] = StringFormat("%s Streak Pause: %d/%d %s closes",
+                                                  GlobalDollarStreakPauseTriggerText(),
+                                                  g_globalDollarLossStreak,
+                                                  MathMax(1, InpGlobalDollarLossStreakCount),
+                                                  GlobalDollarStreakPauseOutcomeText());
+      lines_to_display[line_idx++] = "Pause Mode: " + GlobalDollarLossStreakPauseModeText();
+      if(InpGlobalDollarLossStreakPauseMode == GDLS_PAUSE_UNTIL_UTC_RESET)
+         lines_to_display[line_idx++] = "Prop Reset: " + FormatGlobalDollarLossStreakUtcResetTime();
+      if(IsGlobalDollarLossStreakPauseActive())
+      {
+         lines_to_display[line_idx++] = "Trade Pause: ACTIVE";
+         lines_to_display[line_idx++] = "Pause until: " + TimeToString(g_globalDollarLossStreakPauseUntil, TIME_DATE|TIME_MINUTES);
+      }
+   }
+   else
+   {
+      lines_to_display[line_idx++] = "Streak Pause: OFF";
+   }
+
+   lines_to_display[line_idx++] = StringFormat("Copy Trade: %s | Direction: %s",
+                                               InpCopyTradeEnabled ? "ON" : "OFF",
+                                               InpInvertCopyDirection ? "INVERTED" : "Normal");
+   lines_to_display[line_idx++] = "Server Time: " + TimeToString(TimeCurrent(), TIME_SECONDS);
+
+   ArrayResize(lines_to_display, line_idx);
+   ExtTotalDisplayLines = line_idx;
+
+   ENUM_BASE_CORNER actual_corner;
+   int base_x_offset;
+   int base_y_offset;
+   int line_height = InpDisplayFontSize + InpDisplayLineSpacing;
+   int padding = 8;
+   int max_text_width_estimate = 0;
+   double avg_char_width_factor = 0.65;
+
+   for(int w = 0; w < line_idx; w++)
+   {
+      int current_width_estimate = (int)(StringLen(lines_to_display[w]) * InpDisplayFontSize * avg_char_width_factor);
+      if(current_width_estimate > max_text_width_estimate)
+         max_text_width_estimate = current_width_estimate;
+   }
+
+   if(InpDisplayAnchor == ANCHOR_CENTER_CHART)
+   {
+      actual_corner = CORNER_LEFT_UPPER;
+      long chart_width = ChartGetInteger(current_chart_id, CHART_WIDTH_IN_PIXELS, 0);
+      long chart_height = ChartGetInteger(current_chart_id, CHART_HEIGHT_IN_PIXELS, 0);
+      base_x_offset = (int)((chart_width - max_text_width_estimate) / 2) + InpDisplayXOffset;
+      base_y_offset = (int)((chart_height - (ExtTotalDisplayLines * line_height + padding * 2)) / 2) + InpDisplayYOffset;
+      base_x_offset = MathMax(0, base_x_offset);
+      base_y_offset = MathMax(0, base_y_offset);
+   }
+   else if(InpDisplayAnchor == ANCHOR_BOTTOM_LEFT)
+   {
+      actual_corner = CORNER_LEFT_LOWER;
+      base_x_offset = InpDisplayXOffset;
+      base_y_offset = InpDisplayYOffset;
+   }
+   else
+   {
+      actual_corner = CORNER_LEFT_UPPER;
+      base_x_offset = InpDisplayXOffset;
+      base_y_offset = InpDisplayYOffset;
+   }
+
+   int box_width = MathMax(280, max_text_width_estimate + padding * 2);
+   int box_height = ExtTotalDisplayLines * line_height + padding * 2;
+   CreateOrUpdateDisplayBox(current_chart_id, base_x_offset, base_y_offset, box_width, box_height, actual_corner);
+
+   int label_x_offset = base_x_offset + padding;
+   int current_y_draw_offset = base_y_offset + padding;
+   for(int i = 0; i < ExtTotalDisplayLines; i++)
+   {
+      int y_pos_for_label = (actual_corner == CORNER_LEFT_LOWER) ? (base_y_offset + padding + i * line_height) : current_y_draw_offset;
+      CreateOrUpdateLabel(current_chart_id, DISPLAY_OBJECT_PREFIX + IntegerToString(i), lines_to_display[i],
+                          label_x_offset, y_pos_for_label,
+                          InpDisplayFontSize, InpDisplayFontColor, actual_corner);
+      if(actual_corner != CORNER_LEFT_LOWER)
+         current_y_draw_offset += line_height;
+   }
+
+   for(int i = ExtTotalDisplayLines; i < DISPLAY_MAX_LINES; i++)
+      ObjectDelete(current_chart_id, DISPLAY_OBJECT_PREFIX + IntegerToString(i));
+
+   ChartRedraw(current_chart_id);
+  }
+
+void UpdateChartDisplayLegacy()
+  {
    // Skip display updates during backtesting
    if(g_is_backtesting)
       return;
@@ -10342,9 +10611,11 @@ void UpdateChartDisplay()
    }
    if(InpGlobalDollarLossStreakPauseEnabled)
    {
-      lines_to_display[line_idx++] = StringFormat("Loss Streak Pause: %d/%d losses",
+      lines_to_display[line_idx++] = StringFormat("%s Streak Pause: %d/%d closes",
+                                                 GlobalDollarStreakPauseTriggerText(),
                                                  g_globalDollarLossStreak,
                                                  MathMax(1, InpGlobalDollarLossStreakCount));
+      lines_to_display[line_idx++] = "Streak Type: " + GlobalDollarStreakPauseOutcomeText();
       lines_to_display[line_idx++] = "Pause Mode: " + GlobalDollarLossStreakPauseModeText();
       if(InpGlobalDollarLossStreakPauseMode == GDLS_PAUSE_UNTIL_UTC_RESET)
          lines_to_display[line_idx++] = "Prop Reset: " + FormatGlobalDollarLossStreakUtcResetTime();
