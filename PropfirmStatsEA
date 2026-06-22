@@ -49,6 +49,8 @@ input int PanelY = 28;
 input int PanelWidth = 620;
 input int FontSize = 9;
 input int ClosedTradesToShow = 10;              // Closed trades to show
+input int DailyResetUtcHour = 0;                // Daily reset hour in UTC
+input int DailyResetUtcMinute = 0;              // Daily reset minute in UTC
 
 #define PS_PREFIX "PROP_STATS_EA_"
 #define PS_LINE_COUNT 64
@@ -114,6 +116,26 @@ datetime UtcDayStart(datetime utc_time)
    parts.min = 0;
    parts.sec = 0;
    return StructToTime(parts);
+}
+
+int DailyResetSecondsFromMidnight()
+{
+   int total_minutes = DailyResetUtcHour * 60 + DailyResetUtcMinute;
+   return total_minutes * 60;
+}
+
+datetime DashboardTime(datetime utc_time)
+{
+   return utc_time + 5 * 3600 + 30 * 60;
+}
+
+datetime DashboardUtcDayStart(datetime utc_time)
+{
+   datetime utc_midnight = UtcDayStart(utc_time);
+   datetime utc_reset_today = utc_midnight + DailyResetSecondsFromMidnight();
+   if(utc_time < utc_reset_today)
+      return utc_reset_today - 86400;
+   return utc_reset_today;
 }
 
 string DateKey(datetime utc_day)
@@ -378,7 +400,7 @@ void SaveDailyState()
 
 void LoadOrResetDailyState()
 {
-   datetime utc_day = UtcDayStart(TimeGMT());
+   datetime utc_day = DashboardUtcDayStart(TimeGMT());
    bool had_loaded_day = (g_current_utc_day != 0);
    bool new_day = (utc_day != g_current_utc_day);
    g_current_utc_day = utc_day;
@@ -396,7 +418,16 @@ void LoadOrResetDailyState()
    {
       double reconstructed_balance = 0.0;
       datetime reset_in_server_time = ServerTimeForUtc(utc_day);
-      g_daily_start_equity = (had_loaded_day && new_day ? MathMax(current_balance, current_equity) : (BalanceAtTime(reset_in_server_time, reconstructed_balance) ? reconstructed_balance : MathMax(current_balance, current_equity)));
+      if(BalanceAtTime(reset_in_server_time, reconstructed_balance))
+         g_daily_start_equity = reconstructed_balance;
+      else if(current_balance > 0.0)
+         g_daily_start_equity = current_balance;
+      else
+         g_daily_start_equity = current_equity;
+
+      if(g_daily_start_equity <= 0.0)
+         g_daily_start_equity = StartingBalance;
+
       GlobalVariableSet(equity_key, g_daily_start_equity);
    }
 
@@ -415,12 +446,18 @@ void LoadOrResetDailyState()
       g_daily_min_equity = current_equity;
       SaveDailyState();
    }
+
+   if(g_daily_start_equity <= 0.0)
+      g_daily_start_equity = StartingBalance;
+
+   if(g_daily_min_equity <= 0.0)
+      g_daily_min_equity = current_equity;
 }
 
 string TimeLeftToUtcReset()
 {
    datetime now = TimeGMT();
-   datetime next_reset = UtcDayStart(now) + 86400;
+   datetime next_reset = DashboardUtcDayStart(now) + 86400;
    int seconds_left = (int)MathMax(0, next_reset - now);
    int hours = seconds_left / 3600;
    int minutes = (seconds_left % 3600) / 60;
@@ -441,10 +478,35 @@ string FormatAmPm(datetime value)
    return StringFormat("%02d/%02d %02d:%02d %s", parts.mon, parts.day, hour, parts.min, suffix);
 }
 
+string FormatTime12(datetime value)
+{
+   MqlDateTime parts;
+   TimeToStruct(value, parts);
+
+   string suffix = (parts.hour >= 12 ? "PM" : "AM");
+   int hour = parts.hour % 12;
+   if(hour == 0)
+      hour = 12;
+
+   return StringFormat("%02d:%02d %s", hour, parts.min, suffix);
+}
+
+string DashboardResetTimeLabel()
+{
+   datetime utc_now = TimeGMT();
+   datetime today_reset = DashboardUtcDayStart(utc_now);
+   return FormatTime12(today_reset);
+}
+
 string NextUtcResetInIst()
 {
-   datetime next_reset = UtcDayStart(TimeGMT()) + 86400;
-   return FormatAmPm(next_reset + 5 * 3600 + 30 * 60);
+   datetime next_reset = DashboardUtcDayStart(TimeGMT()) + 86400;
+   return FormatTime12(DashboardTime(next_reset));
+}
+
+string DashboardTimezoneLabel()
+{
+   return StringFormat("UTC %02d:%02d", DailyResetUtcHour, DailyResetUtcMinute);
 }
 
 color StatusColor(double left, double limit)
@@ -531,18 +593,15 @@ void CreateDashboard()
    int panel_width = PanelWidth;
    if(panel_width < 700)
       panel_width = 700;
-   int display_trades = (int)MathMax(1, MathMin(ClosedTradesToShow, PS_LINE_COUNT - 22));
-   int panel_height = (int)MathMax(500, 86 + (22 + display_trades) * 15);
+   int display_trades = (int)MathMax(1, MathMin(ClosedTradesToShow, PS_LINE_COUNT - 26));
+   int line_step = 16;
+   int panel_height = (int)MathMax(540, 86 + (26 + display_trades) * line_step);
    EnsureBox(PS_PREFIX + "BG", PanelX, PanelY, panel_width, panel_height, PanelColor(), BorderColor());
    EnsureBox(PS_PREFIX + "HEADER", PanelX, PanelY, panel_width, 42, HeaderColor(), HeaderColor());
    EnsureBox(PS_PREFIX + "ACCENT", PanelX, PanelY, 4, panel_height, GoodColor(), GoodColor());
-   EnsureBox(PS_PREFIX + "SEP_1", PanelX + 18, PanelY + 124, panel_width - 36, 1, BorderColor(), BorderColor());
-   EnsureBox(PS_PREFIX + "SEP_2", PanelX + 18, PanelY + 214, panel_width - 36, 1, BorderColor(), BorderColor());
-   EnsureBox(PS_PREFIX + "SEP_3", PanelX + 18, PanelY + 351, panel_width - 36, 1, BorderColor(), BorderColor());
-
    EnsureLabel(PS_PREFIX + "TITLE", PanelX + 18, PanelY + 12, FontSize + 4, TextColor(), "Arial Bold");
    for(int i = 0; i < PS_LINE_COUNT; i++)
-      EnsureLabel(PS_PREFIX + "LINE_" + (string)i, PanelX + 18, PanelY + 56 + i * 15, FontSize, TextColor());
+      EnsureLabel(PS_PREFIX + "LINE_" + (string)i, PanelX + 18, PanelY + 56 + i * line_step, FontSize, TextColor());
 
    g_objects_created = true;
 }
@@ -601,9 +660,13 @@ void RecentLosingTradeStats(const ClosedTrade &trades[], int sample_size, double
    sample_count = 0;
 
    int count = ArraySize(trades);
+   double qualify_percent = MathMax(0.0, LagQualificationPercent) / 100.0;
    for(int i = 0; i < count && sample_count < sample_size; i++)
    {
       if(trades[i].net >= -0.005)
+         continue;
+
+      if(PlannedLossMoney > 0.0 && MathAbs(trades[i].net) < PlannedLossMoney * qualify_percent)
          continue;
 
       average_loss += MathAbs(trades[i].net);
@@ -786,14 +849,50 @@ void UpdateDashboard()
    double daily_floor = g_daily_start_equity - daily_limit_money;
    double total_dd_left = equity - total_floor;
    double daily_dd_left = equity - daily_floor;
+   double total_dd_left_percent = (total_limit_money > 0.0 ? 100.0 * total_dd_left / total_limit_money : 0.0);
+   double daily_dd_left_percent = (daily_limit_money > 0.0 ? 100.0 * daily_dd_left / daily_limit_money : 0.0);
    double target_left = MathMax(0.0, TargetEquity - equity);
-   double daily_used = MathMax(0.0, g_daily_start_equity - MathMin(equity, g_daily_min_equity));
+   double daily_used = MathMax(0.0, g_daily_start_equity - equity);
+   double daily_start_floor = g_daily_start_equity - daily_limit_money;
    double recent_avg_loss = 0.0;
    int recent_loss_count = 0;
    RecentLosingTradeStats(trades, 5, recent_avg_loss, recent_loss_count);
+   int losses_left_total = (recent_avg_loss > 0.0 ? (int)MathFloor(MathMax(0.0, total_dd_left) / recent_avg_loss) : -1);
    int losses_left_today = (recent_avg_loss > 0.0 ? (int)MathFloor(MathMax(0.0, daily_dd_left) / recent_avg_loss) : -1);
-   string losses_left_text = (recent_loss_count > 0 ? (string)losses_left_today : "--");
+   string losses_left_text = (recent_loss_count > 0 ? (string)losses_left_total : "--");
+   string daily_losses_left_text = (recent_loss_count > 0 ? (string)losses_left_today : "--");
    string avg_loss_text = (recent_loss_count > 0 ? Money(recent_avg_loss) : "--");
+   double fallback_loss_size = (PlannedLossMoney > 0.0 ? PlannedLossMoney : 0.0);
+   if(recent_avg_loss <= 0.0 && fallback_loss_size > 0.0)
+   {
+      recent_avg_loss = fallback_loss_size;
+      if(recent_loss_count <= 0)
+      {
+         losses_left_total = (int)MathFloor(MathMax(0.0, total_dd_left) / recent_avg_loss);
+         losses_left_today = (int)MathFloor(MathMax(0.0, daily_dd_left) / recent_avg_loss);
+         losses_left_text = (string)losses_left_total;
+         daily_losses_left_text = (string)losses_left_today;
+         avg_loss_text = Money(recent_avg_loss);
+      }
+   }
+   bool daily_breach_warning = (daily_limit_money > 0.0 && daily_dd_left <= daily_limit_money * 0.20);
+   string trade_room_text = "OK";
+   color trade_room_color = GoodColor();
+   if(losses_left_today < 0)
+   {
+      trade_room_text = "N/A";
+      trade_room_color = MutedColor();
+   }
+   else if(losses_left_today <= 0)
+   {
+      trade_room_text = "NO ROOM";
+      trade_room_color = BadColor();
+   }
+   else if(losses_left_today == 1)
+   {
+      trade_room_text = "1 LEFT";
+      trade_room_color = WarnColor();
+   }
    double spread_cost_lag = 0.0;
    double win_lag = 0.0;
    double loss_lag = 0.0;
@@ -826,10 +925,13 @@ void UpdateDashboard()
    SetLine(line++, " ");
    SetLine(line++, "RISK LIMITS", MutedColor());
    SetLine(line++, "Max DD floor   " + Money(total_floor) + "        Left          " + Money(total_dd_left), StatusColor(total_dd_left, total_limit_money));
-   SetLine(line++, "Daily floor    " + Money(daily_floor) + "        Left          " + Money(daily_dd_left), StatusColor(daily_dd_left, daily_limit_money));
-   SetLine(line++, "Losses left    " + losses_left_text + "        Avg L5 loss   " + avg_loss_text, (losses_left_today < 0 ? MutedColor() : StatusColor(daily_dd_left, daily_limit_money)));
+   SetLine(line++, "Daily floor    " + Money(daily_start_floor) + "        Left          " + Money(daily_dd_left), StatusColor(daily_dd_left, daily_limit_money));
+   SetLine(line++, "Total Losses left " + losses_left_text + "        Avg L5 loss   " + avg_loss_text, (losses_left_total < 0 ? MutedColor() : StatusColor(total_dd_left, total_limit_money)));
+   SetLine(line++, "Daily losses left " + daily_losses_left_text + "        Avg L5 loss   " + avg_loss_text, (losses_left_today < 0 ? MutedColor() : StatusColor(daily_dd_left, daily_limit_money)));
    SetLine(line++, "Daily start    " + Money(g_daily_start_equity) + "        Used          " + Money(daily_used));
-   SetLine(line++, "UTC reset      00:00 in " + TimeLeftToUtcReset() + "    IST reset  " + NextUtcResetInIst());
+   SetLine(line++, "Daily warning  " + (daily_breach_warning ? "BREACH RISK" : "OK") + "        Trade room    " + trade_room_text, (daily_breach_warning ? BadColor() : trade_room_color));
+   SetLine(line++, "Daily Drawdown reset in " + DashboardResetTimeLabel() + " " + DashboardTimezoneLabel());
+   SetLine(line++, "Countdown      " + TimeLeftToUtcReset() + "        IST " + NextUtcResetInIst());
    SetLine(line++, " ");
    SetLine(line++, "PERFORMANCE", MutedColor());
    SetLine(line++, "Trades         " + (string)count + "        Wins " + (string)wins + " / Losses " + (string)losses + " / BE " + (string)breakevens);
