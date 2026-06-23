@@ -410,14 +410,19 @@ void LoadOrResetDailyState()
    double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
    double current_balance = AccountInfoDouble(ACCOUNT_BALANCE);
 
+   // If we're continuing the same tracked day, reuse stored value. On a new day
+   // (rollover), reconstruct the account balance at the exact UTC reset moment
+   // (converted to server time) and store that as the new daily start equity.
    if(!new_day && GlobalVariableCheck(equity_key))
+   {
       g_daily_start_equity = GlobalVariableGet(equity_key);
-   else if(GlobalVariableCheck(equity_key))
-      g_daily_start_equity = GlobalVariableGet(equity_key);
+   }
    else
    {
       double reconstructed_balance = 0.0;
       datetime reset_in_server_time = ServerTimeForUtc(utc_day);
+      // Try to compute the account balance at the reset moment; fall back to
+      // current balance or equity if history reconstruction fails.
       if(BalanceAtTime(reset_in_server_time, reconstructed_balance))
          g_daily_start_equity = reconstructed_balance;
       else if(current_balance > 0.0)
