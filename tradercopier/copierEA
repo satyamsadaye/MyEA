@@ -156,6 +156,10 @@ input int PollMilliseconds = 500;
 input int TradeRetries = 5;
 input int RetryDelayMilliseconds = 250;
 
+input group "SL Removal"
+input bool EnableRemoveSlAfterSeconds = false;
+input int RemoveSlAfterSeconds = 60;
+
 input group "Display"
 input bool ShowChartStatus = true;
 input bool ShowStatsDashboard = true;
@@ -272,6 +276,7 @@ void SyncPositions()
       SyncOneSource(sources[i]);
 
    ManageProfitProgressTrailingSL();
+   ManageRemoveSlAfterOpenTime();
    ManagePartialTpBooking();
    RefreshPartialTpLines();
 
@@ -1775,6 +1780,69 @@ void ManageProfitProgressTrailingSL()
 
       TryTrailSlAtProfitProgress(ticket, source_ticket, trigger_percent);
    }
+}
+
+void ManageRemoveSlAfterOpenTime()
+{
+   if(!EnableRemoveSlAfterSeconds)
+      return;
+
+   int delay = MathMax(0, RemoveSlAfterSeconds);
+   if(delay <= 0)
+      return;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !IsOurCopiedPosition())
+         continue;
+
+      if(!PositionSelectByTicket(ticket))
+         continue;
+
+      datetime open_time = (datetime)PositionGetInteger(POSITION_TIME);
+      if(open_time <= 0)
+         continue;
+
+      if((int)(TimeCurrent() - open_time) < delay)
+         continue;
+
+      double sl = PositionGetDouble(POSITION_SL);
+      if(sl <= 0.0)
+         continue;
+
+      TryRemoveSlAfterOpenTime(ticket);
+   }
+}
+
+bool TryRemoveSlAfterOpenTime(const ulong ticket)
+{
+   trade.SetExpertMagicNumber(MagicNumber);
+   trade.SetDeviationInPoints(SlippagePoints);
+
+   if(!PositionSelectByTicket(ticket))
+      return false;
+
+   double sl = PositionGetDouble(POSITION_SL);
+   if(sl <= 0.0)
+      return true;
+
+   double tp = PositionGetDouble(POSITION_TP);
+   if(trade.PositionModify(ticket, 0.0, tp))
+   {
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+      last_action = "Removed SL from copied trade #" + (string)ticket +
+                    " after " + (string)RemoveSlAfterSeconds + " sec";
+      if(tp > 0.0)
+         last_action += "; TP preserved";
+      last_error = "";
+      Print(last_action);
+      return true;
+   }
+
+   RememberTradeError("Remove SL failed ticket #" + (string)ticket);
+   return false;
 }
 
 bool TryTrailSlAtProfitProgress(const ulong ticket,
@@ -3359,6 +3427,7 @@ void UpdateDashboard()
        LotSizingStatusLine() +
        "Copy SL/TP: " + (CopyStopLossTakeProfit ? "yes" : "no") + "\n" +
        "TP RR adjust: " + (AdjustTakeProfitToCopiedRR ? "yes" : "no") + "\n" +
+       "Remove SL after: " + SlRemovalStatusLine() + "\n" +
        "Symbol exposure limit: " + OneTradePerSymbolStatusLine() + "\n" +
        "Symbol mapping: " + SymbolMappingStatusLine() + "\n" +
        "Sender account: " + (string)source_login + "\n" +
@@ -3423,6 +3492,18 @@ string ProfitLockStatusLine()
       basis = "full TP profit";
 
    return "lock " + DoubleToString(percent, 2) + "% " + basis;
+}
+
+string SlRemovalStatusLine()
+{
+   if(!EnableRemoveSlAfterSeconds)
+      return "off";
+
+   int delay = MathMax(0, RemoveSlAfterSeconds);
+   if(delay <= 0)
+      return "off";
+
+   return "on after " + (string)delay + " sec";
 }
 
 string SenderExitActionStatusLine()
