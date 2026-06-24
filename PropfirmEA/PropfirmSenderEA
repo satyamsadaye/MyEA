@@ -1,0 +1,1141 @@
+#property strict
+#property version   "1.10"
+#property description "Prop-firm protected trade sender. Publishes master trades only when receiver drawdown room allows it."
+
+#include <Trade/Trade.mqh>
+
+#define COPIER_FILE_PREFIX "minimal_trade_copier_"
+#define RECEIVER_STATUS_FILE_PREFIX "propfirm_receiver_status_"
+#define RESET_REQUEST_FILE_PREFIX "propfirm_reset_request_"
+#define SENDER_PREFIX "PROP_SENDER_EA_"
+#define SENDER_RESET_BUTTON (SENDER_PREFIX + "RESET_BUTTON")
+#define SENDER_LINE_COUNT 41
+
+input group "Connection"
+input string CopierKey = "client1";
+input int ClosedTradeRetentionSeconds = 60;
+input int PublishMilliseconds = 500;
+
+input group "Receiver Risk Gate"
+input bool RequireReceiverStatus = true;
+input int ReceiverStatusMaxAgeSeconds = 5;
+input bool BlockWhenReceiverDisallowsTrading = true;
+input bool BlockTradeWhenRiskExceedsDailyLeft = false;
+input bool BlockTradeWhenRiskExceedsTotalLeft = false;
+input bool BlockTradesWithoutStopLoss = false;
+input bool BlockWhenReceiverHasOpenExposure = true;
+input double ExtraRiskBufferMoney = 0.0;
+input bool CloseMasterPositionWhenSenderBlocksSignal = true;
+
+input group "Protection Close"
+input bool CloseMasterPositionsOnReceiverProtectionBreach = true;
+input int CloseRetries = 5;
+input int CloseRetryDelayMilliseconds = 250;
+input int CloseSlippagePoints = 30;
+
+input group "Display and Logs"
+input bool ShowDashboard = true;
+input int PanelCorner = CORNER_LEFT_UPPER;
+input int PanelX = 18;
+input int PanelY = 28;
+input int PanelWidth = 650;
+input int FontSize = 9;
+input bool PrintDetailedLogs = true;
+
+struct SenderPositionState
+{
+   ulong ticket;
+   long identifier;
+   string symbol;
+   long type;
+   double last_close_side_price;
+   datetime last_seen;
+};
+
+struct SenderCloseEvent
+{
+   ulong ticket;
+   long identifier;
+   string symbol;
+   long type;
+   double close_price;
+   datetime close_time;
+};
+
+struct SenderBlockedNotice
+{
+   ulong ticket;
+   string symbol;
+   long type;
+   double volume;
+   datetime blocked_time;
+   string reason;
+};
+
+struct ReceiverRiskStatus
+{
+   bool loaded;
+   long login;
+   datetime server_time;
+   double balance;
+   double equity;
+   double floating;
+   double daily_start_equity;
+   double daily_floor;
+   double daily_limit_money;
+   double daily_left;
+   double total_floor;
+   double total_limit_money;
+   double total_left;
+   double equity_stop_level;
+   double equity_buffer_money;
+   int copied_positions;
+   int copied_pending_orders;
+   bool daily_protection_latched;
+   datetime next_daily_reset_utc;
+   bool profit_target_enabled;
+   double profit_target_money;
+   double profit_target_equity;
+   double profit_target_progress;
+   double profit_target_left;
+   bool profit_target_reached;
+   bool trading_allowed;
+   bool protection_breached;
+   datetime protection_hit_time_utc;
+   ulong protection_hit_receiver_ticket;
+   ulong protection_hit_source_ticket;
+   string reason;
+};
+
+SenderPositionState remembered_positions[];
+SenderCloseEvent close_events[];
+SenderBlockedNotice blocked_notices[];
+ulong allowed_active_source_tickets[];
+ReceiverRiskStatus receiver_status;
+CTrade trade;
+string last_action = "Waiting for receiver status";
+string last_block_reason = "";
+int last_sent_positions = 0;
+int last_blocked_positions = 0;
+datetime last_snapshot_time = 0;
+bool g_objects_created = false;
+
+int OnInit()
+{
+   int timer_ms = MathMax(100, PublishMilliseconds);
+   EventSetMillisecondTimer(timer_ms);
+   WriteSnapshot();
+   return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+   WriteSnapshot();
+   DeleteDashboard();
+   Comment("");
+}
+
+void OnTick()
+{
+   WriteSnapshot();
+}
+
+void OnTimer()
+{
+   WriteSnapshot();
+}
+
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
+{
+   if(id == CHARTEVENT_OBJECT_CLICK && sparam == SENDER_RESET_BUTTON)
+   {
+      ObjectSetInteger(0, SENDER_RESET_BUTTON, OBJPROP_STATE, false);
+      ResetSenderState();
+      WriteResetRequest();
+      WriteSnapshot();
+   }
+
+   if(id == CHARTEVENT_CHART_CHANGE)
+   {
+      g_objects_created = false;
+      CreateDashboard();
+      UpdateDashboard();
+   }
+}
+
+void WriteSnapshot()
+{
+   RefreshCloseEvents();
+   PruneAllowedActiveSourceTickets();
+   PruneBlockedNotices();
+   ReadReceiverStatus();
+
+   EnforceReceiverProtectionClose();
+
+   string snapshot_file = CopierFileName();
+
+   int handle = FileOpen(snapshot_file,
+                         FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
+                         ';');
+   if(handle == INVALID_HANDLE)
+   {
+      last_block_reason = "Cannot write sender file " + snapshot_file + " / error " + (string)GetLastError();
+      if(PrintDetailedLogs)
+         Print("PropfirmSender: ", last_block_reason);
+      UpdateDashboard();
+      return;
+   }
+
+   FileWrite(handle, "MT5_MINIMAL_TRADE_COPIER_V2", (long)AccountInfoInteger(ACCOUNT_LOGIN), (long)TimeCurrent());
+
+   last_sent_positions = 0;
+   last_blocked_positions = 0;
+   last_block_reason = "";
+
+   int total = PositionsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      long type = PositionGetInteger(POSITION_TYPE);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      double price_open = PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl = PositionGetDouble(POSITION_SL);
+      double tp = PositionGetDouble(POSITION_TP);
+      string reason = "";
+
+      if(!SenderRiskGateAllows(ticket, symbol, type, volume, price_open, sl, reason))
+      {
+         last_blocked_positions++;
+         last_block_reason = reason;
+         bool new_notice = RememberBlockedNotice(ticket, symbol, type, volume, reason);
+         if(PrintDetailedLogs && new_notice)
+            PrintFormat("PropfirmSender BLOCKED source #%I64u %s %.2f: %s", ticket, symbol, volume, reason);
+         if(CloseMasterPositionWhenSenderBlocksSignal)
+            CloseMasterPositionWithRetries(ticket, reason);
+         continue;
+      }
+
+      FileWrite(handle,
+                (string)ticket,
+                symbol,
+                (string)type,
+                DoubleToString(volume, 8),
+                DoubleToString(price_open, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)),
+                DoubleToString(sl, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)),
+                DoubleToString(tp, (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS)));
+      RememberAllowedActiveSourceTicket(ticket);
+      last_sent_positions++;
+   }
+
+   int blocked_notice_total = ArraySize(blocked_notices);
+   for(int i = 0; i < blocked_notice_total; i++)
+   {
+      FileWrite(handle,
+                "BLOCKED",
+                (string)blocked_notices[i].ticket,
+                blocked_notices[i].symbol,
+                (string)blocked_notices[i].type,
+                DoubleToString(blocked_notices[i].volume, 8),
+                (string)((long)blocked_notices[i].blocked_time),
+                blocked_notices[i].reason);
+   }
+
+   int closed_total = ArraySize(close_events);
+   for(int i = 0; i < closed_total; i++)
+   {
+      int digits = (int)SymbolInfoInteger(close_events[i].symbol, SYMBOL_DIGITS);
+      if(digits <= 0)
+         digits = 5;
+
+      FileWrite(handle,
+                "CLOSE",
+                (string)close_events[i].ticket,
+                close_events[i].symbol,
+                (string)close_events[i].type,
+                DoubleToString(close_events[i].close_price, digits),
+                (string)((long)close_events[i].close_time));
+   }
+
+   FileWrite(handle, "COMPLETED");
+   FileClose(handle);
+
+   last_snapshot_time = TimeCurrent();
+   last_action = "Published " + (string)last_sent_positions + " source trade(s), blocked " + (string)last_blocked_positions;
+   UpdateDashboard();
+}
+
+bool SenderRiskGateAllows(const ulong ticket,
+                          const string symbol,
+                          const long type,
+                          const double volume,
+                          const double entry,
+                          const double sl,
+                          string &reason)
+{
+   if(!ReceiverStatusFresh(reason))
+      return false;
+
+   if(BlockWhenReceiverDisallowsTrading && receiver_status.loaded && !receiver_status.trading_allowed)
+   {
+      reason = "receiver trading disabled: " + receiver_status.reason;
+      return false;
+   }
+
+   if(BlockWhenReceiverHasOpenExposure &&
+      receiver_status.loaded &&
+      (receiver_status.copied_positions > 0 || receiver_status.copied_pending_orders > 0) &&
+      !AllowedActiveSourceTicketExists(ticket))
+   {
+      reason = "receiver still has copied exposure: " +
+               (string)receiver_status.copied_positions + " position(s), " +
+               (string)receiver_status.copied_pending_orders + " pending order(s)";
+      return false;
+   }
+
+   double risk_money = EstimatePositionRiskMoney(symbol, type, volume, entry, sl);
+   if(risk_money <= 0.0)
+   {
+      if(BlockTradesWithoutStopLoss)
+      {
+         reason = "missing or invalid SL; risk cannot be measured";
+         return false;
+      }
+
+      return true;
+   }
+
+   double required_room = risk_money + MathMax(0.0, ExtraRiskBufferMoney);
+   if(receiver_status.loaded && BlockTradeWhenRiskExceedsDailyLeft && required_room > receiver_status.daily_left)
+   {
+      reason = "risk " + Money(required_room) + " exceeds receiver daily DD left " + Money(receiver_status.daily_left);
+      return false;
+   }
+
+   if(receiver_status.loaded && BlockTradeWhenRiskExceedsTotalLeft && required_room > receiver_status.total_left)
+   {
+      reason = "risk " + Money(required_room) + " exceeds receiver total DD left " + Money(receiver_status.total_left);
+      return false;
+   }
+
+   return true;
+}
+
+bool AllowedActiveSourceTicketExists(const ulong ticket)
+{
+   int total = ArraySize(allowed_active_source_tickets);
+   for(int i = 0; i < total; i++)
+   {
+      if(allowed_active_source_tickets[i] == ticket)
+         return true;
+   }
+
+   return false;
+}
+
+void RememberAllowedActiveSourceTicket(const ulong ticket)
+{
+   if(ticket == 0 || AllowedActiveSourceTicketExists(ticket))
+      return;
+
+   int total = ArraySize(allowed_active_source_tickets);
+   ArrayResize(allowed_active_source_tickets, total + 1);
+   allowed_active_source_tickets[total] = ticket;
+}
+
+void PruneAllowedActiveSourceTickets()
+{
+   for(int i = ArraySize(allowed_active_source_tickets) - 1; i >= 0; i--)
+   {
+      if(PositionSelectByTicket(allowed_active_source_tickets[i]))
+         continue;
+
+      int last = ArraySize(allowed_active_source_tickets) - 1;
+      for(int j = i; j < last; j++)
+         allowed_active_source_tickets[j] = allowed_active_source_tickets[j + 1];
+
+      ArrayResize(allowed_active_source_tickets, last);
+   }
+}
+
+bool ReceiverStatusFresh(string &reason)
+{
+   if(!RequireReceiverStatus)
+      return true;
+
+   if(!receiver_status.loaded)
+   {
+      reason = "receiver status file unavailable: " + ReceiverStatusFileName();
+      return false;
+   }
+
+   int age = (int)(TimeCurrent() - receiver_status.server_time);
+   if(age < 0)
+      age = 0;
+
+   if(age > MathMax(1, ReceiverStatusMaxAgeSeconds))
+   {
+      reason = "receiver status stale: " + (string)age + " sec";
+      return false;
+   }
+
+   return true;
+}
+
+bool ReadReceiverStatus()
+{
+   receiver_status.loaded = false;
+
+   for(int attempt = 0; attempt < 3; attempt++)
+   {
+      int handle = FileOpen(ReceiverStatusFileName(),
+                            FILE_READ | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            ';');
+      if(handle == INVALID_HANDLE)
+      {
+         if(attempt < 2)
+            Sleep(20);
+         continue;
+      }
+
+      string version = FileReadString(handle);
+      if(version != "PROP_RECEIVER_STATUS_V4")
+      {
+         FileClose(handle);
+         if(attempt < 2)
+            Sleep(20);
+         continue;
+      }
+
+      receiver_status.login = (long)StringToInteger(FileReadString(handle));
+      receiver_status.server_time = (datetime)StringToInteger(FileReadString(handle));
+      receiver_status.balance = StringToDouble(FileReadString(handle));
+      receiver_status.equity = StringToDouble(FileReadString(handle));
+      receiver_status.floating = StringToDouble(FileReadString(handle));
+      receiver_status.daily_start_equity = StringToDouble(FileReadString(handle));
+      receiver_status.daily_floor = StringToDouble(FileReadString(handle));
+      receiver_status.daily_limit_money = StringToDouble(FileReadString(handle));
+      receiver_status.daily_left = StringToDouble(FileReadString(handle));
+      receiver_status.total_floor = StringToDouble(FileReadString(handle));
+      receiver_status.total_limit_money = StringToDouble(FileReadString(handle));
+      receiver_status.total_left = StringToDouble(FileReadString(handle));
+      receiver_status.equity_stop_level = StringToDouble(FileReadString(handle));
+      receiver_status.equity_buffer_money = StringToDouble(FileReadString(handle));
+      receiver_status.copied_positions = (int)StringToInteger(FileReadString(handle));
+      receiver_status.copied_pending_orders = (int)StringToInteger(FileReadString(handle));
+      receiver_status.daily_protection_latched = (StringToInteger(FileReadString(handle)) != 0);
+      receiver_status.next_daily_reset_utc = (datetime)StringToInteger(FileReadString(handle));
+      receiver_status.profit_target_enabled = (StringToInteger(FileReadString(handle)) != 0);
+      receiver_status.profit_target_money = StringToDouble(FileReadString(handle));
+      receiver_status.profit_target_equity = StringToDouble(FileReadString(handle));
+      receiver_status.profit_target_progress = StringToDouble(FileReadString(handle));
+      receiver_status.profit_target_left = StringToDouble(FileReadString(handle));
+      receiver_status.profit_target_reached = (StringToInteger(FileReadString(handle)) != 0);
+      receiver_status.trading_allowed = (StringToInteger(FileReadString(handle)) != 0);
+      receiver_status.protection_breached = (StringToInteger(FileReadString(handle)) != 0);
+      receiver_status.protection_hit_time_utc = (datetime)StringToInteger(FileReadString(handle));
+      receiver_status.protection_hit_receiver_ticket = (ulong)StringToInteger(FileReadString(handle));
+      receiver_status.protection_hit_source_ticket = (ulong)StringToInteger(FileReadString(handle));
+      receiver_status.reason = FileReadString(handle);
+      string completion_mark = FileReadString(handle);
+      receiver_status.loaded = (completion_mark == "COMPLETED");
+
+      FileClose(handle);
+      if(receiver_status.loaded)
+         return true;
+
+      if(attempt < 2)
+         Sleep(20);
+   }
+
+   return false;
+}
+
+double EstimatePositionRiskMoney(const string symbol,
+                                 const long type,
+                                 const double volume,
+                                 const double entry,
+                                 const double sl)
+{
+   if(entry <= 0.0 || sl <= 0.0 || volume <= 0.0)
+      return 0.0;
+
+   if(type == POSITION_TYPE_BUY && sl >= entry)
+      return 0.0;
+   if(type == POSITION_TYPE_SELL && sl <= entry)
+      return 0.0;
+
+   ENUM_ORDER_TYPE order_type = (type == POSITION_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+   double profit = 0.0;
+   if(!OrderCalcProfit(order_type, symbol, volume, entry, sl, profit))
+      return 0.0;
+
+   return MathAbs(profit);
+}
+
+void EnforceReceiverProtectionClose()
+{
+   if(!CloseMasterPositionsOnReceiverProtectionBreach)
+      return;
+
+   if(!receiver_status.loaded)
+      return;
+
+   if(receiver_status.trading_allowed && !receiver_status.protection_breached)
+      return;
+
+   int total = PositionsTotal();
+   if(total <= 0)
+      return;
+
+   last_action = "Receiver protection is blocked; closing master positions";
+   if(PrintDetailedLogs)
+   {
+      PrintFormat("PropfirmSender PROTECTION CLOSE | Receiver=%I64d | Equity=%.2f | StopLevel=%.2f | Reason=%s | MasterPositions=%d",
+                  receiver_status.login, receiver_status.equity, receiver_status.equity_stop_level,
+                  receiver_status.reason, total);
+   }
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket != 0)
+      {
+         RememberBlockedNotice(ticket,
+                               PositionGetString(POSITION_SYMBOL),
+                               PositionGetInteger(POSITION_TYPE),
+                               PositionGetDouble(POSITION_VOLUME),
+                               receiver_status.reason);
+         CloseMasterPositionWithRetries(ticket, receiver_status.reason);
+      }
+   }
+}
+
+bool RememberBlockedNotice(const ulong ticket,
+                           const string symbol,
+                           const long type,
+                           const double volume,
+                           const string reason)
+{
+   if(ticket == 0)
+      return false;
+
+   int total = ArraySize(blocked_notices);
+   for(int i = 0; i < total; i++)
+   {
+      if(blocked_notices[i].ticket == ticket)
+         return false;
+   }
+
+   ArrayResize(blocked_notices, total + 1);
+   blocked_notices[total].ticket = ticket;
+   blocked_notices[total].symbol = symbol;
+   blocked_notices[total].type = type;
+   blocked_notices[total].volume = volume;
+   blocked_notices[total].blocked_time = TimeCurrent();
+   blocked_notices[total].reason = reason;
+   return true;
+}
+
+void PruneBlockedNotices()
+{
+   int retention = MathMax(10, ClosedTradeRetentionSeconds);
+   datetime cutoff = TimeCurrent() - retention;
+   int write_index = 0;
+   int total = ArraySize(blocked_notices);
+   for(int i = 0; i < total; i++)
+   {
+      if(blocked_notices[i].blocked_time < cutoff)
+         continue;
+
+      if(write_index != i)
+         blocked_notices[write_index] = blocked_notices[i];
+      write_index++;
+   }
+   ArrayResize(blocked_notices, write_index);
+}
+
+bool CloseMasterPositionWithRetries(const ulong ticket, const string close_reason)
+{
+   trade.SetDeviationInPoints(MathMax(0, CloseSlippagePoints));
+
+   int retries = MathMax(1, CloseRetries);
+   for(int attempt = 1; attempt <= retries; attempt++)
+   {
+      ResetLastError();
+      if(!PositionSelectByTicket(ticket))
+         return true;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      if(trade.PositionClose(ticket, MathMax(0, CloseSlippagePoints)))
+      {
+         last_action = "Closed master trade #" + (string)ticket + " " + symbol + " " + DoubleToString(volume, 2) +
+                       " because sender gate blocked it: " + close_reason;
+         last_block_reason = close_reason;
+         if(PrintDetailedLogs)
+            Print("PropfirmSender: ", last_action);
+         return true;
+      }
+
+      string error = "Master close failed attempt " + (string)attempt + "/" + (string)retries +
+                     " ticket #" + (string)ticket +
+                     " | retcode " + (string)trade.ResultRetcode() + " " + trade.ResultRetcodeDescription() +
+                     " | terminal error " + (string)GetLastError();
+      last_block_reason = error;
+      if(PrintDetailedLogs)
+         Print("PropfirmSender: ", error);
+      Sleep(MathMax(0, CloseRetryDelayMilliseconds));
+   }
+
+   return false;
+}
+
+void ResetSenderState()
+{
+   ArrayResize(close_events, 0);
+   ArrayResize(remembered_positions, 0);
+   ArrayResize(blocked_notices, 0);
+   ArrayResize(allowed_active_source_tickets, 0);
+   last_action = "Sender dashboard reset requested";
+   last_block_reason = "";
+   last_sent_positions = 0;
+   last_blocked_positions = 0;
+   if(PrintDetailedLogs)
+      Print("PropfirmSender: local stats reset; receiver reset request will be sent");
+}
+
+void WriteResetRequest()
+{
+   int handle = FileOpen(ResetRequestFileName(),
+                         FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
+                         ';');
+   if(handle == INVALID_HANDLE)
+   {
+      last_block_reason = "Cannot write reset request " + ResetRequestFileName() + " / error " + (string)GetLastError();
+      if(PrintDetailedLogs)
+         Print("PropfirmSender: ", last_block_reason);
+      return;
+   }
+
+   FileWrite(handle,
+             "PROP_RESET_REQUEST_V1",
+             (long)AccountInfoInteger(ACCOUNT_LOGIN),
+             (long)TimeCurrent(),
+             "sender dashboard reset");
+   FileClose(handle);
+
+   last_action = "Sent receiver reset request";
+   if(PrintDetailedLogs)
+      Print("PropfirmSender: sent receiver reset request through ", ResetRequestFileName());
+}
+
+void RefreshCloseEvents()
+{
+   datetime now = TimeCurrent();
+   SenderPositionState current_positions[];
+
+   int total = PositionsTotal();
+   ArrayResize(current_positions, total);
+   int current_count = 0;
+
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      long type = PositionGetInteger(POSITION_TYPE);
+
+      current_positions[current_count].ticket = ticket;
+      current_positions[current_count].identifier = PositionGetInteger(POSITION_IDENTIFIER);
+      current_positions[current_count].symbol = symbol;
+      current_positions[current_count].type = type;
+      current_positions[current_count].last_close_side_price = CurrentCloseSidePrice(symbol, type);
+      current_positions[current_count].last_seen = now;
+      current_count++;
+   }
+
+   ArrayResize(current_positions, current_count);
+
+   int remembered_total = ArraySize(remembered_positions);
+   for(int i = 0; i < remembered_total; i++)
+   {
+      if(!PositionStateExists(current_positions, remembered_positions[i].ticket, remembered_positions[i].identifier))
+         AddCloseEventForRememberedPosition(remembered_positions[i]);
+   }
+
+   CopyRememberedPositions(current_positions);
+   PruneOldCloseEvents(now);
+}
+
+void CopyRememberedPositions(const SenderPositionState &positions[])
+{
+   int total = ArraySize(positions);
+   ArrayResize(remembered_positions, total);
+
+   for(int i = 0; i < total; i++)
+      remembered_positions[i] = positions[i];
+}
+
+bool PositionStateExists(const SenderPositionState &positions[], const ulong ticket, const long identifier)
+{
+   int total = ArraySize(positions);
+   for(int i = 0; i < total; i++)
+   {
+      if(positions[i].ticket == ticket)
+         return true;
+
+      if(identifier > 0 && positions[i].identifier == identifier)
+         return true;
+   }
+
+   return false;
+}
+
+void AddCloseEventForRememberedPosition(const SenderPositionState &position)
+{
+   if(position.ticket == 0 || CloseEventExists(position.ticket))
+      return;
+
+   SenderCloseEvent event;
+   event.ticket = position.ticket;
+   event.identifier = position.identifier;
+   event.symbol = position.symbol;
+   event.type = position.type;
+   event.close_time = TimeCurrent();
+   event.close_price = HistoryClosePrice(position.identifier, position.ticket, event.close_time);
+   if(event.close_price <= 0.0)
+      event.close_price = position.last_close_side_price;
+
+   if(event.close_price <= 0.0)
+      return;
+
+   int size = ArraySize(close_events);
+   ArrayResize(close_events, size + 1);
+   close_events[size] = event;
+}
+
+bool CloseEventExists(const ulong ticket)
+{
+   int total = ArraySize(close_events);
+   for(int i = 0; i < total; i++)
+   {
+      if(close_events[i].ticket == ticket)
+         return true;
+   }
+
+   return false;
+}
+
+double HistoryClosePrice(const long identifier, const ulong ticket, datetime &close_time)
+{
+   datetime to_time = TimeCurrent() + 60;
+   datetime from_time = TimeCurrent() - MathMax(60, ClosedTradeRetentionSeconds + 60);
+   if(!HistorySelect(from_time, to_time))
+      return 0.0;
+
+   double price = 0.0;
+   datetime best_time = 0;
+   int total = HistoryDealsTotal();
+   for(int i = 0; i < total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      long position_id = HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
+      if(position_id != identifier && position_id != (long)ticket)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_INOUT && entry != DEAL_ENTRY_OUT_BY)
+         continue;
+
+      datetime deal_time = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      if(deal_time >= best_time)
+      {
+         best_time = deal_time;
+         price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+      }
+   }
+
+   if(best_time > 0)
+      close_time = best_time;
+
+   return price;
+}
+
+double CurrentCloseSidePrice(const string symbol, const long type)
+{
+   if(!SymbolSelect(symbol, true))
+      return 0.0;
+
+   if(type == POSITION_TYPE_BUY)
+      return SymbolInfoDouble(symbol, SYMBOL_BID);
+
+   return SymbolInfoDouble(symbol, SYMBOL_ASK);
+}
+
+void PruneOldCloseEvents(const datetime now)
+{
+   int retention = MathMax(1, ClosedTradeRetentionSeconds);
+
+   for(int i = ArraySize(close_events) - 1; i >= 0; i--)
+   {
+      if((int)(now - close_events[i].close_time) <= retention)
+         continue;
+
+      int last = ArraySize(close_events) - 1;
+      for(int j = i; j < last; j++)
+         close_events[j] = close_events[j + 1];
+
+      ArrayResize(close_events, last);
+   }
+}
+
+void UpdateDashboard()
+{
+   if(!ShowDashboard)
+   {
+      DeleteDashboard();
+      Comment("");
+      return;
+   }
+
+   if(!g_objects_created)
+      CreateDashboard();
+
+   string status = "NO RECEIVER";
+   string receiver_age = "--";
+   if(receiver_status.loaded)
+   {
+      int age = (int)(TimeCurrent() - receiver_status.server_time);
+      if(age < 0)
+         age = 0;
+      receiver_age = (string)age + " sec";
+      status = (receiver_status.trading_allowed ? "ARMED" : "BLOCKED");
+   }
+
+   ObjectSetString(0, SENDER_PREFIX + "TITLE", OBJPROP_TEXT, "Propfirm Sender  |  " + AccountInfoString(ACCOUNT_NAME));
+
+   int line = 0;
+   SetLine(line++, "STATUS", MutedColor());
+   SetLine(line++, "Gate           " + status + "        Key           " + SafeKey(CopierKey), StatusTextColor(status));
+   SetLine(line++, "Master balance " + Money(AccountInfoDouble(ACCOUNT_BALANCE)) + "        Equity        " + Money(AccountInfoDouble(ACCOUNT_EQUITY)));
+   SetLine(line++, "Floating P/L   " + SignedMoney(AccountInfoDouble(ACCOUNT_PROFIT)) + "        Last write    " + FormatAge(last_snapshot_time));
+   SetLine(line++, " ");
+   SetLine(line++, "RECEIVER", MutedColor());
+   if(receiver_status.loaded)
+   {
+      SetLine(line++, "Account        " + (string)receiver_status.login + "        Status age    " + receiver_age);
+      SetLine(line++, "Balance        " + Money(receiver_status.balance) + "        Equity        " + Money(receiver_status.equity));
+      SetLine(line++, "Floating P/L   " + SignedMoney(receiver_status.floating) + "        Gate          " + (receiver_status.trading_allowed ? "ALLOWED" : "BLOCKED"), receiver_status.trading_allowed ? GoodColor() : BadColor());
+      SetLine(line++, "Daily floor    " + Money(receiver_status.daily_floor) + "        Left          " + Money(receiver_status.daily_left), StatusColor(receiver_status.daily_left, receiver_status.daily_limit_money));
+      SetLine(line++, "Total floor    " + Money(receiver_status.total_floor) + "        Left          " + Money(receiver_status.total_left), StatusColor(receiver_status.total_left, receiver_status.total_limit_money));
+      SetLine(line++, "Equity stop    " + Money(receiver_status.equity_stop_level) + "        Buffer        " + Money(receiver_status.equity_buffer_money));
+      SetLine(line++, receiver_status.daily_protection_latched ? "DAILY DD PROTECTION HIT - PAUSED UNTIL RESET" : "Daily DD protection  SAFE - NOT HIT", receiver_status.daily_protection_latched ? BadColor() : GoodColor());
+      SetLine(line++, "Reset UTC      " + ResetUtcText(receiver_status.next_daily_reset_utc) + "        Reset IST     " + ResetIstText(receiver_status.next_daily_reset_utc), receiver_status.daily_protection_latched ? WarnColor() : TextColor());
+      SetLine(line++, "DAILY RESET REMAINING  " + ResetCountdownText(receiver_status.next_daily_reset_utc), receiver_status.daily_protection_latched ? WarnColor() : GoodColor());
+      SetLine(line++, "Protection hit " + ProtectionHitIstText(receiver_status.protection_hit_time_utc), receiver_status.protection_hit_time_utc > 0 ? BadColor() : MutedColor());
+      SetLine(line++, "Hit trade      " + ProtectionHitTicketsText(), receiver_status.protection_hit_time_utc > 0 ? WarnColor() : MutedColor());
+      SetLine(line++, "Open copied    " + (string)receiver_status.copied_positions + " position(s)        Pending       " + (string)receiver_status.copied_pending_orders);
+      SetLine(line++, "Receiver msg   " + receiver_status.reason, receiver_status.trading_allowed ? TextColor() : BadColor());
+      SetLine(line++, " ");
+      SetLine(line++, "PROFIT TARGET", MutedColor());
+      if(receiver_status.profit_target_enabled && receiver_status.profit_target_money > 0.0)
+      {
+         SetLine(line++, "Profit target  " + Money(receiver_status.profit_target_money) + "        Target equity " + Money(receiver_status.profit_target_equity));
+         SetLine(line++, "Progress       " + SignedMoney(receiver_status.profit_target_progress) + "        Remaining     " + Money(receiver_status.profit_target_left), receiver_status.profit_target_reached ? GoodColor() : TextColor());
+         SetLine(line++, "Target state   " + (receiver_status.profit_target_reached ? "REACHED / PAUSED" : "ACTIVE"), receiver_status.profit_target_reached ? BadColor() : GoodColor());
+      }
+      else
+      {
+         SetLine(line++, "Profit target lock is OFF");
+         SetLine(line++, "Target         --        Remaining     --");
+         SetLine(line++, "Target state   OFF");
+      }
+   }
+   else
+   {
+      SetLine(line++, "Receiver status file missing: " + ReceiverStatusFileName(), BadColor());
+      SetLine(line++, "Sender will not publish trades while RequireReceiverStatus=true", BadColor());
+      for(int i = 0; i < 11; i++)
+         SetLine(line++, " ");
+   }
+
+   SetLine(line++, " ");
+   SetLine(line++, "SIGNALS", MutedColor());
+   SetLine(line++, "Sent now       " + (string)last_sent_positions + "        Blocked now   " + (string)last_blocked_positions, last_blocked_positions > 0 ? WarnColor() : GoodColor());
+   SetLine(line++, "Close events   " + (string)ArraySize(close_events) + "        Exposure gate " + (BlockWhenReceiverHasOpenExposure ? "ON" : "OFF"));
+   SetLine(line++, "Strict close   " + (CloseMasterPositionWhenSenderBlocksSignal ? "ON" : "OFF") + "        Protect close " + (CloseMasterPositionsOnReceiverProtectionBreach ? "ON" : "OFF"));
+   SetLine(line++, "Active source  " + (string)ArraySize(allowed_active_source_tickets) + " remembered        Fresh blocks  " + (BlockWhenReceiverHasOpenExposure ? "ON" : "OFF"));
+   SetLine(line++, "Optional SL risk gate  Daily " + (BlockTradeWhenRiskExceedsDailyLeft ? "ON" : "OFF") + " / Total " + (BlockTradeWhenRiskExceedsTotalLeft ? "ON" : "OFF"));
+   SetLine(line++, "Last action    " + last_action);
+   SetLine(line++, "Last block     " + (last_block_reason == "" ? "--" : last_block_reason), last_block_reason == "" ? MutedColor() : BadColor());
+
+   for(; line < SENDER_LINE_COUNT; line++)
+      SetLine(line, " ");
+
+   ChartRedraw(0);
+}
+
+string ResetUtcText(datetime reset_utc)
+{
+   if(reset_utc <= 0)
+      return "--";
+   MqlDateTime parts;
+   TimeToStruct(reset_utc, parts);
+   return StringFormat("%02d:%02d", parts.hour, parts.min);
+}
+
+string ResetIstText(datetime reset_utc)
+{
+   if(reset_utc <= 0)
+      return "--";
+   MqlDateTime parts;
+   TimeToStruct(reset_utc + 5 * 3600 + 30 * 60, parts);
+   int hour12 = parts.hour % 12;
+   if(hour12 == 0)
+      hour12 = 12;
+   return StringFormat("%02d:%02d %s", hour12, parts.min, parts.hour < 12 ? "AM" : "PM");
+}
+
+string ResetCountdownText(datetime reset_utc)
+{
+   if(reset_utc <= 0)
+      return "--";
+   long seconds_left = (long)(reset_utc - TimeGMT());
+   if(seconds_left < 0)
+      seconds_left = 0;
+   int hours = (int)(seconds_left / 3600);
+   int minutes = (int)((seconds_left % 3600) / 60);
+   int seconds = (int)(seconds_left % 60);
+   return StringFormat("%02d:%02d:%02d  (%02dh %02dm %02ds)", hours, minutes, seconds, hours, minutes, seconds);
+}
+
+string ProtectionHitIstText(datetime hit_utc)
+{
+   if(hit_utc <= 0)
+      return "--";
+
+   MqlDateTime parts;
+   TimeToStruct(hit_utc + 5 * 3600 + 30 * 60, parts);
+   int hour12 = parts.hour % 12;
+   if(hour12 == 0)
+      hour12 = 12;
+   return StringFormat("%04d.%02d.%02d %02d:%02d:%02d %s IST",
+                       parts.year, parts.mon, parts.day, hour12, parts.min, parts.sec,
+                       parts.hour < 12 ? "AM" : "PM");
+}
+
+string ProtectionHitTicketsText()
+{
+   if(receiver_status.protection_hit_time_utc <= 0)
+      return "--";
+   if(receiver_status.protection_hit_receiver_ticket == 0)
+      return "no copied trade was open";
+
+   return "Receiver #" + (string)receiver_status.protection_hit_receiver_ticket +
+          "        Source #" + (string)receiver_status.protection_hit_source_ticket;
+}
+
+color PanelColor()  { return C'16,18,24'; }
+color HeaderColor() { return C'28,32,42'; }
+color BorderColor() { return C'74,85,104'; }
+color TextColor()   { return C'236,239,244'; }
+color MutedColor()  { return C'158,166,180'; }
+color GoodColor()   { return C'125,211,252'; }
+color WarnColor()   { return C'245,180,85'; }
+color BadColor()    { return C'254,202,202'; }
+
+void DeleteDashboard()
+{
+   for(int i = ObjectsTotal(0, 0, -1) - 1; i >= 0; i--)
+   {
+      string name = ObjectName(0, i, 0, -1);
+      if(StringFind(name, SENDER_PREFIX) == 0)
+         ObjectDelete(0, name);
+   }
+   g_objects_created = false;
+}
+
+void EnsureBox(string name, int x, int y, int width, int height, color background, color border)
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, PanelCorner);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, background);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, border);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 0);
+   ObjectSetString(0, name, OBJPROP_TEXT, "");
+}
+
+void EnsureLabel(string name, int x, int y, int font_size, color text_color, string font = "Consolas")
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, PanelCorner);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, font_size);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, text_color);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 10);
+   ObjectSetString(0, name, OBJPROP_FONT, font);
+}
+
+void EnsureButton(string name, int x, int y, int width, int height, string text)
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0);
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, PanelCorner);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, HeaderColor());
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, BorderColor());
+   ObjectSetInteger(0, name, OBJPROP_COLOR, TextColor());
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, FontSize);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 20);
+   ObjectSetString(0, name, OBJPROP_FONT, "Arial Bold");
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+}
+
+void CreateDashboard()
+{
+   if(!ShowDashboard)
+      return;
+
+   int width = MathMax(650, PanelWidth);
+   int line_step = 16;
+   int height = 88 + SENDER_LINE_COUNT * line_step;
+   EnsureBox(SENDER_PREFIX + "BG", PanelX, PanelY, width, height, PanelColor(), BorderColor());
+   EnsureBox(SENDER_PREFIX + "HEADER", PanelX, PanelY, width, 42, HeaderColor(), HeaderColor());
+   EnsureBox(SENDER_PREFIX + "ACCENT", PanelX, PanelY, 4, height, GoodColor(), GoodColor());
+   EnsureLabel(SENDER_PREFIX + "TITLE", PanelX + 18, PanelY + 12, FontSize + 4, TextColor(), "Arial Bold");
+   EnsureButton(SENDER_RESET_BUTTON, PanelX + width - 118, PanelY + 9, 96, 24, "RESET");
+   for(int i = 0; i < SENDER_LINE_COUNT; i++)
+      EnsureLabel(SENDER_PREFIX + "LINE_" + (string)i, PanelX + 18, PanelY + 56 + i * line_step, FontSize, TextColor());
+
+   g_objects_created = true;
+}
+
+void SetLine(int index, string text, color text_color = clrNONE)
+{
+   if(index < 0 || index >= SENDER_LINE_COUNT)
+      return;
+
+   string name = SENDER_PREFIX + "LINE_" + (string)index;
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, (text_color == clrNONE ? TextColor() : text_color));
+}
+
+color StatusColor(double left, double limit)
+{
+   if(left < 0.0)
+      return BadColor();
+   if(limit > 0.0 && left <= MathMax(1.0, limit * 0.2))
+      return WarnColor();
+   return GoodColor();
+}
+
+color StatusTextColor(string status)
+{
+   if(status == "ARMED")
+      return GoodColor();
+   if(status == "BLOCKED")
+      return BadColor();
+   return WarnColor();
+}
+
+string SignedMoney(double value)
+{
+   string sign = (value > 0.0 ? "+" : "");
+   return sign + Money(value);
+}
+
+string FormatAge(datetime value)
+{
+   if(value <= 0)
+      return "--";
+
+   int age = (int)(TimeCurrent() - value);
+   if(age < 0)
+      age = 0;
+   return (string)age + " sec";
+}
+
+string CopierFileName()
+{
+   string key = SafeKey(CopierKey);
+   if(key == "")
+      key = "default";
+
+   return COPIER_FILE_PREFIX + key + ".csv";
+}
+
+string ReceiverStatusFileName()
+{
+   string key = SafeKey(CopierKey);
+   if(key == "")
+      key = "default";
+
+   return RECEIVER_STATUS_FILE_PREFIX + key + ".csv";
+}
+
+string ResetRequestFileName()
+{
+   string key = SafeKey(CopierKey);
+   if(key == "")
+      key = "default";
+
+   return RESET_REQUEST_FILE_PREFIX + key + ".csv";
+}
+
+string SafeKey(string value)
+{
+   StringTrimLeft(value);
+   StringTrimRight(value);
+
+   string clean = "";
+   int length = StringLen(value);
+   for(int i = 0; i < length; i++)
+   {
+      ushort ch = StringGetCharacter(value, i);
+      bool allowed = (ch >= '0' && ch <= '9') ||
+                     (ch >= 'A' && ch <= 'Z') ||
+                     (ch >= 'a' && ch <= 'z') ||
+                     ch == '_' ||
+                     ch == '-';
+
+      if(allowed)
+         clean += ShortToString(ch);
+   }
+
+   return clean;
+}
+
+string Money(double value)
+{
+   return AccountInfoString(ACCOUNT_CURRENCY) + " " + DoubleToString(value, 2);
+}
