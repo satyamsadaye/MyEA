@@ -4228,7 +4228,8 @@ void UpdatePropFirmProtectionState()
          g_prop_protection_breached = false;
          g_prop_trading_allowed = true;
          g_prop_block_reason = "manual reset after profit target";
-         return;
+         // Continue to protection checks so equity stop and daily/total drawdown
+         // can still block trading even after a manual profit-target reset.
       }
 
       if(g_profit_target_reached)
@@ -4286,8 +4287,6 @@ void UpdatePropFirmProtectionState()
    if(equity <= g_equity_stop_level)
    {
       RecordProtectionHit();
-      if(PauseUntilNextDailyResetAfterDailyBreach)
-         LatchDailyPause();
       g_prop_protection_breached = true;
       g_prop_trading_allowed = false;
       g_prop_block_reason = ProtectionReasonWithHit("equity protection stop reached at " + MoneyText(g_equity_stop_level));
@@ -4447,12 +4446,13 @@ void WriteReceiverStatus()
    }
 
    FileWrite(handle,
-             "PROP_RECEIVER_STATUS_V4",
+             "PROP_RECEIVER_STATUS_V5",
              (long)AccountInfoInteger(ACCOUNT_LOGIN),
              (long)TimeCurrent(),
              DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2),
              DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2),
              DoubleToString(AccountInfoDouble(ACCOUNT_PROFIT), 2),
+             DoubleToString(AccountInfoDouble(ACCOUNT_MARGIN_FREE), 2),
              DoubleToString(g_daily_start_equity, 2),
              DoubleToString(g_daily_floor, 2),
              DoubleToString(g_daily_limit_money, 2),
@@ -4530,8 +4530,8 @@ string TelegramProtectionSnapshot()
    string msg = status_emoji + " *" + status_text + "*\n";
    msg += "*Account:* " + EscapeMarkdownV2((string)AccountInfoInteger(ACCOUNT_LOGIN)) + " \\| *Time:* " + EscapeMarkdownV2(CurrentIstText()) + "\n";
    msg += "*Balance:* " + EscapeMarkdownV2(MoneyText(AccountInfoDouble(ACCOUNT_BALANCE))) + " \\| *Equity:* " + EscapeMarkdownV2(MoneyText(AccountInfoDouble(ACCOUNT_EQUITY))) + "\n";
-   msg += "*Daily floor:* " + EscapeMarkdownV2(MoneyText(g_daily_floor)) + " (left " + EscapeMarkdownV2(MoneyText(g_daily_dd_left)) + ")\n";
-   msg += "*Max DD floor:* " + EscapeMarkdownV2(MoneyText(g_total_floor)) + " (left " + EscapeMarkdownV2(MoneyText(g_total_dd_left)) + ")\n";
+   msg += "*Daily floor:* " + EscapeMarkdownV2(MoneyText(g_daily_floor)) + " \\(" + "left " + EscapeMarkdownV2(MoneyText(g_daily_dd_left)) + "\\)\n";
+   msg += "*Max DD floor:* " + EscapeMarkdownV2(MoneyText(g_total_floor)) + " \\(" + "left " + EscapeMarkdownV2(MoneyText(g_total_dd_left)) + "\\)\n";
    msg += "*Early equity stop:* " + EscapeMarkdownV2(MoneyText(g_equity_stop_level)) + "\n";
    msg += "*Status:* " + EscapeMarkdownV2(g_prop_block_reason);
 
@@ -4567,9 +4567,16 @@ void EvaluateTelegramAlerts()
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
    bool target_now = (g_profit_target_reached || g_target_pause_latched);
-   bool daily_floor_now = (EnablePropFirmProtection && g_daily_limit_money > 0.0 && equity <= g_daily_floor);
-   bool total_floor_now = (EnablePropFirmProtection && g_total_limit_money > 0.0 && equity <= g_total_floor);
-   bool equity_stop_now = (EnablePropFirmProtection && g_equity_stop_level > 0.0 && equity <= g_equity_stop_level);
+   bool daily_floor_now = (EnablePropFirmProtection && g_daily_limit_money > 0.0 &&
+                          g_prop_protection_breached &&
+                          (StringFind(g_prop_block_reason, "daily drawdown floor reached") >= 0 ||
+                           StringFind(g_prop_block_reason, "daily protection paused until next UTC reset") >= 0));
+   bool total_floor_now = (EnablePropFirmProtection && g_total_limit_money > 0.0 &&
+                           g_prop_protection_breached &&
+                           StringFind(g_prop_block_reason, "total drawdown floor reached") >= 0);
+   bool equity_stop_now = (EnablePropFirmProtection && g_equity_stop_level > 0.0 &&
+                           g_prop_protection_breached &&
+                           StringFind(g_prop_block_reason, "equity protection stop reached") >= 0);
    bool custom_now = false;
    if(CustomEquityAlertLevel > 0.0)
    {
@@ -4590,7 +4597,8 @@ void EvaluateTelegramAlerts()
    if(AlertMaxDrawdownFloorReached && total_floor_now && !g_alert_total_floor_active)
       QueueTelegramAlert("MAX TOTAL DRAWDOWN HARD FLOOR REACHED", "Protection hit: " + ProtectionHitTicketsText());
 
-   if(AlertEquityProtectionStopReached && equity_stop_now && !g_alert_equity_stop_active)
+   bool equity_stop_blocked = (g_prop_protection_breached && StringFind(g_prop_block_reason, "equity protection stop reached") >= 0);
+   if(AlertEquityProtectionStopReached && equity_stop_now && equity_stop_blocked && !g_alert_equity_stop_active)
       QueueTelegramAlert("EARLY EQUITY PROTECTION STOP REACHED",
                          "Protection hit: " + ProtectionHitTicketsText() +
                          "\nHit time: " + ProtectionHitIstText());
@@ -4866,6 +4874,9 @@ void ProcessTelegramAlertQueue()
    if(!EnableTelegramAlerts || total <= 0)
       return;
 
+   if(PrintTelegramLogs)
+      PrintFormat("PropfirmReceiver Telegram queue processing | queue length=%d | last attempt=%d", total, g_last_telegram_attempt);
+
    datetime now = TimeCurrent();
    if(g_last_telegram_attempt > 0 && now - g_last_telegram_attempt < MathMax(5, TelegramRetrySeconds))
       return;
@@ -4875,7 +4886,7 @@ void ProcessTelegramAlertQueue()
    for(int i = 0; i < total; i++)
    {
       if(i > 0)
-         combined += "\n\n--------------------\n\n";
+         combined += "\n\n" + EscapeMarkdownV2("--------------------") + "\n\n";
       combined += g_telegram_alert_queue[i];
    }
 
@@ -5026,6 +5037,8 @@ void UpdateDashboard()
    SetProtectionLine(line++, "PROP PROTECTION", ReceiverMutedColor());
    SetProtectionLine(line++, "Daily floor    " + MoneyText(g_daily_floor) + "        Left          " + MoneyText(g_daily_dd_left), ReceiverStatusColor(g_daily_dd_left, g_daily_limit_money));
    SetProtectionLine(line++, "Total floor    " + MoneyText(g_total_floor) + "        Left          " + MoneyText(g_total_dd_left), ReceiverStatusColor(g_total_dd_left, g_total_limit_money));
+   double equity_stop_left = AccountInfoDouble(ACCOUNT_EQUITY) - g_equity_stop_level;
+   SetProtectionLine(line++, "Stop room left " + SignedMoneyText(equity_stop_left) + "        Stop level   " + MoneyText(g_equity_stop_level), equity_stop_left >= 0.0 ? ReceiverGoodColor() : ReceiverBadColor());
    SetProtectionLine(line++, "Equity stop    " + MoneyText(g_equity_stop_level) + "        Buffer        " + MoneyText(g_equity_buffer_money + MathMax(0.0, ExtraRiskBufferMoney)));
    SetProtectionLine(line++, g_daily_pause_latched ? "DAILY DD PROTECTION HIT - PAUSED UNTIL RESET" : "Daily DD protection  SAFE - NOT HIT", g_daily_pause_latched ? ReceiverBadColor() : ReceiverGoodColor());
    SetProtectionLine(line++, "Reset UTC      " + ResetTimeText() + "        Reset IST     " + ResetTimeIstText(), g_daily_pause_latched ? ReceiverWarnColor() : ReceiverTextColor());
