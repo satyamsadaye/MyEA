@@ -15,6 +15,7 @@ input group "Connection"
 input string CopierKey = "client1";
 input int ClosedTradeRetentionSeconds = 60;
 input int PublishMilliseconds = 500;
+input int ReceiverStatusConsecutive = 2; // number of consecutive stale/unavailable reads required before treating receiver as stale
 
 input group "Receiver Risk Gate"
 input bool RequireReceiverStatus = true;
@@ -26,6 +27,7 @@ input bool BlockTradesWithoutStopLoss = false;
 input bool BlockWhenReceiverHasOpenExposure = true;
 input double ExtraRiskBufferMoney = 0.0;
 input bool CloseMasterPositionWhenSenderBlocksSignal = true;
+input int AutoCloseMasterPositionsAfterSeconds = 10; // close master if receiver floating P/L stays 0 for this many seconds
 
 input group "Protection Close"
 input bool CloseMasterPositionsOnReceiverProtectionBreach = true;
@@ -117,6 +119,8 @@ string last_action = "Waiting for receiver status";
 string last_block_reason = "";
 int last_sent_positions = 0;
 int last_blocked_positions = 0;
+int g_receiver_stale_count = 0;
+datetime g_receiver_zero_float_since = 0;
 datetime last_snapshot_time = 0;
 bool g_objects_created = false;
 
@@ -277,12 +281,31 @@ bool SenderRiskGateAllows(const ulong ticket,
                           const double sl,
                           string &reason)
 {
-   if(!ReceiverStatusFresh(reason))
-      return false;
-
-   if(BlockWhenReceiverDisallowsTrading && receiver_status.loaded && !receiver_status.trading_allowed)
+   bool fresh = ReceiverStatusFresh(reason);
+   if(!fresh)
    {
-      reason = "receiver trading disabled: " + receiver_status.reason;
+      g_receiver_stale_count++;
+      int threshold = MathMax(1, ReceiverStatusConsecutive);
+      if(PrintDetailedLogs)
+         PrintFormat("PropfirmSender: receiver status not fresh (count %d/%d): %s", g_receiver_stale_count, threshold, reason);
+      if(g_receiver_stale_count < threshold)
+      {
+         // treat as temporarily acceptable until we see `threshold` consecutive failures
+      }
+      else
+      {
+         return false;
+      }
+   }
+   else
+   {
+      // reset counter on a fresh status
+      g_receiver_stale_count = 0;
+   }
+
+   if(BlockWhenReceiverDisallowsTrading && receiver_status.loaded && (!receiver_status.trading_allowed || receiver_status.protection_breached))
+   {
+      reason = "receiver trading disabled/protection breached: " + receiver_status.reason;
       return false;
    }
 
@@ -386,6 +409,24 @@ bool ReceiverStatusFresh(string &reason)
    return true;
 }
 
+bool ReceiverStatusFreshAndAvailable()
+{
+   if(!receiver_status.loaded)
+      return false;
+
+   int age = (int)(TimeCurrent() - receiver_status.server_time);
+   if(age < 0)
+      age = 0;
+
+   if(age > MathMax(1, ReceiverStatusMaxAgeSeconds))
+      return false;
+
+   if(!receiver_status.trading_allowed || receiver_status.protection_breached)
+      return false;
+
+   return true;
+}
+
 bool ReadReceiverStatus()
 {
    receiver_status.loaded = false;
@@ -479,17 +520,61 @@ double EstimatePositionRiskMoney(const string symbol,
 
 void EnforceReceiverProtectionClose()
 {
-   if(!CloseMasterPositionsOnReceiverProtectionBreach)
-      return;
-
-   if(!receiver_status.loaded)
-      return;
-
-   if(receiver_status.trading_allowed && !receiver_status.protection_breached)
+   if(!CloseMasterPositionsOnReceiverProtectionBreach && AutoCloseMasterPositionsAfterSeconds <= 0)
       return;
 
    int total = PositionsTotal();
    if(total <= 0)
+   {
+      g_receiver_zero_float_since = 0;
+      return;
+   }
+
+   string reason = "";
+   bool fresh = ReceiverStatusFresh(reason);
+   if(fresh && receiver_status.copied_positions == 0 && receiver_status.copied_pending_orders == 0 && MathAbs(receiver_status.floating) <= 1e-8)
+   {
+      if(g_receiver_zero_float_since == 0)
+         g_receiver_zero_float_since = TimeCurrent();
+
+      int elapsed = (int)(TimeCurrent() - g_receiver_zero_float_since);
+      if(elapsed >= MathMax(1, AutoCloseMasterPositionsAfterSeconds))
+      {
+         last_action = "Receiver floating P/L zero and no copied exposure; auto-closing master positions";
+         if(PrintDetailedLogs)
+         {
+            PrintFormat("PropfirmSender AUTO CLOSE ZERO FLOAT | Receiver=%I64d | elapsed=%d sec | MasterPositions=%d | close_after=%d",
+                        receiver_status.login,
+                        elapsed,
+                        total,
+                        AutoCloseMasterPositionsAfterSeconds);
+         }
+
+         for(int i = PositionsTotal() - 1; i >= 0; i--)
+         {
+            ulong ticket = PositionGetTicket(i);
+            if(ticket != 0)
+            {
+               RememberBlockedNotice(ticket,
+                                     PositionGetString(POSITION_SYMBOL),
+                                     PositionGetInteger(POSITION_TYPE),
+                                     PositionGetDouble(POSITION_VOLUME),
+                                     "receiver floating P/L has been zero for " + (string)elapsed + " sec and receiver has no copied exposure");
+               CloseMasterPositionWithRetries(ticket, "receiver floating P/L has been zero for " + (string)elapsed + " sec and receiver has no copied exposure");
+            }
+         }
+         return;
+      }
+   }
+   else
+   {
+      g_receiver_zero_float_since = 0;
+   }
+
+   if(!CloseMasterPositionsOnReceiverProtectionBreach)
+      return;
+
+   if(receiver_status.trading_allowed && !receiver_status.protection_breached)
       return;
 
    last_action = "Receiver protection is blocked; closing master positions";
