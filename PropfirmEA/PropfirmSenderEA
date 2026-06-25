@@ -27,7 +27,7 @@ input bool BlockTradesWithoutStopLoss = false;
 input bool BlockWhenReceiverHasOpenExposure = true;
 input double ExtraRiskBufferMoney = 0.0;
 input bool CloseMasterPositionWhenSenderBlocksSignal = true;
-input int AutoCloseMasterPositionsAfterSeconds = 10; // close master if receiver floating P/L stays 0 for this many seconds
+input int AutoCloseMasterPositionsAfterSeconds = 10; // close master if receiver has no copied exposure and free margin indicates no used margin for this many seconds
 
 input group "Protection Close"
 input bool CloseMasterPositionsOnReceiverProtectionBreach = true;
@@ -82,6 +82,7 @@ struct ReceiverRiskStatus
    double balance;
    double equity;
    double floating;
+   double free_margin;
    double daily_start_equity;
    double daily_floor;
    double daily_limit_money;
@@ -444,7 +445,7 @@ bool ReadReceiverStatus()
       }
 
       string version = FileReadString(handle);
-      if(version != "PROP_RECEIVER_STATUS_V4")
+      if(version != "PROP_RECEIVER_STATUS_V5")
       {
          FileClose(handle);
          if(attempt < 2)
@@ -454,9 +455,10 @@ bool ReadReceiverStatus()
 
       receiver_status.login = (long)StringToInteger(FileReadString(handle));
       receiver_status.server_time = (datetime)StringToInteger(FileReadString(handle));
-      receiver_status.balance = StringToDouble(FileReadString(handle));
+         receiver_status.balance = StringToDouble(FileReadString(handle));
       receiver_status.equity = StringToDouble(FileReadString(handle));
       receiver_status.floating = StringToDouble(FileReadString(handle));
+      receiver_status.free_margin = StringToDouble(FileReadString(handle));
       receiver_status.daily_start_equity = StringToDouble(FileReadString(handle));
       receiver_status.daily_floor = StringToDouble(FileReadString(handle));
       receiver_status.daily_limit_money = StringToDouble(FileReadString(handle));
@@ -532,7 +534,8 @@ void EnforceReceiverProtectionClose()
 
    string reason = "";
    bool fresh = ReceiverStatusFresh(reason);
-   if(fresh && receiver_status.copied_positions == 0 && receiver_status.copied_pending_orders == 0 && MathAbs(receiver_status.floating) <= 1e-8)
+   bool receiver_has_no_used_margin = MathAbs(receiver_status.balance - receiver_status.free_margin) <= 0.01;
+   if(fresh && receiver_status.copied_positions == 0 && receiver_status.copied_pending_orders == 0 && receiver_has_no_used_margin)
    {
       if(g_receiver_zero_float_since == 0)
          g_receiver_zero_float_since = TimeCurrent();
@@ -540,14 +543,15 @@ void EnforceReceiverProtectionClose()
       int elapsed = (int)(TimeCurrent() - g_receiver_zero_float_since);
       if(elapsed >= MathMax(1, AutoCloseMasterPositionsAfterSeconds))
       {
-         last_action = "Receiver floating P/L zero and no copied exposure; auto-closing master positions";
+         last_action = "Receiver has no copied exposure and no used margin; auto-closing master positions";
          if(PrintDetailedLogs)
          {
-            PrintFormat("PropfirmSender AUTO CLOSE ZERO FLOAT | Receiver=%I64d | elapsed=%d sec | MasterPositions=%d | close_after=%d",
+            PrintFormat("PropfirmSender AUTO CLOSE NO EXPOSURE | Receiver=%I64d | elapsed=%d sec | MasterPositions=%d | close_after=%d | used_margin=%.2f",
                         receiver_status.login,
                         elapsed,
                         total,
-                        AutoCloseMasterPositionsAfterSeconds);
+                        AutoCloseMasterPositionsAfterSeconds,
+                        receiver_status.balance - receiver_status.free_margin);
          }
 
          for(int i = PositionsTotal() - 1; i >= 0; i--)
@@ -559,8 +563,8 @@ void EnforceReceiverProtectionClose()
                                      PositionGetString(POSITION_SYMBOL),
                                      PositionGetInteger(POSITION_TYPE),
                                      PositionGetDouble(POSITION_VOLUME),
-                                     "receiver floating P/L has been zero for " + (string)elapsed + " sec and receiver has no copied exposure");
-               CloseMasterPositionWithRetries(ticket, "receiver floating P/L has been zero for " + (string)elapsed + " sec and receiver has no copied exposure");
+                                     "receiver has had no copied exposure and no used margin for " + (string)elapsed + " sec");
+               CloseMasterPositionWithRetries(ticket, "receiver has had no copied exposure and no used margin for " + (string)elapsed + " sec");
             }
          }
          return;
@@ -921,6 +925,7 @@ void UpdateDashboard()
       SetLine(line++, "Account        " + (string)receiver_status.login + "        Status age    " + receiver_age);
       SetLine(line++, "Balance        " + Money(receiver_status.balance) + "        Equity        " + Money(receiver_status.equity));
       SetLine(line++, "Floating P/L   " + SignedMoney(receiver_status.floating) + "        Gate          " + (receiver_status.trading_allowed ? "ALLOWED" : "BLOCKED"), receiver_status.trading_allowed ? GoodColor() : BadColor());
+      SetLine(line++, "Free margin    " + Money(receiver_status.free_margin) + "        Used margin   " + Money(receiver_status.balance - receiver_status.free_margin));
       SetLine(line++, "Daily floor    " + Money(receiver_status.daily_floor) + "        Left          " + Money(receiver_status.daily_left), StatusColor(receiver_status.daily_left, receiver_status.daily_limit_money));
       SetLine(line++, "Total floor    " + Money(receiver_status.total_floor) + "        Left          " + Money(receiver_status.total_left), StatusColor(receiver_status.total_left, receiver_status.total_limit_money));
       SetLine(line++, "Equity stop    " + Money(receiver_status.equity_stop_level) + "        Buffer        " + Money(receiver_status.equity_buffer_money));
