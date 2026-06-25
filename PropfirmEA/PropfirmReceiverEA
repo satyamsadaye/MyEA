@@ -346,6 +346,7 @@ datetime g_protection_hit_time_utc = 0;
 ulong g_protection_hit_receiver_ticket = 0;
 ulong g_protection_hit_source_ticket = 0;
 bool g_target_pause_latched = false;
+bool g_manual_reset_target_pause = false;
 double g_profit_target_equity = 0.0;
 double g_profit_target_progress = 0.0;
 double g_profit_target_left = 0.0;
@@ -2411,9 +2412,17 @@ bool CanSendTradeRequest(const string action)
    datetime now = TimeCurrent();
    if(now < g_trade_requests_suspended_until)
    {
-      last_action = "Skipped " + action + " because receiver trade requests are paused until " +
-                    ServerTimeToIstText(g_trade_requests_suspended_until);
-      return false;
+      if(TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) && MQLInfoInteger(MQL_TRADE_ALLOWED))
+      {
+         // Auto-trading has been re-enabled; clear the temporary backoff and retry now.
+         g_trade_requests_suspended_until = now;
+      }
+      else
+      {
+         last_action = "Skipped " + action + " because receiver trade requests are paused until " +
+                       ServerTimeToIstText(g_trade_requests_suspended_until);
+         return false;
+      }
    }
 
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
@@ -3874,7 +3883,13 @@ void LoadOrResetDailyState()
       double reconstructed_balance = 0.0;
       datetime reset_in_server_time = ServerTimeForUtc(utc_day);
       if(BalanceAtTime(reset_in_server_time, reconstructed_balance))
-         g_daily_start_equity = reconstructed_balance;
+      {
+         // If a trade was open across the reset, reconstructed_balance may be
+         // lower than the current equity (floating P/L). Use the higher of the
+         // reconstructed closed balance and the current equity to avoid
+         // immediately latching daily protection when positions are still open.
+         g_daily_start_equity = MathMax(reconstructed_balance, current_equity);
+      }
       else if(current_balance > 0.0)
          g_daily_start_equity = current_balance;
       else
@@ -3912,6 +3927,7 @@ void LoadOrResetDailyState()
    {
       g_daily_pause_latched = false;
       g_target_pause_latched = false;
+      g_manual_reset_target_pause = false;
       g_protection_hit_time_utc = 0;
       g_protection_hit_receiver_ticket = 0;
       g_protection_hit_source_ticket = 0;
@@ -4069,6 +4085,7 @@ void ResetProtectionState(const string reason)
    g_prop_trading_allowed = true;
    g_prop_protection_breached = false;
    g_prop_block_reason = "reset: " + reason;
+   g_manual_reset_target_pause = true;
    last_error = "";
    last_action = "Protection stats reset: " + reason;
    if(PrintProtectionLogs)
@@ -4201,6 +4218,16 @@ void UpdatePropFirmProtectionState()
          g_prop_protection_breached = true;
          g_prop_trading_allowed = false;
          g_prop_block_reason = "profit target paused until next UTC reset";
+         return;
+      }
+
+      if(PauseUntilNextDailyResetAfterProfitTarget && g_manual_reset_target_pause)
+      {
+         g_profit_target_reached = false;
+         g_target_pause_latched = false;
+         g_prop_protection_breached = false;
+         g_prop_trading_allowed = true;
+         g_prop_block_reason = "manual reset after profit target";
          return;
       }
 
@@ -4397,14 +4424,25 @@ void WriteReceiverStatus()
       return;
 
    string final_file = ReceiverStatusFileName();
+   int attempts = 3;
+   int handle = INVALID_HANDLE;
 
-   int handle = FileOpen(final_file,
-                         FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
-                         ';');
+   for(int a = 0; a < attempts; a++)
+   {
+      handle = FileOpen(final_file,
+                        FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        ';');
+      if(handle != INVALID_HANDLE)
+         break;
+      if(PrintProtectionLogs)
+         PrintFormat("PropfirmReceiver: cannot open status file '%s' (attempt %d/%d) error %d", final_file, a+1, attempts, GetLastError());
+      Sleep(20);
+   }
+
    if(handle == INVALID_HANDLE)
    {
       if(PrintProtectionLogs)
-         Print("PropfirmReceiver: cannot write status file ", final_file, " error ", GetLastError());
+         PrintFormat("PropfirmReceiver: failed to write status file '%s' after %d attempts", final_file, attempts);
       return;
    }
 
@@ -4463,26 +4501,56 @@ string CurrentIstText()
                        parts.hour < 12 ? "AM" : "PM");
 }
 
-string TelegramProtectionSnapshot()
+string EscapeMarkdownV2(const string text)
 {
-   return "Account: " + (string)AccountInfoInteger(ACCOUNT_LOGIN) +
-          "\nTime: " + CurrentIstText() +
-          "\nBalance: " + MoneyText(AccountInfoDouble(ACCOUNT_BALANCE)) +
-          "\nEquity: " + MoneyText(AccountInfoDouble(ACCOUNT_EQUITY)) +
-          "\nDaily floor: " + MoneyText(g_daily_floor) + " | left " + MoneyText(g_daily_dd_left) +
-          "\nMax DD floor: " + MoneyText(g_total_floor) + " | left " + MoneyText(g_total_dd_left) +
-          "\nEarly equity stop: " + MoneyText(g_equity_stop_level) +
-          "\nStatus: " + g_prop_block_reason;
+   string out = "";
+   int len = StringLen(text);
+   for(int i = 0; i < len; i++)
+   {
+      uint ch = StringGetCharacter(text, i);
+      // Characters that must be escaped for Telegram MarkdownV2
+      if(ch == '_' || ch == '*' || ch == '[' || ch == ']' || ch == '(' || ch == ')' ||
+         ch == '~' || ch == '`' || ch == '>' || ch == '#' || ch == '+' || ch == '-' ||
+         ch == '=' || ch == '|' || ch == '{' || ch == '}' || ch == '.' || ch == '!')
+      {
+         out += "\\" + CharToString((uchar)ch);
+      }
+      else
+         out += CharToString((uchar)ch);
+   }
+   return out;
 }
 
-void QueueTelegramAlert(const string title, const string details)
+string TelegramProtectionSnapshot()
+{
+   // Choose emoji: green if trading allowed, red if protection breached
+   string status_emoji = (g_prop_trading_allowed ? "🟢" : "🔴");
+   string status_text = (g_prop_trading_allowed ? "TRADING ALLOWED" : "PROTECTION PAUSED");
+
+   string msg = status_emoji + " *" + status_text + "*\n";
+   msg += "*Account:* " + EscapeMarkdownV2((string)AccountInfoInteger(ACCOUNT_LOGIN)) + " \\| *Time:* " + EscapeMarkdownV2(CurrentIstText()) + "\n";
+   msg += "*Balance:* " + EscapeMarkdownV2(MoneyText(AccountInfoDouble(ACCOUNT_BALANCE))) + " \\| *Equity:* " + EscapeMarkdownV2(MoneyText(AccountInfoDouble(ACCOUNT_EQUITY))) + "\n";
+   msg += "*Daily floor:* " + EscapeMarkdownV2(MoneyText(g_daily_floor)) + " (left " + EscapeMarkdownV2(MoneyText(g_daily_dd_left)) + ")\n";
+   msg += "*Max DD floor:* " + EscapeMarkdownV2(MoneyText(g_total_floor)) + " (left " + EscapeMarkdownV2(MoneyText(g_total_dd_left)) + ")\n";
+   msg += "*Early equity stop:* " + EscapeMarkdownV2(MoneyText(g_equity_stop_level)) + "\n";
+   msg += "*Status:* " + EscapeMarkdownV2(g_prop_block_reason);
+
+   // Message already includes MarkdownV2 formatting markers for static labels.
+   return msg;
+}
+
+void QueueTelegramAlert(const string title, const string details, const string title_emoji_override = "")
 {
    if(!EnableTelegramAlerts)
       return;
 
-   string message = "PROPFIRM RECEIVER ALERT\n" + title + "\n\n" + TelegramProtectionSnapshot();
+   // Add emoji to title depending on protection state, allow explicit override
+   string title_emoji = (title_emoji_override != "") ? title_emoji_override : (g_prop_trading_allowed ? "🟢" : "🔴");
+   string header = title_emoji + " *" + EscapeMarkdownV2(title) + "*";
+
+   string message = header + "\n\n" + TelegramProtectionSnapshot();
    if(details != "")
-      message += "\n" + details;
+      message += "\n" + EscapeMarkdownV2(details);
 
    int size = ArraySize(g_telegram_alert_queue);
    ArrayResize(g_telegram_alert_queue, size + 1);
@@ -4513,7 +4581,8 @@ void EvaluateTelegramAlerts()
    if(AlertProfitTargetReached && target_now && !g_alert_target_active)
       QueueTelegramAlert("PROFIT TARGET REACHED",
                          "Target: " + MoneyText(g_profit_target_equity) +
-                         " | progress " + MoneyText(g_profit_target_progress));
+                         " | progress " + MoneyText(g_profit_target_progress),
+                         "🟢");
 
    if(AlertDailyDrawdownFloorReached && daily_floor_now && !g_alert_daily_floor_active)
       QueueTelegramAlert("DAILY DRAWDOWN HARD FLOOR REACHED", "Protection hit: " + ProtectionHitTicketsText());
@@ -4762,7 +4831,7 @@ bool SendTelegramAlertMessage(const string message)
    }
 
    string url = "https://api.telegram.org/bot" + token + "/sendMessage";
-   string body = "chat_id=" + TelegramUrlEncode(chat_id) + "&text=" + TelegramUrlEncode(message);
+   string body = "chat_id=" + TelegramUrlEncode(chat_id) + "&parse_mode=MarkdownV2&text=" + TelegramUrlEncode(message);
    char data[];
    char result[];
    string headers = "Content-Type: application/x-www-form-urlencoded\r\n";
