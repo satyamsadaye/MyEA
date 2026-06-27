@@ -9,7 +9,9 @@
 #define RESET_REQUEST_FILE_PREFIX "propfirm_reset_request_"
 #define SENDER_PREFIX "PROP_SENDER_EA_"
 #define SENDER_RESET_BUTTON (SENDER_PREFIX + "RESET_BUTTON")
-#define SENDER_LINE_COUNT 41
+#define SENDER_LINE_COUNT 50
+#define FEE_DASHBOARD_PREFIX "PROP_FEE_DASHBOARD_"
+#define FEE_LINE_COUNT 30
 
 input group "Connection"
 input string CopierKey = "client1";
@@ -34,6 +36,12 @@ input bool CloseMasterPositionsOnReceiverProtectionBreach = true;
 input int CloseRetries = 5;
 input int CloseRetryDelayMilliseconds = 250;
 input int CloseSlippagePoints = 30;
+
+input group "Fee Recovery Tracking"
+input bool EnableFeeRecovery = true;
+input double FeeToRecover = 20.0;              // Amount to recover (e.g., $20 hedge)
+input ulong MagicNumberFeeTracking = 26052501;  // Magic number for tracking SENDER trades
+input ulong ReceiverMagicNumber = 0;           // Magic number for receiver trades (0 = auto-detect, or set specific)
 
 input group "Display and Logs"
 input bool ShowDashboard = true;
@@ -108,6 +116,33 @@ struct ReceiverRiskStatus
    ulong protection_hit_receiver_ticket;
    ulong protection_hit_source_ticket;
    string reason;
+   double avg_receiver_win_per_trade;    // Real-time from receiver
+   double avg_receiver_loss_per_trade;   // Real-time from receiver
+   int receiver_win_count;
+   int receiver_loss_count;
+};
+
+struct FeeRecoveryStats
+{
+   double fee_to_recover;           // Original fee amount
+   double avg_sender_loss;          // Average LOSS per trade on sender (from sender trades)
+   double avg_sender_win;           // Average WIN per trade on sender (from sender trades)
+   double avg_receiver_loss;        // Average LOSS per trade on receiver (from receiver)
+   double avg_receiver_win;         // Average WIN per trade on receiver (from receiver)
+   double propfirm_trades_to_target; // How many trades propfirm needs to win equity target
+   double propfirm_trades_to_drawdown; // How many trades propfirm can lose before DD breach
+   double expected_sender_loss_at_target; // Expected loss if propfirm reaches target
+   int trades_to_recover_fee;       // Estimated trades needed
+   double fee_available_to_recover; // Fee amount that can be recovered before drawdown breach
+   double fee_recovered_till_now;   // Cumulative fee recovered based on sender P&L
+   double fee_at_risk_if_target_hit; // Fee amount at risk if prop firm hits profit target
+   double extra_capital_needed_to_survive; // Additional capital needed beyond current balance
+   double capital_needed_to_survive; // Total capital needed to survive target hit
+   int receiver_wins;               // Recent receiver wins count (from receiver)
+   int receiver_losses;             // Recent receiver losses count (from receiver)
+   int sender_wins;                 // Recent sender wins count
+   int sender_losses;               // Recent sender losses count
+   datetime last_updated;           // Last calculation time
 };
 
 SenderPositionState remembered_positions[];
@@ -115,6 +150,7 @@ SenderCloseEvent close_events[];
 SenderBlockedNotice blocked_notices[];
 ulong allowed_active_source_tickets[];
 ReceiverRiskStatus receiver_status;
+FeeRecoveryStats fee_stats;
 CTrade trade;
 string last_action = "Waiting for receiver status";
 string last_block_reason = "";
@@ -138,6 +174,7 @@ void OnDeinit(const int reason)
    EventKillTimer();
    WriteSnapshot();
    DeleteDashboard();
+   DeleteFeeRecoveryDashboard();
    Comment("");
 }
 
@@ -149,6 +186,8 @@ void OnTick()
 void OnTimer()
 {
    WriteSnapshot();
+   UpdateDashboard();
+   UpdateFeeRecoveryDashboard();
 }
 
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
@@ -165,7 +204,9 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
    {
       g_objects_created = false;
       CreateDashboard();
+      CreateFeeRecoveryDashboard();
       UpdateDashboard();
+      UpdateFeeRecoveryDashboard();
    }
 }
 
@@ -175,6 +216,10 @@ void WriteSnapshot()
    PruneAllowedActiveSourceTickets();
    PruneBlockedNotices();
    ReadReceiverStatus();
+   
+   // Calculate fee recovery stats if enabled
+   if(EnableFeeRecovery)
+      CalculateFeeRecoveryStats();
 
    EnforceReceiverProtectionClose();
 
@@ -272,6 +317,7 @@ void WriteSnapshot()
    last_snapshot_time = TimeCurrent();
    last_action = "Published " + (string)last_sent_positions + " source trade(s), blocked " + (string)last_blocked_positions;
    UpdateDashboard();
+   UpdateFeeRecoveryDashboard();
 }
 
 bool SenderRiskGateAllows(const ulong ticket,
@@ -445,7 +491,7 @@ bool ReadReceiverStatus()
       }
 
       string version = FileReadString(handle);
-      if(version != "PROP_RECEIVER_STATUS_V5")
+      if(version != "PROP_RECEIVER_STATUS_V6")
       {
          FileClose(handle);
          if(attempt < 2)
@@ -455,41 +501,43 @@ bool ReadReceiverStatus()
 
       receiver_status.login = (long)StringToInteger(FileReadString(handle));
       receiver_status.server_time = (datetime)StringToInteger(FileReadString(handle));
-         receiver_status.balance = StringToDouble(FileReadString(handle));
-      receiver_status.equity = StringToDouble(FileReadString(handle));
-      receiver_status.floating = StringToDouble(FileReadString(handle));
-      receiver_status.free_margin = StringToDouble(FileReadString(handle));
-      receiver_status.daily_start_equity = StringToDouble(FileReadString(handle));
-      receiver_status.daily_floor = StringToDouble(FileReadString(handle));
-      receiver_status.daily_limit_money = StringToDouble(FileReadString(handle));
-      receiver_status.daily_left = StringToDouble(FileReadString(handle));
-      receiver_status.total_floor = StringToDouble(FileReadString(handle));
-      receiver_status.total_limit_money = StringToDouble(FileReadString(handle));
-      receiver_status.total_left = StringToDouble(FileReadString(handle));
-      receiver_status.equity_stop_level = StringToDouble(FileReadString(handle));
-      receiver_status.equity_buffer_money = StringToDouble(FileReadString(handle));
-      receiver_status.copied_positions = (int)StringToInteger(FileReadString(handle));
-      receiver_status.copied_pending_orders = (int)StringToInteger(FileReadString(handle));
-      receiver_status.daily_protection_latched = (StringToInteger(FileReadString(handle)) != 0);
-      receiver_status.next_daily_reset_utc = (datetime)StringToInteger(FileReadString(handle));
-      receiver_status.profit_target_enabled = (StringToInteger(FileReadString(handle)) != 0);
-      receiver_status.profit_target_money = StringToDouble(FileReadString(handle));
-      receiver_status.profit_target_equity = StringToDouble(FileReadString(handle));
-      receiver_status.profit_target_progress = StringToDouble(FileReadString(handle));
-      receiver_status.profit_target_left = StringToDouble(FileReadString(handle));
-      receiver_status.profit_target_reached = (StringToInteger(FileReadString(handle)) != 0);
-      receiver_status.trading_allowed = (StringToInteger(FileReadString(handle)) != 0);
-      receiver_status.protection_breached = (StringToInteger(FileReadString(handle)) != 0);
-      receiver_status.protection_hit_time_utc = (datetime)StringToInteger(FileReadString(handle));
-      receiver_status.protection_hit_receiver_ticket = (ulong)StringToInteger(FileReadString(handle));
-      receiver_status.protection_hit_source_ticket = (ulong)StringToInteger(FileReadString(handle));
-      receiver_status.reason = FileReadString(handle);
-      string completion_mark = FileReadString(handle);
-      receiver_status.loaded = (completion_mark == "COMPLETED");
+   receiver_status.balance = StringToDouble(FileReadString(handle));
+   receiver_status.equity = StringToDouble(FileReadString(handle));
+   receiver_status.floating = StringToDouble(FileReadString(handle));
+   receiver_status.free_margin = StringToDouble(FileReadString(handle));
+   receiver_status.daily_start_equity = StringToDouble(FileReadString(handle));
+   receiver_status.daily_floor = StringToDouble(FileReadString(handle));
+   receiver_status.daily_limit_money = StringToDouble(FileReadString(handle));
+   receiver_status.daily_left = StringToDouble(FileReadString(handle));
+   receiver_status.total_floor = StringToDouble(FileReadString(handle));
+   receiver_status.total_limit_money = StringToDouble(FileReadString(handle));
+   receiver_status.total_left = StringToDouble(FileReadString(handle));
+   receiver_status.equity_stop_level = StringToDouble(FileReadString(handle));
+   receiver_status.equity_buffer_money = StringToDouble(FileReadString(handle));
+   receiver_status.copied_positions = (int)StringToInteger(FileReadString(handle));
+   receiver_status.copied_pending_orders = (int)StringToInteger(FileReadString(handle));
+   receiver_status.daily_protection_latched = (StringToInteger(FileReadString(handle)) != 0);
+   receiver_status.next_daily_reset_utc = (datetime)StringToInteger(FileReadString(handle));
+   receiver_status.profit_target_enabled = (StringToInteger(FileReadString(handle)) != 0);
+   receiver_status.profit_target_money = StringToDouble(FileReadString(handle));
+   receiver_status.profit_target_equity = StringToDouble(FileReadString(handle));
+   receiver_status.profit_target_progress = StringToDouble(FileReadString(handle));
+   receiver_status.profit_target_left = StringToDouble(FileReadString(handle));
+   receiver_status.profit_target_reached = (StringToInteger(FileReadString(handle)) != 0);
+   receiver_status.trading_allowed = (StringToInteger(FileReadString(handle)) != 0);
+   receiver_status.protection_breached = (StringToInteger(FileReadString(handle)) != 0);
+   receiver_status.protection_hit_time_utc = (datetime)StringToInteger(FileReadString(handle));
+   receiver_status.protection_hit_receiver_ticket = (ulong)StringToInteger(FileReadString(handle));
+   receiver_status.protection_hit_source_ticket = (ulong)StringToInteger(FileReadString(handle));
+   receiver_status.reason = FileReadString(handle);
+   receiver_status.avg_receiver_win_per_trade = StringToDouble(FileReadString(handle));
+   receiver_status.avg_receiver_loss_per_trade = StringToDouble(FileReadString(handle));
+   receiver_status.receiver_win_count = (int)StringToInteger(FileReadString(handle));
+   receiver_status.receiver_loss_count = (int)StringToInteger(FileReadString(handle));
 
+      receiver_status.loaded = true;
       FileClose(handle);
-      if(receiver_status.loaded)
-         return true;
+      return true;
 
       if(attempt < 2)
          Sleep(20);
@@ -893,6 +941,7 @@ void UpdateDashboard()
    if(!ShowDashboard)
    {
       DeleteDashboard();
+      DeleteFeeRecoveryDashboard();
       Comment("");
       return;
    }
@@ -1055,6 +1104,16 @@ void DeleteDashboard()
    g_objects_created = false;
 }
 
+void DeleteFeeRecoveryDashboard()
+{
+   for(int i = ObjectsTotal(0, 0, -1) - 1; i >= 0; i--)
+   {
+      string name = ObjectName(0, i, 0, -1);
+      if(StringFind(name, FEE_DASHBOARD_PREFIX) == 0)
+         ObjectDelete(0, name);
+   }
+}
+
 void EnsureBox(string name, int x, int y, int width, int height, color background, color border)
 {
    if(ObjectFind(0, name) < 0)
@@ -1130,6 +1189,24 @@ void CreateDashboard()
    g_objects_created = true;
 }
 
+void CreateFeeRecoveryDashboard()
+{
+   if(!ShowDashboard)
+      return;
+
+   int width = MathMax(650, PanelWidth);
+   int line_step = 16;
+   int height = 88 + FEE_LINE_COUNT * line_step;
+   int fee_panel_x = PanelX + width + 20;
+   
+   EnsureBox(FEE_DASHBOARD_PREFIX + "BG", fee_panel_x, PanelY, width, height, PanelColor(), BorderColor());
+   EnsureBox(FEE_DASHBOARD_PREFIX + "HEADER", fee_panel_x, PanelY, width, 42, HeaderColor(), HeaderColor());
+   EnsureBox(FEE_DASHBOARD_PREFIX + "ACCENT", fee_panel_x, PanelY, 4, height, GoodColor(), GoodColor());
+   EnsureLabel(FEE_DASHBOARD_PREFIX + "TITLE", fee_panel_x + 18, PanelY + 12, FontSize + 4, TextColor(), "Arial Bold");
+   for(int i = 0; i < FEE_LINE_COUNT; i++)
+      EnsureLabel(FEE_DASHBOARD_PREFIX + "LINE_" + (string)i, fee_panel_x + 18, PanelY + 56 + i * line_step, FontSize, TextColor());
+}
+
 void SetLine(int index, string text, color text_color = clrNONE)
 {
    if(index < 0 || index >= SENDER_LINE_COUNT)
@@ -1138,6 +1215,92 @@ void SetLine(int index, string text, color text_color = clrNONE)
    string name = SENDER_PREFIX + "LINE_" + (string)index;
    ObjectSetString(0, name, OBJPROP_TEXT, text);
    ObjectSetInteger(0, name, OBJPROP_COLOR, (text_color == clrNONE ? TextColor() : text_color));
+}
+
+void SetLineFeeRecovery(int index, string text, color text_color = clrNONE)
+{
+   if(index < 0 || index >= FEE_LINE_COUNT)
+      return;
+
+   string name = FEE_DASHBOARD_PREFIX + "LINE_" + (string)index;
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, (text_color == clrNONE ? TextColor() : text_color));
+}
+
+void UpdateFeeRecoveryDashboard()
+{
+   if(!ShowDashboard || !EnableFeeRecovery)
+   {
+      DeleteFeeRecoveryDashboard();
+      return;
+   }
+
+   CreateFeeRecoveryDashboard();
+
+   ObjectSetString(0, FEE_DASHBOARD_PREFIX + "TITLE", OBJPROP_TEXT, "Fee Recovery & Capital Analysis");
+
+   int line = 0;
+
+   SetLineFeeRecovery(line++, "CRITICAL SCENARIOS", MutedColor());
+   if(!receiver_status.loaded)
+   {
+      SetLineFeeRecovery(line++, "Awaiting receiver status...", WarnColor());
+      for(int i = 0; i < FEE_LINE_COUNT - 2; i++)
+         SetLineFeeRecovery(line++, " ");
+      ChartRedraw(0);
+      return;
+   }
+
+   // Calculate scenario 1: If propfirm reaches target
+   double scenario1_capital_needed = fee_stats.extra_capital_needed_to_survive;
+   double scenario1_fee_loss = fee_stats.expected_sender_loss_at_target;
+   
+   // Calculate scenario 2: If propfirm hits drawdown (blows)
+   double scenario2_trades_to_dd = fee_stats.propfirm_trades_to_drawdown;
+   double scenario2_fee_recovered = scenario2_trades_to_dd * fee_stats.avg_sender_win;
+   
+   SetLineFeeRecovery(line++, "SCENARIO 1: PROPFIRM REACHES TARGET", WarnColor());
+   SetLineFeeRecovery(line++, "Capital needed more     " + Money(scenario1_capital_needed), scenario1_capital_needed > 0 ? BadColor() : GoodColor());
+   SetLineFeeRecovery(line++, "Expected loss (sender)  " + Money(scenario1_fee_loss), BadColor());
+   SetLineFeeRecovery(line++, "Fee recovery possible  " + Money(-scenario1_fee_loss) + " (LOSS)", BadColor());
+   SetLineFeeRecovery(line++, " ");
+   
+   SetLineFeeRecovery(line++, "SCENARIO 2: PROPFIRM HITS DRAWDOWN", GoodColor());
+   SetLineFeeRecovery(line++, "Trades until DD breach  " + (string)(int)scenario2_trades_to_dd);
+   SetLineFeeRecovery(line++, "Fee recoverable in case " + Money(scenario2_fee_recovered), scenario2_fee_recovered > 0 ? GoodColor() : WarnColor());
+   SetLineFeeRecovery(line++, " ");
+
+   string fee_status = (fee_stats.fee_to_recover > 0 ? "ACTIVE" : "NONE");
+   SetLineFeeRecovery(line++, "FEE TO RECOVER", MutedColor());
+   SetLineFeeRecovery(line++, "Fee target amount       " + Money(fee_stats.fee_to_recover) + "  " + fee_status, fee_status == "ACTIVE" ? GoodColor() : MutedColor());
+   SetLineFeeRecovery(line++, "Fee recovered till now  " + SignedMoneyWithColor(fee_stats.fee_recovered_till_now), fee_stats.fee_recovered_till_now >= 0 ? GoodColor() : BadColor());
+   SetLineFeeRecovery(line++, " ");
+
+   SetLineFeeRecovery(line++, "CURRENT STATISTICS", MutedColor());
+   SetLineFeeRecovery(line++, "Sender balance          " + Money(AccountInfoDouble(ACCOUNT_BALANCE)));
+   SetLineFeeRecovery(line++, "Avg sender WIN/trade    " + Money(fee_stats.avg_sender_win));
+   SetLineFeeRecovery(line++, "Avg sender LOSS/trade   " + Money(fee_stats.avg_sender_loss));
+   SetLineFeeRecovery(line++, "Recent: " + (string)fee_stats.sender_wins + "W / " + (string)fee_stats.sender_losses + "L");
+   SetLineFeeRecovery(line++, " ");
+
+   SetLineFeeRecovery(line++, "PROPFIRM CURRENT STATE", MutedColor());
+   SetLineFeeRecovery(line++, "Avg propfirm WIN/trade  " + Money(fee_stats.avg_receiver_win));
+   SetLineFeeRecovery(line++, "Avg propfirm LOSS/trade " + Money(fee_stats.avg_receiver_loss));
+   SetLineFeeRecovery(line++, "Recent: " + (string)fee_stats.receiver_wins + "W / " + (string)fee_stats.receiver_losses + "L");
+   
+   if(receiver_status.profit_target_enabled && receiver_status.profit_target_money > 0.0)
+   {
+      SetLineFeeRecovery(line++, " ");
+      SetLineFeeRecovery(line++, "TARGET & DD METRICS", MutedColor());
+      SetLineFeeRecovery(line++, "Target left             " + Money(receiver_status.profit_target_left), StatusColor(receiver_status.profit_target_left, receiver_status.profit_target_money));
+      SetLineFeeRecovery(line++, "DD left                 " + Money(receiver_status.total_left), StatusColor(receiver_status.total_left, receiver_status.total_limit_money));
+      SetLineFeeRecovery(line++, "Trades to target        " + (string)(int)fee_stats.propfirm_trades_to_target);
+   }
+
+   for(; line < FEE_LINE_COUNT; line++)
+      SetLineFeeRecovery(line, " ");
+
+   ChartRedraw(0);
 }
 
 color StatusColor(double left, double limit)
@@ -1159,6 +1322,12 @@ color StatusTextColor(string status)
 }
 
 string SignedMoney(double value)
+{
+   string sign = (value > 0.0 ? "+" : "");
+   return sign + Money(value);
+}
+
+string SignedMoneyWithColor(double value)
 {
    string sign = (value > 0.0 ? "+" : "");
    return sign + Money(value);
@@ -1223,6 +1392,265 @@ string SafeKey(string value)
    }
 
    return clean;
+}
+
+//============ FEE RECOVERY CALCULATION FUNCTIONS ============
+
+void CalculateFeeRecoveryStats()
+{
+   fee_stats.fee_to_recover = FeeToRecover;
+   fee_stats.last_updated = TimeCurrent();
+   
+   if(!receiver_status.loaded)
+   {
+      fee_stats.avg_sender_loss = 0;
+      fee_stats.avg_sender_win = 0;
+      fee_stats.propfirm_trades_to_target = 0;
+      fee_stats.propfirm_trades_to_drawdown = 0;
+      fee_stats.expected_sender_loss_at_target = 0;
+      fee_stats.trades_to_recover_fee = 0;
+      fee_stats.fee_available_to_recover = 0;
+      fee_stats.fee_recovered_till_now = 0;
+      fee_stats.fee_at_risk_if_target_hit = 0;
+      fee_stats.extra_capital_needed_to_survive = 0;
+      fee_stats.capital_needed_to_survive = 0;
+      fee_stats.receiver_wins = 0;
+      fee_stats.receiver_losses = 0;
+      fee_stats.sender_wins = 0;
+      fee_stats.sender_losses = 0;
+      return;
+   }
+
+   // Calculate average sender WIN and average sender LOSS (all trades from last 24 hours)
+   CalculateAverageSenderStats();
+   
+   // Calculate cumulative fee recovered from sender's total P&L
+   CalculateCumulativeFeeRecovered();
+   
+   // Calculate how many trades propfirm can lose before hitting drawdown
+   fee_stats.propfirm_trades_to_drawdown = 0;
+   if(receiver_status.avg_receiver_loss_per_trade > 0.01)
+      fee_stats.propfirm_trades_to_drawdown = receiver_status.total_left / receiver_status.avg_receiver_loss_per_trade;
+   
+   // Use RECEIVER's actual average loss from real trades
+   fee_stats.avg_receiver_loss = receiver_status.avg_receiver_loss_per_trade;
+   fee_stats.avg_receiver_win = receiver_status.avg_receiver_win_per_trade;
+   fee_stats.receiver_wins = receiver_status.receiver_win_count;
+   fee_stats.receiver_losses = receiver_status.receiver_loss_count;
+   
+   // Fee recoverable = how much profit we can make before propfirm hits drawdown
+   // Propfirm can lose N trades (total_left / avg_loss_per_trade)
+   // In each of those trades, if propfirm loses, sender wins (inverse)
+   // So fee recoverable = propfirm_trades_to_drawdown × sender_average_win
+   if(fee_stats.avg_sender_win > 0.01 && fee_stats.propfirm_trades_to_drawdown > 0.01)
+      fee_stats.fee_available_to_recover = fee_stats.propfirm_trades_to_drawdown * fee_stats.avg_sender_win;
+   else if(receiver_status.total_left > 0.01 && receiver_status.avg_receiver_loss_per_trade > 0.01)
+      fee_stats.fee_available_to_recover = MathMin(receiver_status.total_left, fee_stats.propfirm_trades_to_drawdown * receiver_status.avg_receiver_loss_per_trade);
+   else
+      fee_stats.fee_available_to_recover = 0;
+   
+   // Trades to recover full fee (at current average sender win rate)
+   if(fee_stats.avg_sender_win > 0.01)
+      fee_stats.trades_to_recover_fee = (int)MathCeil(fee_stats.fee_to_recover / fee_stats.avg_sender_win);
+   else
+      fee_stats.trades_to_recover_fee = 0;
+   
+   // Calculate capital needed to survive if prop firm hits profit target
+   CalculateCapitalNeededToSurvive();
+}
+
+void CalculateAverageSenderStats()
+{
+   fee_stats.avg_sender_loss = 0;   // Average LOSS per trade
+   fee_stats.avg_sender_win = 0;    // Average WIN per trade
+   fee_stats.sender_wins = 0;
+   fee_stats.sender_losses = 0;
+   
+   double total_win = 0;
+   double total_loss = 0;
+   int win_count = 0;
+   int loss_count = 0;
+   
+   // Get history for last 24 hours
+   datetime from_time = TimeCurrent() - 86400;
+   datetime to_time = TimeCurrent();
+   
+   if(!HistorySelect(from_time, to_time))
+      return;
+   
+   int total_deals = HistoryDealsTotal();
+   
+   // Scan ALL trades (not just last 5) for accurate real-time averages
+   for(int i = 0; i < total_deals; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+      
+      long magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
+      long deal_type = HistoryDealGetInteger(ticket, DEAL_TYPE);
+      
+      // Only count our trades (same magic number) and exclude entries
+      if(magic != MagicNumberFeeTracking || (deal_type != DEAL_TYPE_SELL && deal_type != DEAL_TYPE_BUY))
+         continue;
+      
+      // Skip entry deals, only count closing deals
+      long entry_type = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entry_type == DEAL_ENTRY_IN)
+         continue;
+      
+      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      
+      // Count WINNING trades
+      if(profit > 0.01)
+      {
+         total_win += profit;
+         win_count++;
+         fee_stats.sender_wins++;
+      }
+      // Count LOSING trades
+      else if(profit < -0.01)
+      {
+         total_loss += MathAbs(profit);
+         loss_count++;
+         fee_stats.sender_losses++;
+      }
+   }
+   
+   // Calculate averages from ALL trades
+   if(win_count > 0)
+      fee_stats.avg_sender_win = total_win / win_count;
+   else
+      fee_stats.avg_sender_win = 0;
+      
+   if(loss_count > 0)
+      fee_stats.avg_sender_loss = total_loss / loss_count;
+   else
+      fee_stats.avg_sender_loss = 0;
+}
+
+datetime UtcDayStart(datetime utc_time)
+{
+   MqlDateTime parts;
+   TimeToStruct(utc_time, parts);
+   parts.hour = 0;
+   parts.min = 0;
+   parts.sec = 0;
+   return StructToTime(parts);
+}
+
+void CalculateCumulativeFeeRecovered()
+{
+   /*
+   Calculate TOTAL cumulative fee recovered based on sender's ALL-TIME P&L
+   
+   Fee Recovered = Sender's Total P&L from ALL closed trades (cumulative)
+   - If positive: showing how much profit sender made overall (fee recovery progress)
+   - If negative: showing cumulative loss
+   
+   This gets ALL trades from history, not just today
+   */
+   
+   fee_stats.fee_recovered_till_now = 0;
+   
+   // Get all deals from entire history (going back 10 years to ensure we get everything)
+   datetime from_time = TimeCurrent() - (10 * 365 * 86400);
+   datetime to_time = TimeCurrent() + 86400;
+   
+   if(!HistorySelect(from_time, to_time))
+      return;
+   
+   int total_deals = HistoryDealsTotal();
+   
+   // Sum ALL P&L from our fee tracking magic trades
+   for(int i = 0; i < total_deals; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+      
+      long magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
+      if(magic != MagicNumberFeeTracking)
+         continue;
+      
+      // Skip entry deals, only count exits
+      long entry_type = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entry_type == DEAL_ENTRY_IN)
+         continue;
+      
+      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      fee_stats.fee_recovered_till_now += profit;
+   }
+}
+
+void CalculateCapitalNeededToSurvive()
+{
+   /*
+   CORRECT LOGIC FOR CAPITAL NEEDED TO SURVIVE TARGET HIT:
+   
+   SCENARIO:
+   - Propfirm needs X trades to reach profit target (profit_target_left / avg_win_per_trade)
+   - For each of those X trades, if propfirm wins, sender LOSES (inverse relationship)
+   - Sender's average loss per losing trade: avg_sender_loss
+   - When propfirm wins X trades, sender loses: X × avg_sender_loss
+   
+   CALCULATION:
+   1. trades_propfirm_needs = profit_target_left / avg_receiver_win_per_trade
+   2. expected_sender_loss = trades_propfirm_needs × avg_sender_loss
+   3. extra_capital = MAX(0, expected_sender_loss - current_balance)
+   4. total_capital_needed = expected_sender_loss (base capital to survive)
+   5. fee_at_risk = extra_capital_needed (amount over current balance that could be lost)
+   
+   EXAMPLE:
+   - Sender current balance: $1000
+   - Propfirm profit target left: $500
+   - Propfirm average win: $100/trade
+   - Sender average loss per trade: $300
+   
+   Trades propfirm needs: $500 / $100 = 5 trades
+   Expected sender loss: 5 × $300 = $1500
+   Extra capital needed: $1500 - $1000 = $500
+   Total capital to survive: $1500
+   */
+   
+   double current_balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   fee_stats.expected_sender_loss_at_target = 0;
+   fee_stats.extra_capital_needed_to_survive = 0;
+   fee_stats.capital_needed_to_survive = current_balance;
+   fee_stats.fee_at_risk_if_target_hit = 0;
+   fee_stats.propfirm_trades_to_target = 0;
+   
+   // If no target enabled or target already reached, no additional capital needed
+   if(!receiver_status.profit_target_enabled || receiver_status.profit_target_left <= 0.01)
+   {
+      fee_stats.capital_needed_to_survive = current_balance;
+      fee_stats.fee_at_risk_if_target_hit = 0;
+      return;
+   }
+   
+   // How many trades does propfirm need to win to reach target?
+   if(receiver_status.avg_receiver_win_per_trade > 0.01)
+      fee_stats.propfirm_trades_to_target = receiver_status.profit_target_left / receiver_status.avg_receiver_win_per_trade;
+   else
+      return;
+   
+   // If propfirm wins those trades, how much does sender LOSE (inverse)?
+   // Use sender's actual average loss if available, otherwise use receiver's average loss
+   if(fee_stats.avg_sender_loss > 0.01)
+      fee_stats.expected_sender_loss_at_target = fee_stats.propfirm_trades_to_target * fee_stats.avg_sender_loss;
+   else if(receiver_status.avg_receiver_loss_per_trade > 0.01)
+      fee_stats.expected_sender_loss_at_target = fee_stats.propfirm_trades_to_target * receiver_status.avg_receiver_loss_per_trade;
+   else
+      fee_stats.expected_sender_loss_at_target = 0;
+   
+   // How much extra capital is needed beyond current balance?
+   fee_stats.extra_capital_needed_to_survive = MathMax(0.0, fee_stats.expected_sender_loss_at_target - current_balance);
+   
+   // Total capital needed to survive if target is hit
+   fee_stats.capital_needed_to_survive = fee_stats.expected_sender_loss_at_target;
+   
+   // Fee at risk if target hit = how much we would need beyond current balance
+   fee_stats.fee_at_risk_if_target_hit = fee_stats.extra_capital_needed_to_survive;
 }
 
 string Money(double value)
