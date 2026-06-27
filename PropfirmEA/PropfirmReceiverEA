@@ -4417,6 +4417,81 @@ void EnforceProtectionBreachActions()
    }
 }
 
+struct ReceiverTradeStats
+{
+   double avg_win_per_trade;
+   double avg_loss_per_trade;
+   int win_count;
+   int loss_count;
+   double total_win;
+   double total_loss;
+};
+
+ReceiverTradeStats CalculateReceiverTradeStats()
+{
+   ReceiverTradeStats stats;
+   stats.avg_win_per_trade = 0;
+   stats.avg_loss_per_trade = 0;
+   stats.win_count = 0;
+   stats.loss_count = 0;
+   stats.total_win = 0;
+   stats.total_loss = 0;
+
+   // Get last 24 hours of trading history
+   datetime from_time = TimeCurrent() - 86400;
+   datetime to_time = TimeCurrent();
+   
+   if(!HistorySelect(from_time, to_time))
+      return stats;
+   
+   int total_deals = HistoryDealsTotal();
+   int lookback = 0;
+   
+   // Scan last 10 trades to get average
+   for(int i = total_deals - 1; i >= 0 && lookback < 10; i--)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+      
+      // Only count our copied trades
+      long magic = HistoryDealGetInteger(deal_ticket, DEAL_MAGIC);
+      if(magic != (long)MagicNumber)
+         continue;
+      
+      // Skip entry deals, only count exits
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry == DEAL_ENTRY_IN)
+         continue;
+      
+      double profit = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT) +
+                      HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION) +
+                      HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
+      
+      if(profit > 0.01)
+      {
+         stats.total_win += profit;
+         stats.win_count++;
+      }
+      else if(profit < -0.01)
+      {
+         stats.total_loss += MathAbs(profit);
+         stats.loss_count++;
+      }
+      
+      lookback++;
+   }
+   
+   // Calculate averages
+   if(stats.win_count > 0)
+      stats.avg_win_per_trade = stats.total_win / stats.win_count;
+   
+   if(stats.loss_count > 0)
+      stats.avg_loss_per_trade = stats.total_loss / stats.loss_count;
+   
+   return stats;
+}
+
 void WriteReceiverStatus()
 {
    if(!PublishReceiverStatus)
@@ -4445,8 +4520,11 @@ void WriteReceiverStatus()
       return;
    }
 
+   // Calculate receiver trade statistics for sender use
+   ReceiverTradeStats trade_stats = CalculateReceiverTradeStats();
+   
    FileWrite(handle,
-             "PROP_RECEIVER_STATUS_V5",
+             "PROP_RECEIVER_STATUS_V6",
              (long)AccountInfoInteger(ACCOUNT_LOGIN),
              (long)TimeCurrent(),
              DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2),
@@ -4478,6 +4556,10 @@ void WriteReceiverStatus()
              (long)g_protection_hit_receiver_ticket,
              (long)g_protection_hit_source_ticket,
              g_prop_block_reason,
+             DoubleToString(trade_stats.avg_win_per_trade, 2),
+             DoubleToString(trade_stats.avg_loss_per_trade, 2),
+             (long)trade_stats.win_count,
+             (long)trade_stats.loss_count,
              "COMPLETED");
 
    FileClose(handle);
