@@ -583,7 +583,7 @@ void EnforceReceiverProtectionClose()
    string reason = "";
    bool fresh = ReceiverStatusFresh(reason);
    bool receiver_has_no_used_margin = MathAbs(receiver_status.balance - receiver_status.free_margin) <= 0.01;
-   if(fresh && receiver_status.copied_positions == 0 && receiver_status.copied_pending_orders == 0 && receiver_has_no_used_margin)
+   if(fresh && receiver_has_no_used_margin)
    {
       if(g_receiver_zero_float_since == 0)
          g_receiver_zero_float_since = TimeCurrent();
@@ -591,15 +591,16 @@ void EnforceReceiverProtectionClose()
       int elapsed = (int)(TimeCurrent() - g_receiver_zero_float_since);
       if(elapsed >= MathMax(1, AutoCloseMasterPositionsAfterSeconds))
       {
-         last_action = "Receiver has no copied exposure and no used margin; auto-closing master positions";
+         last_action = "Receiver has no used margin; auto-closing master positions";
          if(PrintDetailedLogs)
          {
-            PrintFormat("PropfirmSender AUTO CLOSE NO EXPOSURE | Receiver=%I64d | elapsed=%d sec | MasterPositions=%d | close_after=%d | used_margin=%.2f",
-                        receiver_status.login,
-                        elapsed,
-                        total,
-                        AutoCloseMasterPositionsAfterSeconds,
-                        receiver_status.balance - receiver_status.free_margin);
+PrintFormat("PropfirmSender AUTO CLOSE NO MARGIN USED | Receiver=%I64d | elapsed=%d sec | MasterPositions=%d | close_after=%d | balance=%.2f | free_margin=%.2f",
+                         receiver_status.login,
+                         elapsed,
+                         total,
+                         AutoCloseMasterPositionsAfterSeconds,
+                         receiver_status.balance,
+                         receiver_status.free_margin);
          }
 
          for(int i = PositionsTotal() - 1; i >= 0; i--)
