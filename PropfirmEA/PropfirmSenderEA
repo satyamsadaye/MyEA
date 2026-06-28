@@ -41,7 +41,7 @@ input group "Fee Recovery Tracking"
 input bool EnableFeeRecovery = true;
 input double FeeToRecover = 20.0;              // Amount to recover (e.g., $20 hedge)
 input ulong MagicNumberFeeTracking = 26052501;  // Magic number for tracking SENDER trades
-input ulong ReceiverMagicNumber = 0;           // Magic number for receiver trades (0 = auto-detect, or set specific)
+input ulong ReceiverMagicNumber = 0;           // Magic number for receiver trades (0 = use all account history)
 
 input group "Display and Logs"
 input bool ShowDashboard = true;
@@ -142,6 +142,9 @@ struct FeeRecoveryStats
    int receiver_losses;             // Recent receiver losses count (from receiver)
    int sender_wins;                 // Recent sender wins count
    int sender_losses;               // Recent sender losses count
+   int sender_total_trades;         // Total sender trades entered in history
+   int sender_closed_trades;        // Number of closed sender trades
+   int sender_open_trades;          // Number of open sender trades
    datetime last_updated;           // Last calculation time
 };
 
@@ -1281,12 +1284,15 @@ void UpdateFeeRecoveryDashboard()
    SetLineFeeRecovery(line++, "Sender balance          " + Money(AccountInfoDouble(ACCOUNT_BALANCE)));
    SetLineFeeRecovery(line++, "Avg sender WIN/trade    " + Money(fee_stats.avg_sender_win));
    SetLineFeeRecovery(line++, "Avg sender LOSS/trade   " + Money(fee_stats.avg_sender_loss));
+   SetLineFeeRecovery(line++, "Sender magic           " + (string)MagicNumberFeeTracking);
+   SetLineFeeRecovery(line++, "Trades total           " + (string)fee_stats.sender_total_trades + " (closed " + (string)fee_stats.sender_closed_trades + ", open " + (string)fee_stats.sender_open_trades + ")");
    SetLineFeeRecovery(line++, "Recent: " + (string)fee_stats.sender_wins + "W / " + (string)fee_stats.sender_losses + "L");
    SetLineFeeRecovery(line++, " ");
 
    SetLineFeeRecovery(line++, "PROPFIRM CURRENT STATE", MutedColor());
    SetLineFeeRecovery(line++, "Avg propfirm WIN/trade  " + Money(fee_stats.avg_receiver_win));
    SetLineFeeRecovery(line++, "Avg propfirm LOSS/trade " + Money(fee_stats.avg_receiver_loss));
+   SetLineFeeRecovery(line++, "Receiver magic         " + (string)ReceiverMagicNumber);
    SetLineFeeRecovery(line++, "Recent: " + (string)fee_stats.receiver_wins + "W / " + (string)fee_stats.receiver_losses + "L");
    
    if(receiver_status.profit_target_enabled && receiver_status.profit_target_money > 0.0)
@@ -1397,67 +1403,115 @@ string SafeKey(string value)
 
 //============ FEE RECOVERY CALCULATION FUNCTIONS ============
 
+bool PositionIdExists(const ulong &items[], const ulong position_id)
+{
+   int total = ArraySize(items);
+   for(int i = 0; i < total; i++)
+   {
+      if(items[i] == position_id)
+         return true;
+   }
+   return false;
+}
+
+int FindTradeIdIndex(const ulong &trade_ids[], const ulong trade_id)
+{
+   int total = ArraySize(trade_ids);
+   for(int i = 0; i < total; i++)
+   {
+      if(trade_ids[i] == trade_id)
+         return i;
+   }
+   return -1;
+}
+
+ulong GetHistoryDealTradeId(const ulong deal_ticket)
+{
+   ulong position_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
+   if(position_id != 0)
+      return position_id;
+   return (ulong)HistoryDealGetInteger(deal_ticket, DEAL_ORDER);
+}
+
+bool MagicMatches(const long magic, const ulong tracked_magic)
+{
+   if(tracked_magic == 0)
+      return true;
+   return magic == (long)tracked_magic;
+}
+
 void CalculateFeeRecoveryStats()
 {
    fee_stats.fee_to_recover = FeeToRecover;
    fee_stats.last_updated = TimeCurrent();
    
-   if(!receiver_status.loaded)
+   fee_stats.avg_sender_loss = 0;
+   fee_stats.avg_sender_win = 0;
+   fee_stats.propfirm_trades_to_target = 0;
+   fee_stats.propfirm_trades_to_drawdown = 0;
+   fee_stats.expected_sender_loss_at_target = 0;
+   fee_stats.trades_to_recover_fee = 0;
+   fee_stats.fee_available_to_recover = 0;
+   fee_stats.fee_recovered_till_now = 0;
+   fee_stats.fee_at_risk_if_target_hit = 0;
+   fee_stats.extra_capital_needed_to_survive = 0;
+   fee_stats.capital_needed_to_survive = AccountInfoDouble(ACCOUNT_BALANCE);
+   fee_stats.receiver_wins = 0;
+   fee_stats.receiver_losses = 0;
+   fee_stats.sender_wins = 0;
+   fee_stats.sender_losses = 0;
+   fee_stats.sender_total_trades = 0;
+   fee_stats.sender_closed_trades = 0;
+   fee_stats.sender_open_trades = 0;
+
+   // Calculate sender history stats from the configured sender magic number (or all history if 0).
+   CalculateAverageSenderStats();
+   CalculateCumulativeFeeRecovered();
+
+   // Calculate receiver history stats from the configured receiver magic number (or all history if 0).
+   CalculateReceiverHistoryStats();
+
+   double receiver_avg_loss = fee_stats.avg_receiver_loss;
+   double receiver_avg_win = fee_stats.avg_receiver_win;
+   int receiver_wins = fee_stats.receiver_wins;
+   int receiver_losses = fee_stats.receiver_losses;
+
+   if(receiver_status.loaded)
    {
-      fee_stats.avg_sender_loss = 0;
-      fee_stats.avg_sender_win = 0;
-      fee_stats.propfirm_trades_to_target = 0;
-      fee_stats.propfirm_trades_to_drawdown = 0;
-      fee_stats.expected_sender_loss_at_target = 0;
-      fee_stats.trades_to_recover_fee = 0;
-      fee_stats.fee_available_to_recover = 0;
-      fee_stats.fee_recovered_till_now = 0;
-      fee_stats.fee_at_risk_if_target_hit = 0;
-      fee_stats.extra_capital_needed_to_survive = 0;
-      fee_stats.capital_needed_to_survive = 0;
-      fee_stats.receiver_wins = 0;
-      fee_stats.receiver_losses = 0;
-      fee_stats.sender_wins = 0;
-      fee_stats.sender_losses = 0;
-      return;
+      if(receiver_avg_loss <= 0.01)
+         receiver_avg_loss = receiver_status.avg_receiver_loss_per_trade;
+      if(receiver_avg_win <= 0.01)
+         receiver_avg_win = receiver_status.avg_receiver_win_per_trade;
+      if(receiver_wins == 0)
+         receiver_wins = receiver_status.receiver_win_count;
+      if(receiver_losses == 0)
+         receiver_losses = receiver_status.receiver_loss_count;
    }
 
-   // Calculate average sender WIN and average sender LOSS (all trades from last 24 hours)
-   CalculateAverageSenderStats();
-   
-   // Calculate cumulative fee recovered from sender's total P&L
-   CalculateCumulativeFeeRecovered();
-   
-   // Calculate how many trades propfirm can lose before hitting drawdown
-   fee_stats.propfirm_trades_to_drawdown = 0;
-   if(receiver_status.avg_receiver_loss_per_trade > 0.01)
-      fee_stats.propfirm_trades_to_drawdown = receiver_status.total_left / receiver_status.avg_receiver_loss_per_trade;
-   
-   // Use RECEIVER's actual average loss from real trades
-   fee_stats.avg_receiver_loss = receiver_status.avg_receiver_loss_per_trade;
-   fee_stats.avg_receiver_win = receiver_status.avg_receiver_win_per_trade;
-   fee_stats.receiver_wins = receiver_status.receiver_win_count;
-   fee_stats.receiver_losses = receiver_status.receiver_loss_count;
-   
-   // Fee recoverable = how much profit we can make before propfirm hits drawdown
-   // Propfirm can lose N trades (total_left / avg_loss_per_trade)
-   // In each of those trades, if propfirm loses, sender wins (inverse)
-   // So fee recoverable = propfirm_trades_to_drawdown × sender_average_win
+   fee_stats.avg_receiver_loss = receiver_avg_loss;
+   fee_stats.avg_receiver_win = receiver_avg_win;
+   fee_stats.receiver_wins = receiver_wins;
+   fee_stats.receiver_losses = receiver_losses;
+
+   if(receiver_status.loaded && receiver_avg_loss > 0.01)
+      fee_stats.propfirm_trades_to_drawdown = receiver_status.total_left / receiver_avg_loss;
+   else
+      fee_stats.propfirm_trades_to_drawdown = 0;
+
    if(fee_stats.avg_sender_win > 0.01 && fee_stats.propfirm_trades_to_drawdown > 0.01)
       fee_stats.fee_available_to_recover = fee_stats.propfirm_trades_to_drawdown * fee_stats.avg_sender_win;
-   else if(receiver_status.total_left > 0.01 && receiver_status.avg_receiver_loss_per_trade > 0.01)
-      fee_stats.fee_available_to_recover = MathMin(receiver_status.total_left, fee_stats.propfirm_trades_to_drawdown * receiver_status.avg_receiver_loss_per_trade);
+   else if(receiver_status.loaded && receiver_status.total_left > 0.01 && receiver_avg_loss > 0.01)
+      fee_stats.fee_available_to_recover = MathMin(receiver_status.total_left, fee_stats.propfirm_trades_to_drawdown * receiver_avg_loss);
    else
       fee_stats.fee_available_to_recover = 0;
-   
-   // Trades to recover full fee (at current average sender win rate)
+
    if(fee_stats.avg_sender_win > 0.01)
       fee_stats.trades_to_recover_fee = (int)MathCeil(fee_stats.fee_to_recover / fee_stats.avg_sender_win);
    else
       fee_stats.trades_to_recover_fee = 0;
-   
-   // Calculate capital needed to survive if prop firm hits profit target
-   CalculateCapitalNeededToSurvive();
+
+   if(receiver_status.loaded)
+      CalculateCapitalNeededToSurvive();
 }
 
 void CalculateAverageSenderStats()
@@ -1472,16 +1526,20 @@ void CalculateAverageSenderStats()
    int win_count = 0;
    int loss_count = 0;
    
-   // Get history for last 24 hours
-   datetime from_time = TimeCurrent() - 86400;
    datetime to_time = TimeCurrent();
-   
-   if(!HistorySelect(from_time, to_time))
+   if(!HistorySelect(0, to_time))
       return;
    
    int total_deals = HistoryDealsTotal();
+   int magic_matches = 0;
+   int exit_deals = 0;
+   int zero_profit_deals = 0;
+   ulong entry_trade_ids[];
+   ulong close_trade_ids[];
+   ulong trade_ids[];
+   double trade_profits[];
    
-   // Scan ALL trades (not just last 5) for accurate real-time averages
+   // First pass: collect all sender entry trade ids by magic
    for(int i = 0; i < total_deals; i++)
    {
       ulong ticket = HistoryDealGetTicket(i);
@@ -1489,36 +1547,97 @@ void CalculateAverageSenderStats()
          continue;
       
       long magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
-      long deal_type = HistoryDealGetInteger(ticket, DEAL_TYPE);
-      
-      // Only count our trades (same magic number) and exclude entries
-      if(magic != MagicNumberFeeTracking || (deal_type != DEAL_TYPE_SELL && deal_type != DEAL_TYPE_BUY))
+      if(!MagicMatches(magic, MagicNumberFeeTracking))
          continue;
       
-      // Skip entry deals, only count closing deals
+      long entry_type = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entry_type != DEAL_ENTRY_IN && entry_type != DEAL_ENTRY_INOUT)
+         continue;
+      
+      ulong trade_id = GetHistoryDealTradeId(ticket);
+      if(trade_id == 0)
+         continue;
+      
+      if(!PositionIdExists(entry_trade_ids, trade_id))
+      {
+         int idx = ArraySize(entry_trade_ids);
+         ArrayResize(entry_trade_ids, idx + 1);
+         entry_trade_ids[idx] = trade_id;
+      }
+   }
+   
+   // Second pass: collect all deals for sender trades regardless of magic on exit deals
+   for(int i = 0; i < total_deals; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+      
+      long magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
+      if(MagicMatches(magic, MagicNumberFeeTracking))
+         magic_matches++;
+      
       long entry_type = HistoryDealGetInteger(ticket, DEAL_ENTRY);
       if(entry_type == DEAL_ENTRY_IN)
          continue;
       
-      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      ulong trade_id = GetHistoryDealTradeId(ticket);
+      if(trade_id == 0)
+         continue;
       
-      // Count WINNING trades
-      if(profit > 0.01)
+      if(!PositionIdExists(entry_trade_ids, trade_id))
+         continue;
+      
+      exit_deals++;
+      
+      if(!PositionIdExists(close_trade_ids, trade_id))
       {
-         total_win += profit;
+         int idx = ArraySize(close_trade_ids);
+         ArrayResize(close_trade_ids, idx + 1);
+         close_trade_ids[idx] = trade_id;
+      }
+      
+      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT) +
+                      HistoryDealGetDouble(ticket, DEAL_SWAP) +
+                      HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+      
+      int trade_index = FindTradeIdIndex(trade_ids, trade_id);
+      if(trade_index < 0)
+      {
+         trade_index = ArraySize(trade_ids);
+         ArrayResize(trade_ids, trade_index + 1);
+         ArrayResize(trade_profits, trade_index + 1);
+         trade_ids[trade_index] = trade_id;
+         trade_profits[trade_index] = 0.0;
+      }
+      trade_profits[trade_index] += profit;
+   }
+   
+   fee_stats.sender_total_trades = ArraySize(entry_trade_ids);
+   fee_stats.sender_closed_trades = ArraySize(close_trade_ids);
+   fee_stats.sender_open_trades = MathMax(0, fee_stats.sender_total_trades - fee_stats.sender_closed_trades);
+   
+   for(int i = 0; i < ArraySize(trade_ids); i++)
+   {
+      double trade_profit = trade_profits[i];
+      if(trade_profit > 0.0)
+      {
+         total_win += trade_profit;
          win_count++;
          fee_stats.sender_wins++;
       }
-      // Count LOSING trades
-      else if(profit < -0.01)
+      else if(trade_profit < 0.0)
       {
-         total_loss += MathAbs(profit);
+         total_loss += MathAbs(trade_profit);
          loss_count++;
          fee_stats.sender_losses++;
       }
+      else
+      {
+         zero_profit_deals++;
+      }
    }
    
-   // Calculate averages from ALL trades
    if(win_count > 0)
       fee_stats.avg_sender_win = total_win / win_count;
    else
@@ -1528,6 +1647,76 @@ void CalculateAverageSenderStats()
       fee_stats.avg_sender_loss = total_loss / loss_count;
    else
       fee_stats.avg_sender_loss = 0;
+}
+
+bool CalculateReceiverHistoryStats()
+{
+   fee_stats.avg_receiver_loss = 0;
+   fee_stats.avg_receiver_win = 0;
+   fee_stats.receiver_wins = 0;
+   fee_stats.receiver_losses = 0;
+
+   double total_win = 0;
+   double total_loss = 0;
+   int win_count = 0;
+   int loss_count = 0;
+
+   datetime to_time = TimeCurrent();
+   if(!HistorySelect(0, to_time))
+      return false;
+
+   int total_deals = HistoryDealsTotal();
+   int magic_matches = 0;
+   int exit_deals = 0;
+   int zero_profit_deals = 0;
+   for(int i = 0; i < total_deals; i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      long magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
+      if(!MagicMatches(magic, ReceiverMagicNumber))
+         continue;
+      magic_matches++;
+
+      long entry_type = HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      if(entry_type == DEAL_ENTRY_IN)
+         continue;
+      exit_deals++;
+
+      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT) +
+                      HistoryDealGetDouble(ticket, DEAL_SWAP) +
+                      HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+
+      if(profit > 0.0)
+      {
+         total_win += profit;
+         win_count++;
+         fee_stats.receiver_wins++;
+      }
+      else if(profit < 0.0)
+      {
+         total_loss += MathAbs(profit);
+         loss_count++;
+         fee_stats.receiver_losses++;
+      }
+      else
+      {
+         zero_profit_deals++;
+      }
+   }
+   if(win_count > 0)
+      fee_stats.avg_receiver_win = total_win / win_count;
+   else
+      fee_stats.avg_receiver_win = 0;
+
+   if(loss_count > 0)
+      fee_stats.avg_receiver_loss = total_loss / loss_count;
+   else
+      fee_stats.avg_receiver_loss = 0;
+
+   return (win_count + loss_count) > 0;
 }
 
 datetime UtcDayStart(datetime utc_time)
@@ -1551,27 +1740,23 @@ void CalculateCumulativeFeeRecovered()
    
    This gets ALL trades from history, not just today
    */
-   
-   fee_stats.fee_recovered_till_now = 0;
-   
-   // Get all deals from last 6 months
-   datetime from_time = TimeCurrent() - (180 * 86400);
-   datetime to_time = TimeCurrent() + 86400;
-   
-   if(!HistorySelect(from_time, to_time))
-      return;
-   
-   int total_deals = HistoryDealsTotal();
-   
-   // Sum ALL P&L from our fee tracking magic trades
-   for(int i = 0; i < total_deals; i++)
+    
+    fee_stats.fee_recovered_till_now = 0;
+    
+    datetime to_time = TimeCurrent();
+    if(!HistorySelect(0, to_time))
+       return;
+    
+    int total_deals = HistoryDealsTotal();
+    
+    for(int i = 0; i < total_deals; i++)
    {
       ulong ticket = HistoryDealGetTicket(i);
       if(ticket == 0)
          continue;
       
       long magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
-      if(magic != MagicNumberFeeTracking)
+      if(!MagicMatches(magic, MagicNumberFeeTracking))
          continue;
       
       // Skip entry deals, only count exits
@@ -1579,7 +1764,9 @@ void CalculateCumulativeFeeRecovered()
       if(entry_type == DEAL_ENTRY_IN)
          continue;
       
-      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT) +
+                      HistoryDealGetDouble(ticket, DEAL_SWAP) +
+                      HistoryDealGetDouble(ticket, DEAL_COMMISSION);
       fee_stats.fee_recovered_till_now += profit;
    }
 }
