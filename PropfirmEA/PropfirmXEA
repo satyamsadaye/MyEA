@@ -640,7 +640,7 @@ string g_receiver_pause_reason = "Not checked";
 #define SIGDB_HISTORY_SIZE 5
 #define SIGDB_PREFIX "SIGDB_"
 #define SIGDB_PANEL_WIDTH 460
-#define SIGDB_LINE_COUNT 33
+#define SIGDB_LINE_COUNT 48
 
 struct SignalRecord {
    datetime time;
@@ -2716,16 +2716,11 @@ string GlobalTimeZoneText(const ENUM_GLOBAL_TIME_ZONE zone)
 
 datetime GlobalTimeNow(const ENUM_GLOBAL_TIME_ZONE zone)
 {
-   // Use TimeLocal() - TimeGMTOffset() instead of TimeGMT() because TimeGMT()
-   // on Windows can be affected by DST (Daylight Saving Time) settings, causing
-   // incorrect results when the UK observes BST (GMT+1). TimeGMTOffset() always
-   // returns the true local-to-GMT difference including any DST adjustments,
-   // so this calculation is reliable regardless of the system's DST state.
-   // IST = UTC + 5:30  (no DST — fixed year-round)
-   datetime gmt = TimeLocal() - TimeGMTOffset();
+   // TimeGMT() returns GMT/UTC time. IST = UTC + 5:30 (no DST, fixed year-round).
+   datetime now = TimeGMT();
    if(zone == GLOBAL_TIME_IST)
-      return gmt + 5 * 3600 + 30 * 60;
-   return gmt;
+      now += 5 * 3600 + 30 * 60;
+   return now;
 }
 
 int GlobalTimeDayKey(const datetime value)
@@ -20784,6 +20779,7 @@ void SigEnsureLabel(string name, int x, int y, int fs, color tc, string font = "
    ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
    ObjectSetInteger(0, name, OBJPROP_ZORDER, 10);
    ObjectSetString(0, name, OBJPROP_FONT, font);
+   ObjectSetString(0, name, OBJPROP_TEXT, " ");   // clear default "Label" text
 }
 
 void CreateSignalDashboard()
@@ -20898,6 +20894,13 @@ void UpdateSignalDashboard()
 
    ObjectSetString(0, SIGDB_PREFIX + "TITLE", OBJPROP_TEXT, "SIGNAL  DASHBOARD");
    int line = 0;
+
+   SigSetLine(line++, " ", SigMutedColor());
+
+   // --- SERVER TIME ---
+   SigSetLine(line++, "SERVER TIME", SigAccentColor());
+   string srvTime = TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS);
+   SigSetLine(line++, "  " + srvTime, SigGoodColor());
 
    SigSetLine(line++, " ", SigMutedColor());
 
@@ -21077,16 +21080,22 @@ void UpdateSignalDashboard()
          string altTz = "";
          if(InpGlobalTimeCloseZone == GLOBAL_TIME_UTC)
          {
-            datetime istClose = closeNow + 5 * 3600 + 30 * 60;
-            MqlDateTime p; TimeToStruct(istClose, p);
-            int h = p.hour % 12; if(h == 0) h = 12;
-            altTz = StringFormat("IST %02d:%02d%s", h, p.min, p.hour < 12 ? "AM" : "PM");
+            // Convert the configured UTC close time to IST for display (not current time)
+            int istCloseMin = (ClampGlobalTimeHour(InpGlobalTimeCloseHour) * 60 +
+                               ClampGlobalTimeMinute(InpGlobalTimeCloseMinute) + 330) % 1440;
+            int istH = istCloseMin / 60;
+            int istM = istCloseMin % 60;
+            int h12 = istH % 12; if(h12 == 0) h12 = 12;
+            altTz = StringFormat("IST %02d:%02d%s", h12, istM, istH < 12 ? "AM" : "PM");
          }
          else
          {
-            datetime utcClose = closeNow - 5 * 3600 - 30 * 60;
-            MqlDateTime p; TimeToStruct(utcClose, p);
-            altTz = StringFormat("UTC %02d:%02d", p.hour, p.min);
+            // Convert the configured IST close time to UTC for display (not current time)
+            int utcCloseMin = (ClampGlobalTimeHour(InpGlobalTimeCloseHour) * 60 +
+                               ClampGlobalTimeMinute(InpGlobalTimeCloseMinute) - 330 + 1440) % 1440;
+            int utcH = utcCloseMin / 60;
+            int utcM = utcCloseMin % 60;
+            altTz = StringFormat("UTC %02d:%02d", utcH, utcM);
          }
 
          int dayKey = GlobalTimeDayKey(closeNow);
@@ -21115,23 +21124,31 @@ void UpdateSignalDashboard()
          string altPauseStr = "";
          if(InpGlobalTimePauseZone == GLOBAL_TIME_UTC)
          {
-            datetime istStart = pauseNow + 5 * 3600 + 30 * 60;
-            MqlDateTime p1; TimeToStruct(istStart, p1);
-            datetime istEnd = istStart + (pEndMin - pStartMin) * 60;
-            if(istEnd < istStart) istEnd += 24 * 3600;
-            MqlDateTime p2; TimeToStruct(istEnd, p2);
-            int h1 = p1.hour % 12; if(h1 == 0) h1 = 12;
-            int h2 = p2.hour % 12; if(h2 == 0) h2 = 12;
-            altPauseStr = StringFormat("IST %02d:%02d%s-%02d:%02d%s", h1, p1.min, p1.hour<12?"AM":"PM", h2, p2.min, p2.hour<12?"AM":"PM");
+            // Convert the configured UTC pause times to IST for display (not current time)
+            int istStartMin = (ClampGlobalTimeHour(InpGlobalTimePauseStartHour) * 60 +
+                               ClampGlobalTimeMinute(InpGlobalTimePauseStartMinute) + 330) % 1440;
+            int istEndMin   = (ClampGlobalTimeHour(InpGlobalTimePauseResumeHour) * 60 +
+                               ClampGlobalTimeMinute(InpGlobalTimePauseResumeMinute) + 330) % 1440;
+            int h1 = istStartMin / 60;
+            int m1 = istStartMin % 60;
+            int h2 = istEndMin / 60;
+            int m2 = istEndMin % 60;
+            int h1_12 = h1 % 12; if(h1_12 == 0) h1_12 = 12;
+            int h2_12 = h2 % 12; if(h2_12 == 0) h2_12 = 12;
+            altPauseStr = StringFormat("IST %02d:%02d%s-%02d:%02d%s",
+                                       h1_12, m1, h1 < 12 ? "AM" : "PM",
+                                       h2_12, m2, h2 < 12 ? "AM" : "PM");
          }
          else
          {
-            datetime utcStart = pauseNow - 5 * 3600 - 30 * 60;
-            datetime utcEnd = utcStart + (pEndMin - pStartMin) * 60;
-            if(utcEnd < utcStart) utcEnd += 24 * 3600;
-            MqlDateTime u1; TimeToStruct(utcStart, u1);
-            MqlDateTime u2; TimeToStruct(utcEnd, u2);
-            altPauseStr = StringFormat("UTC %02d:%02d-%02d:%02d", u1.hour, u1.min, u2.hour, u2.min);
+            // Convert the configured IST pause times to UTC for display (not current time)
+            int utcStartMin = (ClampGlobalTimeHour(InpGlobalTimePauseStartHour) * 60 +
+                               ClampGlobalTimeMinute(InpGlobalTimePauseStartMinute) - 330 + 1440) % 1440;
+            int utcEndMin   = (ClampGlobalTimeHour(InpGlobalTimePauseResumeHour) * 60 +
+                               ClampGlobalTimeMinute(InpGlobalTimePauseResumeMinute) - 330 + 1440) % 1440;
+            altPauseStr = StringFormat("UTC %02d:%02d-%02d:%02d",
+                                       utcStartMin / 60, utcStartMin % 60,
+                                       utcEndMin / 60, utcEndMin % 60);
          }
 
          bool pausedNow = GlobalTimeWindowContains(pNowMin, pStartMin, pEndMin);
@@ -21278,20 +21295,15 @@ void UpdateSignalDashboard()
    }
    else
    {
-      int oldest = g_sigdb_historyIndex - g_sigdb_historyCount;
-      if(oldest < 0)
-         oldest += SIGDB_HISTORY_SIZE;
-
       for(int s = 0; s < SIGDB_HISTORY_SIZE; s++)
       {
-         int idx = (oldest + s) % SIGDB_HISTORY_SIZE;
+         int idx = (g_sigdb_historyIndex - 1 - s + SIGDB_HISTORY_SIZE * 2) % SIGDB_HISTORY_SIZE;
          if(s < g_sigdb_historyCount)
          {
             string ts = SigTimeStr(g_sigdb_history[idx].time);
             string ds = g_sigdb_history[idx].direction;
             if(ds == "SELL") ds = "SEL";
-            int dLen = StringLen(ds);
-            if(dLen < 4) { for(int p = dLen; p < 4; p++) ds += " "; }
+            while(StringLen(ds) < 4) ds += " ";
             bool exec = g_sigdb_history[idx].executed;
             string ss = exec ? "OK " : "SKIP";
             string rs = g_sigdb_history[idx].reason;
@@ -21308,6 +21320,56 @@ void UpdateSignalDashboard()
          }
       }
    }
+
+   SigSetLine(line++, " ", SigMutedColor());
+
+   // --- LAST 5 TRADES ---
+   SigSetLine(line++, "LAST 5 TRADES", SigAccentColor());
+   SigSetLine(line++, "  Time       Dir  Profit    Ticket", SigMutedColor());
+
+   HistorySelect(0, TimeCurrent());
+   int totalDeals = HistoryDealsTotal();
+   int foundCount = 0;
+   string tradeLines[5];
+   color   tradeColors[5];
+   for(int i = 0; i < 5; i++) { tradeLines[i] = "  --:--:--   --   ------    ------"; tradeColors[i] = SigMutedColor(); }
+
+   // Walk deals newest-first; collect up to 5 exit deals with our magic number
+   for(int d = totalDeals - 1; d >= 0 && foundCount < 5; d--)
+   {
+      ulong dealTicket = HistoryDealGetTicket(d);
+      if(dealTicket == 0) continue;
+      if(HistoryDealGetInteger(dealTicket, DEAL_MAGIC) != InpMagicNumber) continue;
+      if((ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
+
+      datetime closeTime = (datetime)HistoryDealGetInteger(dealTicket, DEAL_TIME);
+      ulong    posTicket = (ulong)HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+      double   profit    = HistoryDealGetDouble(dealTicket, DEAL_PROFIT)
+                          + HistoryDealGetDouble(dealTicket, DEAL_SWAP)
+                          + HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+      ENUM_DEAL_TYPE dtype = (ENUM_DEAL_TYPE)HistoryDealGetInteger(dealTicket, DEAL_TYPE);
+      string dir = (dtype == DEAL_TYPE_SELL) ? "SELL" : "BUY";
+      if(dir == "SELL") dir = "SEL"; // fit in 4 chars
+      while(StringLen(dir) < 4) dir += " ";
+
+      string ts    = SigTimeStr(closeTime);
+      string pnl   = StringFormat("%+.2f", profit);
+      // pad pnl to 8 chars right-aligned
+      while(StringLen(pnl) < 8) pnl = " " + pnl;
+      string ticketStr = "#" + IntegerToString((int)posTicket);
+
+      tradeLines[foundCount] = "  " + ts + "  " + dir + "  " + pnl + "  " + ticketStr;
+      tradeColors[foundCount] = (profit >= 0.0) ? SigGoodColor() : SigBadColor();
+      foundCount++;
+   }
+
+   // Display newest-first (already collected that way)
+   for(int s = 0; s < 5; s++)
+      SigSetLine(line++, tradeLines[s], tradeColors[s]);
+
+   // Clear any remaining unused labels so they don't show stale/default text
+   while(line < SIGDB_LINE_COUNT)
+      SigSetLine(line++, " ", SigMutedColor());
 
    ChartRedraw(0);
 }
