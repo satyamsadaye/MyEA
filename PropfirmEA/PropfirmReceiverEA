@@ -4380,6 +4380,28 @@ double CopiedTradeRiskMoney(const string symbol,
    return MathAbs(profit);
 }
 
+bool PositionIdExists(const ulong &items[], const ulong position_id)
+{
+   int total = ArraySize(items);
+   for(int i = 0; i < total; i++)
+   {
+      if(items[i] == position_id)
+         return true;
+   }
+   return false;
+}
+
+int FindTradeIdIndex(const ulong &trade_ids[], const ulong trade_id)
+{
+   int total = ArraySize(trade_ids);
+   for(int i = 0; i < total; i++)
+   {
+      if(trade_ids[i] == trade_id)
+         return i;
+   }
+   return -1;
+}
+
 void EnforceProtectionBreachActions()
 {
    if(!g_prop_protection_breached)
@@ -4437,52 +4459,111 @@ ReceiverTradeStats CalculateReceiverTradeStats()
    stats.total_win = 0;
    stats.total_loss = 0;
 
-   // Get last 24 hours of trading history
-   datetime from_time = TimeCurrent() - 86400;
    datetime to_time = TimeCurrent();
-   
-   if(!HistorySelect(from_time, to_time))
+   if(!HistorySelect(0, to_time))
       return stats;
    
    int total_deals = HistoryDealsTotal();
-   int lookback = 0;
+   int exit_deals = 0;
+   int zero_profit_deals = 0;
+   ulong entry_trade_ids[];
+   ulong close_trade_ids[];
+   ulong trade_ids[];
+   double trade_profits[];
    
-   // Scan last 10 trades to get average
-   for(int i = total_deals - 1; i >= 0 && lookback < 10; i--)
+   // First pass: collect all receiver entry trade ids by magic
+   for(int i = 0; i < total_deals; i++)
    {
       ulong deal_ticket = HistoryDealGetTicket(i);
       if(deal_ticket == 0)
          continue;
       
-      // Only count our copied trades
       long magic = HistoryDealGetInteger(deal_ticket, DEAL_MAGIC);
       if(magic != (long)MagicNumber)
          continue;
       
-      // Skip entry deals, only count exits
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_IN && entry != DEAL_ENTRY_INOUT)
+         continue;
+      
+      ulong trade_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
+      if(trade_id == 0)
+         trade_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_ORDER);
+      if(trade_id == 0)
+         continue;
+      
+      if(!PositionIdExists(entry_trade_ids, trade_id))
+      {
+         int idx = ArraySize(entry_trade_ids);
+         ArrayResize(entry_trade_ids, idx + 1);
+         entry_trade_ids[idx] = trade_id;
+      }
+   }
+   
+   // Second pass: aggregate profits by receiver trade id, including exits even if magic differs
+   for(int i = 0; i < total_deals; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+      
       long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
       if(entry == DEAL_ENTRY_IN)
          continue;
+      
+      ulong trade_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
+      if(trade_id == 0)
+         trade_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_ORDER);
+      if(trade_id == 0)
+         continue;
+      
+      if(!PositionIdExists(entry_trade_ids, trade_id))
+         continue;
+      
+      exit_deals++;
+      
+      if(!PositionIdExists(close_trade_ids, trade_id))
+      {
+         int idx = ArraySize(close_trade_ids);
+         ArrayResize(close_trade_ids, idx + 1);
+         close_trade_ids[idx] = trade_id;
+      }
       
       double profit = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT) +
                       HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION) +
                       HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
       
-      if(profit > 0.01)
+      int trade_index = FindTradeIdIndex(trade_ids, trade_id);
+      if(trade_index < 0)
       {
-         stats.total_win += profit;
-         stats.win_count++;
+         trade_index = ArraySize(trade_ids);
+         ArrayResize(trade_ids, trade_index + 1);
+         ArrayResize(trade_profits, trade_index + 1);
+         trade_ids[trade_index] = trade_id;
+         trade_profits[trade_index] = 0.0;
       }
-      else if(profit < -0.01)
-      {
-         stats.total_loss += MathAbs(profit);
-         stats.loss_count++;
-      }
-      
-      lookback++;
+      trade_profits[trade_index] += profit;
    }
    
-   // Calculate averages
+   for(int i = 0; i < ArraySize(trade_ids); i++)
+   {
+      double trade_profit = trade_profits[i];
+      if(trade_profit > 0.01)
+      {
+         stats.total_win += trade_profit;
+         stats.win_count++;
+      }
+      else if(trade_profit < -0.01)
+      {
+         stats.total_loss += MathAbs(trade_profit);
+         stats.loss_count++;
+      }
+      else
+      {
+         zero_profit_deals++;
+      }
+   }
+   
    if(stats.win_count > 0)
       stats.avg_win_per_trade = stats.total_win / stats.win_count;
    
