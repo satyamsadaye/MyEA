@@ -29,7 +29,7 @@ input bool BlockTradesWithoutStopLoss = false;
 input bool BlockWhenReceiverHasOpenExposure = true;
 input double ExtraRiskBufferMoney = 0.0;
 input bool CloseMasterPositionWhenSenderBlocksSignal = true;
-input int AutoCloseMasterPositionsAfterSeconds = 10; // close master if receiver has no copied exposure and free margin indicates no used margin for this many seconds
+input int AutoCloseMasterPositionsAfterSeconds = 10; // close master if receiver free margin ≈ balance (no used margin) for this many seconds
 
 input group "Protection Close"
 input bool CloseMasterPositionsOnReceiverProtectionBreach = true;
@@ -361,8 +361,8 @@ bool SenderRiskGateAllows(const ulong ticket,
       (receiver_status.copied_positions > 0 || receiver_status.copied_pending_orders > 0) &&
       !AllowedActiveSourceTicketExists(ticket))
    {
-      reason = "receiver still has copied exposure: " +
-               (string)receiver_status.copied_positions + " position(s), " +
+      reason = "trade limit reached — receiver has " +
+               (string)receiver_status.copied_positions + " position(s) running & " +
                (string)receiver_status.copied_pending_orders + " pending order(s)";
       return false;
    }
@@ -612,8 +612,8 @@ PrintFormat("PropfirmSender AUTO CLOSE NO MARGIN USED | Receiver=%I64d | elapsed
                                      PositionGetString(POSITION_SYMBOL),
                                      PositionGetInteger(POSITION_TYPE),
                                      PositionGetDouble(POSITION_VOLUME),
-                                     "receiver has had no copied exposure and no used margin for " + (string)elapsed + " sec");
-               CloseMasterPositionWithRetries(ticket, "receiver has had no copied exposure and no used margin for " + (string)elapsed + " sec");
+                                     "receiver has had no used margin for " + (string)elapsed + " sec (no margin in use ⇒ no open trades)");
+               CloseMasterPositionWithRetries(ticket, "receiver has had no used margin for " + (string)elapsed + " sec (no margin in use ⇒ no open trades)");
             }
          }
          return;
@@ -1554,8 +1554,8 @@ void CalculateCumulativeFeeRecovered()
    
    fee_stats.fee_recovered_till_now = 0;
    
-   // Get all deals from entire history (going back 10 years to ensure we get everything)
-   datetime from_time = TimeCurrent() - (10 * 365 * 86400);
+   // Get all deals from last 6 months
+   datetime from_time = TimeCurrent() - (180 * 86400);
    datetime to_time = TimeCurrent() + 86400;
    
    if(!HistorySelect(from_time, to_time))
