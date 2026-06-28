@@ -618,33 +618,8 @@ input int    InpDisplayYOffset = 200;                      // Y offset from corn
 input int    InpDisplayLineSpacing = 2;                    // Additional spacing between lines
 input ENUM_DISPLAY_ANCHOR InpDisplayAnchor = ANCHOR_TOP_LEFT; // Default anchor position
 
-// Constants for Display Objects
-const string DISPLAY_OBJECT_PREFIX = "RohitEADisp_";
-const string DISPLAY_BG_OBJECT = "RohitEADisp_BG";
-int ExtTotalDisplayLines = 0; // Will be updated in UpdateChartDisplay
-
 // --- State Persistence ---
 const string RECOVERY_STATE_FILE_PREFIX = "RohitEARecoveryState_";
-
-// Global variables for chart display
-double ExtLastCalcMaxLoss = 0.0;
-double ExtLastCalcMaxProfit = 0.0;
-string ExtLastCalcSymbol = "N/A";
-string ExtLastCalcAction = "N/A";
-double ExtLastCalcVolume = 0.0;
-bool   ExtSignalProcessedForDisplay = false;
-double ExtLastCalcRRatio = 0.0; // Risk/Reward ratio
-
-// Global variables for active position tracking
-double ExtCurrentMaxLoss = 0.0;    // Current maximum possible loss (based on SL)
-double ExtCurrentMaxProfit = 0.0;  // Current maximum possible profit (based on TP)
-double ExtCurrentProfit = 0.0;     // Current floating profit/loss
-double ExtCurrentRRatio = 0.0;     // Current Risk/Reward ratio
-
-// Global variables for static position metrics (based on entry price)
-double ExtStaticMaxLoss = 0.0;     // Static maximum loss (entry to SL)
-double ExtStaticMaxProfit = 0.0;   // Static maximum profit (entry to TP)
-double ExtStaticRRatio = 0.0;      // Static Risk/Reward ratio
 
 // Global variable for Candle Exit Strategy
 static datetime ExtLastBarTimeForCandleExit = 0;
@@ -658,6 +633,36 @@ datetime g_last_receiver_status_check = 0;
 bool g_receiver_trading_allowed = true;
 bool g_receiver_status_loaded = false;
 string g_receiver_pause_reason = "Not checked";
+
+//+------------------------------------------------------------------+
+//| Signal Dashboard - Signal History Ring Buffer                       |
+//+------------------------------------------------------------------+
+#define SIGDB_HISTORY_SIZE 5
+#define SIGDB_PREFIX "SIGDB_"
+#define SIGDB_PANEL_WIDTH 460
+#define SIGDB_LINE_COUNT 33
+
+struct SignalRecord {
+   datetime time;
+   string direction;
+   bool executed;
+   string reason;
+};
+SignalRecord g_sigdb_history[SIGDB_HISTORY_SIZE];
+int g_sigdb_historyIndex = 0;
+int g_sigdb_historyCount = 0;
+bool g_sigdb_objects_created = false;
+
+void RecordSignalAttempt(string direction, bool executed, string reason = "")
+{
+   g_sigdb_history[g_sigdb_historyIndex].time = TimeCurrent();
+   g_sigdb_history[g_sigdb_historyIndex].direction = direction;
+   g_sigdb_history[g_sigdb_historyIndex].executed = executed;
+   g_sigdb_history[g_sigdb_historyIndex].reason = reason;
+   g_sigdb_historyIndex = (g_sigdb_historyIndex + 1) % SIGDB_HISTORY_SIZE;
+   if(g_sigdb_historyCount < SIGDB_HISTORY_SIZE)
+      g_sigdb_historyCount++;
+}
 
 //+------------------------------------------------------------------+
 //| Read receiver status file and parse trading state                    |
@@ -899,8 +904,7 @@ string MAN_BTN_BUY = "MAN_BTN_BUY";
 string MAN_BTN_SELL = "MAN_BTN_SELL";
 string MAN_BTN_CLOSE = "MAN_BTN_CLOSE";
 string MAN_BTN_BE = "MAN_BTN_BE";
-string MAN_DASH_PREFIX = "MAN_DASH_";
-bool manual_dashboard_created = false;
+
 bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result);
 void EnforceGlobalTimeControl();
 bool IsGlobalTimeSignalPauseActive();
@@ -949,55 +953,7 @@ void Manual_CreateButtons()
    ObjectSetInteger(manual_chart_id, MAN_BTN_BE, OBJPROP_BGCOLOR, clrGoldenrod);
 }
 
-// Minimal dashboard (shows ATR and open positions)
-void Manual_CreateDashboard()
-{
-   manual_chart_id = ChartID();
-   ObjectCreate(manual_chart_id, MAN_DASH_PREFIX + "BG", OBJ_RECTANGLE_LABEL, 0, 0, 0);
-   ObjectSetInteger(manual_chart_id, MAN_DASH_PREFIX + "BG", OBJPROP_XDISTANCE, 20);
-   ObjectSetInteger(manual_chart_id, MAN_DASH_PREFIX + "BG", OBJPROP_YDISTANCE, 60);
-   ObjectSetInteger(manual_chart_id, MAN_DASH_PREFIX + "BG", OBJPROP_XSIZE, 260);
-   ObjectSetInteger(manual_chart_id, MAN_DASH_PREFIX + "BG", OBJPROP_YSIZE, 120);
-   ObjectSetInteger(manual_chart_id, MAN_DASH_PREFIX + "BG", OBJPROP_BGCOLOR, C'20,20,30');
-   ObjectSetInteger(manual_chart_id, MAN_DASH_PREFIX + "BG", OBJPROP_BORDER_COLOR, clrWhite);
-   ObjectSetInteger(manual_chart_id, MAN_DASH_PREFIX + "BG", OBJPROP_BACK, true);
 
-   // Text lines
-   for(int i = 0; i < 6; i++)
-   {
-      string name = MAN_DASH_PREFIX + "TEXT_" + (string)i;
-      ObjectCreate(manual_chart_id, name, OBJ_LABEL, 0, 0, 0);
-      ObjectSetInteger(manual_chart_id, name, OBJPROP_XDISTANCE, 30);
-      ObjectSetInteger(manual_chart_id, name, OBJPROP_YDISTANCE, 70 + i * 18);
-      ObjectSetString(manual_chart_id, name, OBJPROP_TEXT, "");
-      ObjectSetInteger(manual_chart_id, name, OBJPROP_COLOR, clrWhiteSmoke);
-      ObjectSetInteger(manual_chart_id, name, OBJPROP_FONTSIZE, 10);
-      ObjectSetInteger(manual_chart_id, name, OBJPROP_BACK, false);
-   }
-
-   manual_dashboard_created = true;
-}
-
-void Manual_UpdateDashboard()
-{
-   if(!manual_dashboard_created) return;
-   double atr = g_cached_atr;
-   if(atr == 0 && g_atr_handle != INVALID_HANDLE)
-   {
-      double buf[];
-      if(CopyBuffer(g_atr_handle, 0, 0, 1, buf) > 0) atr = buf[0];
-   }
-   double bal = AccountInfoDouble(ACCOUNT_BALANCE);
-   double eq = AccountInfoDouble(ACCOUNT_EQUITY);
-   int openPos = PositionsTotal();
-
-   ObjectSetString(manual_chart_id, MAN_DASH_PREFIX + "TEXT_0", OBJPROP_TEXT, "ATR: " + DoubleToString(atr, 5));
-   ObjectSetString(manual_chart_id, MAN_DASH_PREFIX + "TEXT_1", OBJPROP_TEXT, "Balance: $" + DoubleToString(bal,2));
-   ObjectSetString(manual_chart_id, MAN_DASH_PREFIX + "TEXT_2", OBJPROP_TEXT, "Equity: $" + DoubleToString(eq,2));
-   ObjectSetString(manual_chart_id, MAN_DASH_PREFIX + "TEXT_3", OBJPROP_TEXT, "Open Positions: " + (string)openPos);
-   ObjectSetString(manual_chart_id, MAN_DASH_PREFIX + "TEXT_4", OBJPROP_TEXT, "FixedLot: " + DoubleToString(InpFixedLotSize,2));
-   ObjectSetString(manual_chart_id, MAN_DASH_PREFIX + "TEXT_5", OBJPROP_TEXT, "Risk%: " + DoubleToString(InpRiskPerTradePercentage,2));
-}
 
 // Manual trade executions using existing OpenPosition helper
 void Manual_ExecuteBuy()
@@ -1425,6 +1381,12 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       else if(sparam == MAN_BTN_CLOSE) { Manual_CloseAll(); ObjectSetInteger(ChartID(), MAN_BTN_CLOSE, OBJPROP_STATE, 0); }
       else if(sparam == MAN_BTN_BE) { Manual_MoveToBreakeven(); ObjectSetInteger(ChartID(), MAN_BTN_BE, OBJPROP_STATE, 0); }
       ChartRedraw(ChartID());
+   }
+   if(id == CHARTEVENT_CHART_CHANGE)
+   {
+      g_sigdb_objects_created = false;
+      CreateSignalDashboard();
+      UpdateSignalDashboard();
    }
 }
 
@@ -2111,9 +2073,9 @@ int OnInit()
    
    // Rest of initialization code
    EventSetTimer(1);
-   // Create manual trading buttons and dashboard
-   Manual_CreateButtons();
-   Manual_CreateDashboard();
+     // Create manual trading buttons
+     Manual_CreateButtons();
+     CreateSignalDashboard();
    
    // Set starting balance based on risk calculation method
    if(InpRiskCalcMethod == RISK_CALC_STARTING_BALANCE)
@@ -2288,7 +2250,6 @@ int OnInit()
    g_p5_lastBuyTicket = 0;
    g_p5_lastSellTicket = 0;
 
-   UpdateChartDisplay(); // Initial display update
    ExtLastBarTimeForCandleExit = 0; // Initialize last bar time for candle exit
 
    // Initialize price change threshold (2 points by default)
@@ -2333,7 +2294,8 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   // Release indicator handles
+    DeleteSignalDashboard();
+    // Release indicator handles
    if(g_rsi_handle != INVALID_HANDLE) IndicatorRelease(g_rsi_handle);
    if(g_atr_handle != INVALID_HANDLE) IndicatorRelease(g_atr_handle);
    if(g_sar_handle != INVALID_HANDLE) IndicatorRelease(g_sar_handle);
@@ -2370,17 +2332,10 @@ void OnDeinit(const int reason)
    EventKillTimer();
    long current_chart_id = ChartID();
    
-   // Only clean up display objects if not in backtesting
-   if(!g_is_backtesting)
-   {
-      // Clean up display objects
-      for(int i = 0; i < ExtTotalDisplayLines + 5; i++)
-      {
-         string object_name = DISPLAY_OBJECT_PREFIX + IntegerToString(i);
-         ObjectDelete(current_chart_id, object_name);
-      }
-      
-      // Clean up synthetic SL lines
+    // Only clean up display objects if not in backtesting
+    if(!g_is_backtesting)
+    {
+       // Clean up synthetic SL lines
       int total = ObjectsTotal(current_chart_id, 0, OBJ_HLINE);
       for(int i = total - 1; i >= 0; i--)
       {
@@ -2416,8 +2371,6 @@ void OnDeinit(const int reason)
       ObjectDelete(current_chart_id, MAN_BTN_SELL);
       ObjectDelete(current_chart_id, MAN_BTN_CLOSE);
       ObjectDelete(current_chart_id, MAN_BTN_BE);
-      ObjectDelete(current_chart_id, MAN_DASH_PREFIX + "BG");
-      for(int _i = 0; _i < 6; _i++) ObjectDelete(current_chart_id, MAN_DASH_PREFIX + "TEXT_" + (string)_i);
    
    Print("RohitEA deinitialized. Reason: ", reason);
 }
@@ -2647,6 +2600,8 @@ bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result)
                         (request.action == TRADE_ACTION_PENDING);
     if(is_new_entry && !ReadReceiverStatusForPause())
     {
+        string sigDir = (request.type == ORDER_TYPE_BUY) ? "BUY" : ((request.type == ORDER_TYPE_SELL) ? "SELL" : "?");
+        RecordSignalAttempt(sigDir, false, g_receiver_pause_reason);
         ZeroMemory(result);
         result.retcode = TRADE_RETCODE_REJECT;
         result.comment = "Receiver trading paused";
@@ -2704,7 +2659,18 @@ bool SendDollarExitAwareOrder(MqlTradeRequest &request, MqlTradeResult &result)
       }
    }
 
-   return OrderSend(request, result);
+    bool sent = OrderSend(request, result);
+    if(sent)
+    {
+        bool is_new = (request.action == TRADE_ACTION_DEAL && request.position == 0) ||
+                      (request.action == TRADE_ACTION_PENDING);
+        if(is_new && (result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_DONE_PARTIAL || result.retcode == TRADE_RETCODE_PLACED))
+        {
+            string sigDir = (request.type == ORDER_TYPE_BUY) ? "BUY" : ((request.type == ORDER_TYPE_SELL) ? "SELL" : "?");
+            RecordSignalAttempt(sigDir, true);
+        }
+    }
+    return sent;
 }
 
 double CalculateGlobalDollarExitPnL(int &position_count)
@@ -2750,10 +2716,16 @@ string GlobalTimeZoneText(const ENUM_GLOBAL_TIME_ZONE zone)
 
 datetime GlobalTimeNow(const ENUM_GLOBAL_TIME_ZONE zone)
 {
-   datetime now = TimeGMT();
+   // Use TimeLocal() - TimeGMTOffset() instead of TimeGMT() because TimeGMT()
+   // on Windows can be affected by DST (Daylight Saving Time) settings, causing
+   // incorrect results when the UK observes BST (GMT+1). TimeGMTOffset() always
+   // returns the true local-to-GMT difference including any DST adjustments,
+   // so this calculation is reliable regardless of the system's DST state.
+   // IST = UTC + 5:30  (no DST — fixed year-round)
+   datetime gmt = TimeLocal() - TimeGMTOffset();
    if(zone == GLOBAL_TIME_IST)
-      now += 5 * 3600 + 30 * 60;
-   return now;
+      return gmt + 5 * 3600 + 30 * 60;
+   return gmt;
 }
 
 int GlobalTimeDayKey(const datetime value)
@@ -3076,9 +3048,6 @@ void OnTick()
 {
     // Get current time for all time-based checks
     datetime current_time = TimeCurrent();
-   // Update manual dashboard each tick (lightweight)
-   Manual_UpdateDashboard();
-
    EnforceGlobalTimeControl();
    EnforceGlobalDollarExit();
 
@@ -3588,6 +3557,7 @@ void OnTick()
     // --- Prop Firm Receiver Status Check ---
     if(!ReadReceiverStatusForPause())
     {
+        RecordSignalAttempt("ANY", false, g_receiver_pause_reason);
         // Receiver has paused trading due to protection breach
         static datetime last_pause_log = 0;
         if(TimeCurrent() - last_pause_log >= 5) // Log every 5 seconds max
@@ -3794,6 +3764,7 @@ bool ExecutePattern9BuyOrder(double fallPercent)
     // --- Prop Firm Receiver Status Check ---
     if(!ReadReceiverStatusForPause())
     {
+        RecordSignalAttempt("BUY", false, g_receiver_pause_reason);
         Print("Pattern 9 BUY order blocked - Receiver trading paused. Reason: ", g_receiver_pause_reason);
         return false;
     }
@@ -3865,6 +3836,7 @@ bool ExecutePattern9SellOrder(double risePercent)
     // --- Prop Firm Receiver Status Check ---
     if(!ReadReceiverStatusForPause())
     {
+        RecordSignalAttempt("SELL", false, g_receiver_pause_reason);
         Print("Pattern 9 SELL order blocked - Receiver trading paused. Reason: ", g_receiver_pause_reason);
         return false;
     }
@@ -4371,6 +4343,7 @@ bool ExecutePattern10SellOrder(double changePercent)
     // --- Prop Firm Receiver Status Check ---
     if(!ReadReceiverStatusForPause())
     {
+        RecordSignalAttempt("SELL", false, g_receiver_pause_reason);
         Print("Pattern 10 SELL order blocked - Receiver trading paused. Reason: ", g_receiver_pause_reason);
         return false;
     }
@@ -9523,6 +9496,7 @@ void HandlePattern8_HeikinAshiConsecutive()
 void OnTimer()
 {
    EnforceGlobalTimeControl();
+   UpdateSignalDashboard();
 
    // Skip timer updates during backtesting except for essential functions
    if(g_is_backtesting)
@@ -9687,7 +9661,6 @@ void OnTimer()
       last_no_positions_check = TimeCurrent();
    }
    
-   UpdateChartDisplay();
 }
 
 
@@ -9706,6 +9679,8 @@ void ExecuteTrade(string trade_action)
     // --- Prop Firm Receiver Status Check ---
     if(!ReadReceiverStatusForPause())
     {
+       string dir = (trade_action == "buy") ? "BUY" : ((trade_action == "sell") ? "SELL" : trade_action);
+       RecordSignalAttempt(dir, false, g_receiver_pause_reason);
        PrintFormat("Trade action '%s' blocked - Receiver trading paused. Reason: %s",
                    trade_action, g_receiver_pause_reason);
        return;
@@ -9988,694 +9963,10 @@ void ExecuteTrade(string trade_action)
   }
 
 
-//+------------------------------------------------------------------+
-//| Chart Display and Risk Management Functions (Copied from EA)     |
-//+------------------------------------------------------------------+
-string DashboardYesNo(const bool value)
-{
-   return value ? "YES" : "NO";
-}
 
-string DashboardOnOff(const bool value)
-{
-   return value ? "ON" : "OFF";
-}
 
-bool DashboardBuyAllowed()
-{
-   return (InpTradeDirection == TRADE_DIR_BOTH ||
-           InpTradeDirection == TRADE_DIR_BUY_ONLY ||
-           InpTradeDirection == TRADE_DIR_ALWAYS_BUY);
-}
 
-bool DashboardSellAllowed()
-{
-   return (InpTradeDirection == TRADE_DIR_BOTH ||
-           InpTradeDirection == TRADE_DIR_SELL_ONLY ||
-           InpTradeDirection == TRADE_DIR_ALWAYS_SELL);
-}
 
-string DashboardPatternSettings()
-{
-   switch(InpPatternType)
-   {
-      case PATTERN_1_VOLUME:
-         return StringFormat("P1 settings: RSI period %d, threshold %.1f, ATR period %d",
-                             InpRsiPeriod, InpRsiThreshold, InpAtrPeriod);
-      case PATTERN_2_BREAKOUT:
-         return StringFormat("P2 settings: breakout lookback %d bars", InpPattern2Bars);
-      case PATTERN_3_PREV_BAR:
-         return "P3 settings: previous bar breakout using current symbol/timeframe";
-      case PATTERN_4_BOX_BREAKOUT:
-         return StringFormat("P4 settings: box candles %d, SAR step %.2f, SAR max %.2f",
-                             InpPattern4BoxCandles, InpPattern4SARStep, InpPattern4SARMax);
-      case PATTERN_5_SUPERTREND_STOCH:
-         return StringFormat("P5 settings: ST period %d factor %.2f, Stoch %d/%d/%d, levels %.1f/%.1f",
-                             InpSupertrendPeriod, InpSupertrendFactor, InpStochasticK,
-                             InpStochasticD, InpStochasticSlowing, InpStochasticLowLevel,
-                             InpStochasticHighLevel);
-      case PATTERN_6_REVERSAL:
-         return StringFormat("P6 settings: RSI period %d, threshold %.1f", InpRsiPeriod, InpRsiThreshold);
-      case PATTERN_7_HEIKINASHI_TREND:
-         return "P7 settings: HeikinAshi trend on current chart";
-      case PATTERN_8_HEIKINASHI_CONSECUTIVE:
-         return StringFormat("P8 settings: %d consecutive HA candles, close wait %s, strict %s",
-                             InpPattern8ConsecutiveCandles, DashboardYesNo(InpPattern8WaitForClose),
-                             DashboardYesNo(InpPattern8StrictMode));
-      case PATTERN_9_PRICE_FALL:
-         return StringFormat("P9 settings: move %.2f%%, lookback %d, close wait %s, high/low %s, bidir %s",
-                             InpPattern9FallPercent, InpPattern9LookbackBars,
-                             DashboardYesNo(InpPattern9WaitForClose),
-                             DashboardYesNo(InpPattern9UseHighLow),
-                             DashboardYesNo(InpPattern9BidirectionalMode));
-      case PATTERN_10_PRICE_MOVEMENT:
-         return StringFormat("P10 settings: move %.2f%%, lookback %d, close wait %s, high/low %s, invert %s",
-                             InpPattern10MovePercent, InpPattern10LookbackBars,
-                             DashboardYesNo(InpPattern10WaitForClose),
-                             DashboardYesNo(InpPattern10UseHighLow),
-                             DashboardYesNo(InpPattern10Invert));
-      case PATTERN_11_TRENDLINE:
-         return StringFormat("P11 settings: enabled %s, green %s, red %s, high/low lookback %d/%d, wait close %s",
-                             DashboardYesNo(InpPattern11Enabled), DashboardYesNo(InpPattern11UseGreen),
-                             DashboardYesNo(InpPattern11UseRed), InpPattern11HighLookback,
-                             InpPattern11LowLookback, DashboardYesNo(InpPattern11WaitForClose));
-      case PATTERN_12_MANUAL:
-         return "P12 settings: manual trading mode, no automatic pattern signal";
-      case PATTERN_13_PREV_CANDLE_COLOR:
-         return StringFormat("P13 settings: enabled %s, TF %s, wait close %s",
-                             DashboardYesNo(InpPattern13Enabled), EnumToString(InpPattern13CandleTimeframe),
-                             DashboardYesNo(InpPattern13WaitForClose));
-      case PATTERN_14_BREAK_LOW_VOLUME:
-         return StringFormat("P14 settings: previous candles %d, bidirectional %s",
-                             InpPattern14PrevCandles, DashboardYesNo(InpPattern14Bidirectional));
-      case PATTERN_15_VOLUME_OSCILLATION:
-         return StringFormat("P15 settings: enabled %s, lookback %d, wait close %s",
-                             DashboardYesNo(InpPattern15Enabled), InpPattern15LookbackBars,
-                             DashboardYesNo(InpPattern15WaitForClose));
-      case PATTERN_16_GREEN_CANDLE_BREAKOUT:
-         return StringFormat("P16 settings: enabled %s, wait close/open %s",
-                             DashboardYesNo(InpPattern16Enabled), DashboardYesNo(InpPattern16WaitForClose));
-      case PATTERN_17_STATASTICAL:
-         return StringFormat("P17 settings: step %d pts, lookback %d, forward %d, mode %s, wait close %s",
-                             InpPattern17PipStepPoints, InpPattern17LookbackCandles,
-                             InpPattern17ForwardCandles, EnumToString(InpPattern17TradeMode),
-                             DashboardYesNo(InpPattern17WaitForClose));
-      case PATTERN_18_SIGNATURE_VOLUME:
-         return StringFormat("P18 settings: enabled %s, mode %s, open trigger %s %.2f%%",
-                             DashboardYesNo(InpPattern18Enabled), EnumToString(InpPattern18TradeMode),
-                             DashboardYesNo(InpPattern18UseOpenPriceTrigger),
-                             InpPattern18OpenPriceTriggerPercent);
-      case PATTERN_19_OHLC_RECOVERY_ENTRY:
-         return StringFormat("P19 settings: enabled %s, signal %s, trade %s, wait close %s, lookback %d",
-                             DashboardYesNo(InpPattern19Enabled), EnumToString(InpPattern19SignalMode),
-                             EnumToString(InpPattern19TradeMode), DashboardYesNo(InpPattern19WaitForClose),
-                             InpPattern19LookbackCandles);
-      case PATTERN_20_THREE_GREEN_HHHL_RETEST:
-         return StringFormat("P20 settings: enabled %s, show level %s",
-                             DashboardYesNo(InpPattern20Enabled), DashboardYesNo(InpPattern20ShowLevel));
-   }
-
-   return "Pattern settings: no specific dashboard summary available";
-}
-
-void DeleteDashboardObjects(long chart_id)
-{
-   ObjectDelete(chart_id, DISPLAY_BG_OBJECT);
-   for(int i = 0; i < 160; i++)
-      ObjectDelete(chart_id, DISPLAY_OBJECT_PREFIX + IntegerToString(i));
-}
-
-void CreateOrUpdateDashboardBackground(long chart_id, int x, int y, int width, int height)
-{
-   if(ObjectFind(chart_id, DISPLAY_BG_OBJECT) < 0)
-   {
-      if(!ObjectCreate(chart_id, DISPLAY_BG_OBJECT, OBJ_RECTANGLE_LABEL, 0, 0, 0))
-      {
-         PrintFormat("Error creating dashboard background %s: %d", DISPLAY_BG_OBJECT, GetLastError());
-         return;
-      }
-      ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_ZORDER, 0);
-   }
-
-   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_XDISTANCE, x);
-   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_YDISTANCE, y);
-   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_XSIZE, width);
-   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_YSIZE, height);
-   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_BGCOLOR, C'245,245,245');
-   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_BORDER_COLOR, clrDimGray);
-   ObjectSetInteger(chart_id, DISPLAY_BG_OBJECT, OBJPROP_BACK, false);
-}
-
-void CreateOrUpdateLabel(long chart_id, string name, string text, int x, int y, int font_size, color text_color, ENUM_BASE_CORNER corner_anchor)
-  {
-   if(ObjectFind(chart_id, name) < 0)
-     {
-      if(!ObjectCreate(chart_id, name, OBJ_LABEL, 0, 0, 0))
-        {
-         PrintFormat("Error creating label %s: %d", name, GetLastError());
-         return;
-        }
-      ObjectSetInteger(chart_id, name, OBJPROP_CORNER, corner_anchor);
-      ObjectSetInteger(chart_id, name, OBJPROP_XDISTANCE, x);
-      ObjectSetInteger(chart_id, name, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(chart_id, name, OBJPROP_ZORDER, 1);
-      ObjectSetInteger(chart_id, name, OBJPROP_BACK, false);
-     }
-   ObjectSetInteger(chart_id, name, OBJPROP_CORNER, corner_anchor);
-   ObjectSetInteger(chart_id, name, OBJPROP_XDISTANCE, x);
-   ObjectSetInteger(chart_id, name, OBJPROP_YDISTANCE, y);
-   ObjectSetInteger(chart_id, name, OBJPROP_FONTSIZE, font_size);
-   ObjectSetString(chart_id, name, OBJPROP_TEXT, text);
-   ObjectSetInteger(chart_id, name, OBJPROP_COLOR, text_color);
-   ObjectSetInteger(chart_id, name, OBJPROP_BACK, false);
-  }
-
-void CalculateActivePositionMetrics()
-{
-   ExtCurrentMaxLoss = 0.0;
-   ExtCurrentMaxProfit = 0.0;
-   ExtCurrentProfit = 0.0;
-   ExtCurrentRRatio = 0.0;
-   ExtStaticMaxLoss = 0.0;
-   ExtStaticMaxProfit = 0.0;
-   ExtStaticRRatio = 0.0;
-   ExtLastCalcSymbol = "N/A";
-   ExtLastCalcAction = "N/A";
-   ExtLastCalcVolume = 0.0;
-
-   int total_positions = PositionsTotal();
-   if(total_positions <= 0)
-   {
-      ExtSignalProcessedForDisplay = false;
-      return;
-   }
-
-   double total_current_max_loss = 0;
-   double total_current_max_profit = 0;
-   double total_static_max_loss = 0;
-   double total_static_max_profit = 0;
-   double total_current_profit = 0;
-   string positions_info = "";
-
-   for(int i = 0; i < total_positions; i++)
-   {
-      if(!PositionSelectByTicket(PositionGetTicket(i)))
-         continue;
-
-      string symbol = PositionGetString(POSITION_SYMBOL);
-      double volume = PositionGetDouble(POSITION_VOLUME);
-      double entry_price = PositionGetDouble(POSITION_PRICE_OPEN);
-      double current_price = PositionGetDouble(POSITION_PRICE_CURRENT);
-      double sl = PositionGetDouble(POSITION_SL);
-      double tp = PositionGetDouble(POSITION_TP);
-      double profit = PositionGetDouble(POSITION_PROFIT);
-      ENUM_POSITION_TYPE position_type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-
-      string position_type_str = (position_type == POSITION_TYPE_BUY) ? "BUY" : "SELL";
-      if(i == 0)
-      {
-         ExtLastCalcSymbol = symbol;
-         ExtLastCalcAction = position_type_str;
-         ExtLastCalcVolume = volume;
-      }
-      else
-      {
-         positions_info += ", " + symbol + " " + position_type_str + " (" + DoubleToString(volume, 2) + ")";
-      }
-
-      double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-      double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-
-      double current_potential_loss = 0;
-      if(sl != 0)
-      {
-         if(position_type == POSITION_TYPE_BUY)
-            current_potential_loss = (current_price - sl) * volume * tick_value / point;
-         else
-            current_potential_loss = (sl - current_price) * volume * tick_value / point;
-         current_potential_loss = MathAbs(current_potential_loss);
-      }
-
-      double current_potential_profit = 0;
-      if(tp != 0)
-      {
-         if(position_type == POSITION_TYPE_BUY)
-            current_potential_profit = (tp - current_price) * volume * tick_value / point;
-         else
-            current_potential_profit = (current_price - tp) * volume * tick_value / point;
-         current_potential_profit = MathAbs(current_potential_profit);
-      }
-
-      double static_potential_loss = 0;
-      if(sl != 0)
-      {
-         if(position_type == POSITION_TYPE_BUY)
-            static_potential_loss = (entry_price - sl) * volume * tick_value / point;
-         else
-            static_potential_loss = (sl - entry_price) * volume * tick_value / point;
-         static_potential_loss = MathAbs(static_potential_loss);
-      }
-
-      double static_potential_profit = 0;
-      if(tp != 0)
-      {
-         if(position_type == POSITION_TYPE_BUY)
-            static_potential_profit = (tp - entry_price) * volume * tick_value / point;
-         else
-            static_potential_profit = (entry_price - tp) * volume * tick_value / point;
-         static_potential_profit = MathAbs(static_potential_profit);
-      }
-
-      total_current_max_loss += current_potential_loss;
-      total_current_max_profit += current_potential_profit;
-      total_static_max_loss += static_potential_loss;
-      total_static_max_profit += static_potential_profit;
-      total_current_profit += profit;
-   }
-
-   ExtCurrentMaxLoss = total_current_max_loss;
-   ExtCurrentMaxProfit = total_current_max_profit;
-   ExtCurrentProfit = total_current_profit;
-   ExtStaticMaxLoss = total_static_max_loss;
-   ExtStaticMaxProfit = total_static_max_profit;
-
-   if(ExtCurrentMaxLoss > 0) ExtCurrentRRatio = ExtCurrentMaxProfit / ExtCurrentMaxLoss;
-   if(ExtStaticMaxLoss > 0) ExtStaticRRatio = ExtStaticMaxProfit / ExtStaticMaxLoss;
-
-   if(positions_info != "") ExtLastCalcSymbol += positions_info;
-
-   ExtSignalProcessedForDisplay = true;
-}
-void UpdateChartDisplay()
-  {
-   // Skip display updates during backtesting
-   if(g_is_backtesting)
-      return;
-      
-   CalculateActivePositionMetrics();
-   UpdateStatistics();  // Update statistics before display
-
-   long current_chart_id = ChartID();
-   string lines_to_display[];
-   int line_idx = 0;
-
-   ArrayResize(lines_to_display, 120);
-
-   string ea_version_str = "1.31";
-   lines_to_display[line_idx++] = "RohitEA v" + ea_version_str + " - Active";
-   lines_to_display[line_idx++] = "------------------------------------";
-   lines_to_display[line_idx++] = "-------- SIGNAL DASHBOARD --------";
-   lines_to_display[line_idx++] = "Magic: " + IntegerToString(InpMagicNumber);
-   lines_to_display[line_idx++] = "Pattern: " + EnumToString(InpPatternType);
-   lines_to_display[line_idx++] = DashboardPatternSettings();
-   lines_to_display[line_idx++] = "Signal Logic: " + GetSelectedPatternSignalLogic();
-   lines_to_display[line_idx++] = StringFormat("Direction Filter: %s | Buy %s | Sell %s",
-                                                EnumToString(InpTradeDirection),
-                                                DashboardBuyAllowed() ? "ALLOWED" : "BLOCKED",
-                                                DashboardSellAllowed() ? "ALLOWED" : "BLOCKED");
-   lines_to_display[line_idx++] = "Reverse Signal: " + DashboardYesNo(InpReverseSignal);
-   lines_to_display[line_idx++] = StringFormat("Risk: %s | %.2f%% | FixedLot %.2f | Min/Max %.2f/%.2f",
-                                                EnumToString(InpRiskCalcMethod),
-                                                InpRiskPerTradePercentage,
-                                                InpFixedLotSize,
-                                                InpMinLot,
-                                                InpMaxLot);
-   if(InpRiskCalcMethod == RISK_CALC_STARTING_BALANCE)
-      lines_to_display[line_idx++] = "Risk Base Starting Balance: $" + DoubleToString(InpStartingBalance, 2);
-   lines_to_display[line_idx++] = StringFormat("Execution: %s | Max spread %.1f pts | Slippage %d pts",
-                                                EnumToString(InpOrderExecutionType),
-                                                InpMaxAllowedSpread,
-                                                InpMaxSlippagePoints);
-
-   if(InpGlobalTimeControlEnabled)
-   {
-      lines_to_display[line_idx++] = "Trade Timing Master: ON";
-      lines_to_display[line_idx++] = StringFormat("Force close trades: %s at %02d:%02d %s",
-                                                   DashboardOnOff(InpGlobalTimeCloseEnabled),
-                                                   ClampGlobalTimeHour(InpGlobalTimeCloseHour),
-                                                   ClampGlobalTimeMinute(InpGlobalTimeCloseMinute),
-                                                   GlobalTimeZoneText(InpGlobalTimeCloseZone));
-      lines_to_display[line_idx++] = StringFormat("Pause new signals: %s from %02d:%02d %s",
-                                                   DashboardOnOff(InpGlobalTimePauseSignalsEnabled),
-                                                   ClampGlobalTimeHour(InpGlobalTimePauseStartHour),
-                                                   ClampGlobalTimeMinute(InpGlobalTimePauseStartMinute),
-                                                   GlobalTimeZoneText(InpGlobalTimePauseZone));
-      lines_to_display[line_idx++] = StringFormat("Signals allowed again: %02d:%02d %s%s",
-                                                   ClampGlobalTimeHour(InpGlobalTimePauseResumeHour),
-                                                   ClampGlobalTimeMinute(InpGlobalTimePauseResumeMinute),
-                                                   GlobalTimeZoneText(InpGlobalTimePauseZone),
-                                                   IsGlobalTimeSignalPauseActive() ? " (ACTIVE)" : "");
-   }
-   else
-   {
-      lines_to_display[line_idx++] = "Trade Timing Master: OFF";
-   }
-
-   if(InpGlobalDollarExitEnabled)
-   {
-      int dollar_exit_positions = 0;
-      double dollar_exit_pnl = CalculateGlobalDollarExitPnL(dollar_exit_positions);
-      lines_to_display[line_idx++] = StringFormat("Global Dollar Exit: ON | P&L %.2f | TP %.2f | SL %.2f | Mode %s",
-                                                   dollar_exit_pnl,
-                                                   InpGlobalDollarProfitTarget,
-                                                   MathAbs(InpGlobalDollarLossLimit),
-                                                   EnumToString(InpGlobalDollarSLTPMode));
-   }
-
-   lines_to_display[line_idx++] = "Active Signal Influencers:";
-   bool any_signal_influencer = false;
-   if(InpReverseSignal) { lines_to_display[line_idx++] = "- Reverse signal changes BUY/SELL direction"; any_signal_influencer = true; }
-   if(InpTradeDirection != TRADE_DIR_BOTH) { lines_to_display[line_idx++] = "- Direction filter can block or force trade side"; any_signal_influencer = true; }
-   if(InpGlobalTimeControlEnabled && InpGlobalTimePauseSignalsEnabled) { lines_to_display[line_idx++] = "- Time control can pause new signals"; any_signal_influencer = true; }
-   if(InpOrderExecutionType == ORDER_EXEC_LIMIT) { lines_to_display[line_idx++] = "- Limit order offset affects entries"; any_signal_influencer = true; }
-   if(InpMultiOrderEnabled) { lines_to_display[line_idx++] = "- Multi-order recovery can add recovery trades"; any_signal_influencer = true; }
-   if(InpRecoveryMode == RECOVERY_ENABLED) { lines_to_display[line_idx++] = "- Recovery mode can increase risk after losses"; any_signal_influencer = true; }
-   if(InpDCAEnabled) { lines_to_display[line_idx++] = "- DCA protection can place extra orders"; any_signal_influencer = true; }
-   if(InpCopyTradeEnabled) { lines_to_display[line_idx++] = "- Copy trading can send signals externally"; any_signal_influencer = true; }
-   if(!any_signal_influencer)
-      lines_to_display[line_idx++] = "- None beyond selected pattern and base risk settings";
-   lines_to_display[line_idx++] = "------------------------------------";
-
-   // Trading Statistics Panel
-   lines_to_display[line_idx++] = "-------- TRADING STATS --------";
-   lines_to_display[line_idx++] = StringFormat("Total Trades: %d", g_stats.total_trades);
-   lines_to_display[line_idx++] = StringFormat("Win/Loss: %d/%d (%.1f%%)",
-                                              g_stats.winning_trades,
-                                              g_stats.losing_trades,
-                                              g_stats.win_percentage);
-
-   // RR Statistics
-   string last_10_rr = "";
-   for(int i = 0; i < 10; i++)
-   {
-      if(g_stats.last_10_trades_rr[i] != 0)
-         last_10_rr += StringFormat("%.1f ", g_stats.last_10_trades_rr[i]);
-   }
-   lines_to_display[line_idx++] = "Last 10 RR: " + last_10_rr;
-   lines_to_display[line_idx++] = StringFormat("Avg RR: %.2f", g_stats.avg_rr);
-
-   // P&L and Drawdown
-   string currency = AccountInfoString(ACCOUNT_CURRENCY);
-   lines_to_display[line_idx++] = StringFormat("Gross P&L: %.2f %s", g_stats.gross_pnl, currency);
-   lines_to_display[line_idx++] = StringFormat("Commission: %.2f %s", g_stats.commission_total, currency);
-   lines_to_display[line_idx++] = StringFormat("Net P&L: %.2f %s", g_stats.net_pnl, currency);
-   lines_to_display[line_idx++] = StringFormat("Max Drawdown: %.2f%%", g_stats.max_drawdown);
-   if(InpGlobalTimeControlEnabled)
-   {
-      lines_to_display[line_idx++] = StringFormat("Time Control: Close=%s %02d:%02d %s",
-                                                 InpGlobalTimeCloseEnabled ? "ON" : "OFF",
-                                                 ClampGlobalTimeHour(InpGlobalTimeCloseHour),
-                                                 ClampGlobalTimeMinute(InpGlobalTimeCloseMinute),
-                                                 GlobalTimeZoneText(InpGlobalTimeCloseZone));
-      lines_to_display[line_idx++] = StringFormat("Signal Pause: %s %02d:%02d-%02d:%02d %s",
-                                                 InpGlobalTimePauseSignalsEnabled ? "ON" : "OFF",
-                                                 ClampGlobalTimeHour(InpGlobalTimePauseStartHour),
-                                                 ClampGlobalTimeMinute(InpGlobalTimePauseStartMinute),
-                                                 ClampGlobalTimeHour(InpGlobalTimePauseResumeHour),
-                                                 ClampGlobalTimeMinute(InpGlobalTimePauseResumeMinute),
-                                                 GlobalTimeZoneText(InpGlobalTimePauseZone));
-      if(IsGlobalTimeSignalPauseActive())
-         lines_to_display[line_idx++] = "Signal Pause: ACTIVE";
-   }
-
-   // Add recovery mode status to display
-   if(InpRecoveryMode == RECOVERY_ENABLED)
-   {
-      lines_to_display[line_idx++] = StringFormat("Recovery: %s (Losses: %d, Factor: %.2fx)",
-                                                 g_inRecoveryMode ? "ACTIVE" : "Standby",
-                                                 g_consecutiveLosses,
-                                                 g_currentRecoveryFactor);
-   }
-   
-   // Add multi-position status to display
-   if(InpAllowSecondPositionOnLoss)
-   {
-      lines_to_display[line_idx++] = StringFormat("Multi-Position: %s",
-                                                 g_positionInLoss ? "ALLOWED (0.5R loss)" : "Not allowed");
-   }
-   
-   // Add hedging status to display
-   if(InpHedgingEnabled && InpMultiOrderEnabled)
-   {
-      int hedged_groups = 0;
-      for(int i = 0; i < ArraySize(MultiOrderGroups); i++)
-      {
-         if(MultiOrderGroups[i].hedge_activated)
-            hedged_groups++;
-      }
-      
-      if(hedged_groups > 0)
-      {
-         double account_balance = AccountInfoDouble(ACCOUNT_BALANCE);
-         double profit_threshold = account_balance * (InpHedgingProfitThreshold / 100.0);
-         lines_to_display[line_idx++] = StringFormat("HEDGING: %d group(s) hedged", hedged_groups);
-         lines_to_display[line_idx++] = StringFormat("Exit at: %.1f%% profit (%.2f %s)", 
-                                                    InpHedgingProfitThreshold, profit_threshold, AccountInfoString(ACCOUNT_CURRENCY));
-      }
-      else
-      {
-         lines_to_display[line_idx++] = StringFormat("Hedging: Ready (after %d recovery trades)", InpHedgingTriggerAfter);
-      }
-   }
-   
-   // Add stochastic RSI confirmation status if enabled (only in live trading)
-   if(InpStochRSIConfirmationEnabled && InpMultiOrderEnabled && !g_is_backtesting)
-   {
-      lines_to_display[line_idx++] = StringFormat("StochRSI: BUY %s, SELL %s",
-                                                g_stochastic_buy_ready ? "READY" : "WAITING",
-                                                g_stochastic_sell_ready ? "READY" : "WAITING");
-   }
-   
-   // Add HeikinAshi recovery confirmation status if enabled (only in live trading)
-   if(InpHARecoveryConfirmationEnabled && InpMultiOrderEnabled && !g_is_backtesting)
-   {
-      lines_to_display[line_idx++] = StringFormat("HA Recovery: BUY %s, SELL %s (G:%d/R:%d)",
-                                                g_ha_recovery_buy_ready ? "READY" : "WAITING",
-                                                g_ha_recovery_sell_ready ? "READY" : "WAITING",
-                                                g_ha_recovery_consecutive_green,
-                                                g_ha_recovery_consecutive_red);
-   }
-   
-   // Add MACD recovery confirmation status if enabled (only in live trading)
-   if(InpMACDRecoveryConfirmationEnabled && InpMultiOrderEnabled && !g_is_backtesting)
-   {
-      lines_to_display[line_idx++] = StringFormat("MACD Recovery: BUY %s, SELL %s",
-                                                g_macd_recovery_buy_ready ? "READY" : "WAITING",
-                                                g_macd_recovery_sell_ready ? "READY" : "WAITING");
-   }
-   
-   // Add ROC recovery confirmation status if enabled (only in live trading)
-   if(InpROCRecoveryConfirmationEnabled && InpMultiOrderEnabled && !g_is_backtesting)
-   {
-      lines_to_display[line_idx++] = StringFormat("ROC Recovery: BUY %s, SELL %s",
-                                                g_roc_recovery_buy_ready ? "READY" : "WAITING",
-                                                g_roc_recovery_sell_ready ? "READY" : "WAITING");
-   }
-
-   if(InpPattern9RecoveryConfirmationEnabled && InpMultiOrderEnabled && !g_is_backtesting)
-   {
-      string p9_step_info = "";
-      if(InpPattern9RecoveryPercentStepEnabled)
-         p9_step_info += StringFormat(", PctStepFirst %.2f", MathMax(0.0, InpPattern9RecoveryPercentStep));
-      if(InpPattern9RecoveryWaitStepEnabled)
-         p9_step_info += StringFormat(", WaitStep +%.0f%%", MathMax(0.0, InpPattern9RecoveryWaitStepMultiplier) * 100.0);
-
-      lines_to_display[line_idx++] = StringFormat("P9 Recovery: %s %.2f%%, TF %s, Lookback %d, %s, Wait %d bars%s",
-                                                InpPattern9RecoveryTriggerMode == P9_RECOVERY_TRIGGER_FALL ? "Fall" : "Rise",
-                                                InpPattern9RecoveryFallPercent,
-                                                EnumToString(InpPattern9RecoveryTimeframe),
-                                                InpPattern9RecoveryLookbackBars,
-                                                InpPattern9RecoveryUseHighLow ? "High/Low" : "Close",
-                                                MathMax(0, InpPattern9RecoveryWaitCandles),
-                                                p9_step_info);
-   }
-
-   if(InpOHLCLevelRecoveryConfirmationEnabled && InpMultiOrderEnabled && !g_is_backtesting)
-   {
-      lines_to_display[line_idx++] = StringFormat("OHLC Recovery: D=%s W=%s M=%s | O=%s H=%s L=%s C=%s | Lookback %d",
-                                                InpOHLCRecoveryUseDaily ? "ON" : "OFF",
-                                                InpOHLCRecoveryUseWeekly ? "ON" : "OFF",
-                                                InpOHLCRecoveryUseMonthly ? "ON" : "OFF",
-                                                InpOHLCRecoveryUseOpen ? "ON" : "OFF",
-                                                InpOHLCRecoveryUseHigh ? "ON" : "OFF",
-                                                InpOHLCRecoveryUseLow ? "ON" : "OFF",
-                                                InpOHLCRecoveryUseClose ? "ON" : "OFF",
-                                                MathMax(1, InpOHLCRecoveryLookbackCandles));
-   }
-
-   lines_to_display[line_idx++] = "------------------------------------";
-
-   // Copy Trading Information
-   if(InpCopyTradeEnabled)
-   {
-      lines_to_display[line_idx++] = "---------- COPY TRADING ----------";
-      lines_to_display[line_idx++] = StringFormat("Status: %s | Format: %s",
-                                                 "ENABLED",
-                                                 InpSendSLTPPrices ? "SL/TP Prices" : "ATR Distance");
-      lines_to_display[line_idx++] = StringFormat("Direction: %s | Signals: %s/%s",
-                                                 InpInvertCopyDirection ? "INVERTED" : "Normal",
-                                                 InpSendTradeSignals ? "OPEN" : "off",
-                                                 InpSendExitSignals ? "EXIT" : "off");
-      
-      if(InpUseSpreadBuffer)
-      {
-         double current_spread = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-         double spread_diff = InpFollowerSpread - current_spread;
-         lines_to_display[line_idx++] = StringFormat("Spread Buffer: ON (Follower: %.0f, Current: %.0f, Diff: %+.0f)",
-                                                    InpFollowerSpread, current_spread, spread_diff);
-      }
-      else
-      {
-         lines_to_display[line_idx++] = "Spread Buffer: OFF";
-      }
-      
-      lines_to_display[line_idx++] = StringFormat("Tracked Signals: %d", ArraySize(g_copyTradeStates));
-   }
-   else
-   {
-      lines_to_display[line_idx++] = "---------- COPY TRADING ----------";
-      lines_to_display[line_idx++] = "Status: DISABLED";
-   }
-
-   lines_to_display[line_idx++] = "------------------------------------";
-
-   // Original EA Settings Display
-   lines_to_display[line_idx++] = "Pattern: " + EnumToString(InpPatternType);
-   lines_to_display[line_idx++] = "Magic: " + IntegerToString(InpMagicNumber) + " | Dev: " + (InpDevelopmentMode ? "ON" : "OFF");
-   lines_to_display[line_idx++] = "Risk Method: " + EnumToString(InpRiskCalcMethod);
-   if(InpRiskCalcMethod == RISK_CALC_STARTING_BALANCE)
-     {
-      lines_to_display[line_idx++] = "Starting Bal: $" + DoubleToString(InpStartingBalance, 2);
-     }
-   lines_to_display[line_idx++] = "SL Type: " + (InpGlobalDollarExitEnabled ? "OFF (Dollar Exit)" : (InpUseSyntheticSL ? "SYNTHETIC" : "REAL"));
-   if(InpGlobalDollarExitEnabled)
-   {
-      int dollar_exit_positions = 0;
-      double dollar_exit_pnl = CalculateGlobalDollarExitPnL(dollar_exit_positions);
-      lines_to_display[line_idx++] = StringFormat("Dollar Exit: ON | P&L $%.2f | TP $%.2f | SL $%.2f",
-                                                   dollar_exit_pnl,
-                                                   InpGlobalDollarProfitTarget,
-                                                   MathAbs(InpGlobalDollarLossLimit));
-   }
-
-   // Show effective risk percentage if in recovery mode
-   if(InpRecoveryMode == RECOVERY_ENABLED && g_inRecoveryMode)
-   {
-      double effective_risk = MathMin(InpRiskPerTradePercentage * g_currentRecoveryFactor, InpMaxRiskPercentage);
-      lines_to_display[line_idx++] = "Risk Per Trade: " + DoubleToString(InpRiskPerTradePercentage, 2) +
-                                    "% (Current: " + DoubleToString(effective_risk, 2) + "%)";
-   }
-   else
-   {
-      lines_to_display[line_idx++] = "Risk Per Trade: " + DoubleToString(InpRiskPerTradePercentage, 2) + "%";
-   }
-
-   string order_type_text = "Order Type: " + EnumToString(InpOrderExecutionType);
-   if(InpOrderExecutionType == ORDER_EXEC_LIMIT)
-     {
-      order_type_text += " (Offset: " + IntegerToString(InpLimitOrderOffsetPoints) + " pts)";
-     }
-   lines_to_display[line_idx++] = order_type_text;
-   lines_to_display[line_idx++] = "ATR SL x: " + DoubleToString(InpAtrMultiplierSL, 2) + " | ATR TP x: " + DoubleToString(InpAtrMultiplierTP, 2);
-   lines_to_display[line_idx++] = "Position Limit: " + IntegerToString(InpMaxOpenPositions) + 
-                                  (InpAllowSecondPositionOnLoss ? " (allows 2nd on 0.5R loss)" : "") +
-                                  " (magic: " + IntegerToString(InpMagicNumber) + ")";
-   lines_to_display[line_idx++] = "Candle Exit: " + (InpCandleExitEnabled ? "ON" : "OFF");
-   lines_to_display[line_idx++] = "Loss Protection: " + (InpLossProtectionEnabled ? "ON (" + DoubleToString(InpLossProtectionPercentage, 1) + "% after " + IntegerToString(InpLossProtectionTimerSeconds) + "s)" : "OFF");
-   lines_to_display[line_idx++] = "Breakeven: " + (InpBreakevenEnabled ? "ON (at " + DoubleToString(InpBreakevenRMultiple, 1) + "R)" : "OFF");
-
-   string trailing_text = "Trailing Stop: " + (InpEnableTrailSL ? "ON" : "OFF");
-   if(InpEnableTrailSL)
-   {
-      if(InpTrailingTriggerMode == TRAIL_MODE_RISK_REWARD)
-         trailing_text += " (triggerRR=" + DoubleToString(InpTrailStartRR, 2);
-      else if(InpTrailingTriggerMode == TRAIL_MODE_ATR_LADDER)
-         trailing_text += " (ATR ladder: start=" + DoubleToString(InpTrailATRStartR, 2) + "R";
-      else
-         trailing_text += " (trigger=" + DoubleToString(InpTrailTriggerPercent, 2) + "%";
-      if(InpTrailingTriggerMode == TRAIL_MODE_RISK_REWARD && InpTrailMoveRRPerStep > 0.0)
-         trailing_text += ", moveRRStep=" + DoubleToString(InpTrailMoveRRPerStep, 2) + "R";
-      else if(InpTrailingTriggerMode == TRAIL_MODE_ATR_LADDER)
-         trailing_text += ", step=" + DoubleToString(InpTrailATRStepR, 2) + "R, ATRx=" + DoubleToString(InpTrailATRAtrMultiplier, 2);
-      else
-         trailing_text += ", move=" + DoubleToString(InpTrailMovePercent, 2) + "%";
-      trailing_text += ", mode=" + (InpTrailContinuous ? "continuous" : "one-shot") + ")";
-   }
-   lines_to_display[line_idx++] = trailing_text;
-
-   lines_to_display[line_idx++] = "------------------------------------";
-
-   if(ExtSignalProcessedForDisplay)
-     {
-      lines_to_display[line_idx++] = "Active Position: " + ExtLastCalcSymbol + " " + ExtLastCalcAction + " (Vol: " + DoubleToString(ExtLastCalcVolume,2) + ")";
-      lines_to_display[line_idx++] = StringFormat("Current P/L: %.2f %s", ExtCurrentProfit, currency);
-      lines_to_display[line_idx++] = "-------- POSITION METRICS --------";
-      lines_to_display[line_idx++] = StringFormat("Max Loss (Entry→SL): %.2f %s", ExtStaticMaxLoss, currency);
-      lines_to_display[line_idx++] = StringFormat("Max Profit (Entry→TP): %.2f %s", ExtStaticMaxProfit, currency);
-      if(ExtStaticMaxLoss > 0)
-        {
-         lines_to_display[line_idx++] = StringFormat("Risk/Reward: 1 : %.2f", ExtStaticRRatio);
-        }
-      else
-        {
-         lines_to_display[line_idx++] = "Risk/Reward: N/A";
-        }
-     }
-   else
-     {
-      lines_to_display[line_idx++] = "Active Position: None";
-      lines_to_display[line_idx++] = "Current P/L: N/A";
-      lines_to_display[line_idx++] = "-------- POSITION METRICS --------";
-      lines_to_display[line_idx++] = "Max Loss (Entry→SL): N/A";
-      lines_to_display[line_idx++] = "Max Profit (Entry→TP): N/A";
-      lines_to_display[line_idx++] = "Risk/Reward: N/A";
-     }
-   lines_to_display[line_idx++] = "------------------------------------";
-   lines_to_display[line_idx++] = "Server Time: " + TimeToString(TimeCurrent(), TIME_SECONDS);
-
-   ArrayResize(lines_to_display, line_idx);
-   ExtTotalDisplayLines = line_idx;
-
-   ENUM_BASE_CORNER actual_corner;
-   int base_x_offset;
-   int base_y_offset;
-   int line_height = InpDisplayFontSize + InpDisplayLineSpacing;
-
-   actual_corner = CORNER_LEFT_UPPER;
-   base_x_offset = MathMax(InpDisplayXOffset, 20);
-   base_y_offset = MathMax(InpDisplayYOffset, 200);
-
-   CreateOrUpdateDashboardBackground(current_chart_id,
-                                     MathMax(0, base_x_offset - 8),
-                                     MathMax(0, base_y_offset - 8),
-                                     820,
-                                     ExtTotalDisplayLines * line_height + 16);
-
-   int current_y_draw_offset = base_y_offset;
-
-   for(int i=0; i < ExtTotalDisplayLines; i++)
-     {
-      int y_pos_for_label = (actual_corner == CORNER_LEFT_LOWER) ? (base_y_offset + i * line_height) : current_y_draw_offset;
-
-      CreateOrUpdateLabel(current_chart_id, DISPLAY_OBJECT_PREFIX + IntegerToString(i), lines_to_display[i],
-                          base_x_offset, y_pos_for_label,
-                          InpDisplayFontSize, InpDisplayFontColor, actual_corner);
-      if(actual_corner != CORNER_LEFT_LOWER) current_y_draw_offset += line_height;
-     }
-
-   for(int i = ExtTotalDisplayLines; i < ExtTotalDisplayLines + 10; i++)
-     {
-        string old_label_name = DISPLAY_OBJECT_PREFIX + IntegerToString(i);
-        if(ObjectFind(current_chart_id, old_label_name) >= 0)
-          {
-            ObjectSetString(current_chart_id, old_label_name, OBJPROP_TEXT, "");
-          }
-        else { break; }
-     }
-   ChartRedraw(current_chart_id);
-  }
 
 bool ClosePositionsByTypeForCandleExit(ENUM_POSITION_TYPE positionTypeToClose)
 {
@@ -21438,14 +20729,596 @@ void ApplyCandleColorTrailing()
          req.tp = PositionGetDouble(POSITION_TP);
          req.comment = "RohitEA CandleColorTrail";
 
-         if(SendDollarExitAwareOrder(req, res))
+          if(SendDollarExitAwareOrder(req, res))
+          {
+             PrintFormat("CandleColorTrail: Updated SL for %s position #%d to %.5f (delta: %.5f)", (pos_type==POSITION_TYPE_BUY?"BUY":"SELL"), ticket, new_sl, delta);
+          }
+          else
+          {
+             PrintFormat("CandleColorTrail: Failed to update SL for position #%d. Error: %d", ticket, GetLastError());
+          }
+       }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| SIGNAL DASHBOARD - Modern Info Panel                              |
+//+------------------------------------------------------------------+
+color SigPanelColor()  { return C'20,22,30'; }
+color SigHeaderColor() { return C'28,30,42'; }
+color SigBorderColor() { return C'74,85,104'; }
+color SigAccentColor() { return C'56,189,248'; }
+color SigTextColor()   { return C'236,239,244'; }
+color SigMutedColor()  { return C'158,166,180'; }
+color SigGoodColor()   { return C'125,211,252'; }
+color SigWarnColor()   { return C'245,180,85'; }
+color SigBadColor()    { return C'254,202,202'; }
+
+void SigEnsureBox(string name, int x, int y, int w, int h, color bg, color border)
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, w);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, h);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bg);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, border);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 0);
+}
+
+void SigEnsureLabel(string name, int x, int y, int fs, color tc, string font = "Consolas")
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fs);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, tc);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 10);
+   ObjectSetString(0, name, OBJPROP_FONT, font);
+}
+
+void CreateSignalDashboard()
+{
+   if(g_is_backtesting)
+      return;
+
+   int fs = InpDisplayFontSize;
+   int ls = 15;
+   int px = 15;
+   int py = 55;
+   int pw = SIGDB_PANEL_WIDTH;
+   int hh = 38;
+   int ph = 44 + SIGDB_LINE_COUNT * ls + 14;
+
+   SigEnsureBox(SIGDB_PREFIX + "BG", px, py, pw, ph, SigPanelColor(), SigBorderColor());
+   SigEnsureBox(SIGDB_PREFIX + "HEADER", px, py, pw, hh, SigHeaderColor(), SigHeaderColor());
+   SigEnsureBox(SIGDB_PREFIX + "ACCENT", px, py, 3, ph, SigAccentColor(), SigAccentColor());
+   SigEnsureLabel(SIGDB_PREFIX + "TITLE", px + 14, py + 10, fs + 2, SigTextColor(), "Arial Bold");
+
+   for(int i = 0; i < SIGDB_LINE_COUNT; i++)
+      SigEnsureLabel(SIGDB_PREFIX + "LINE_" + (string)i, px + 14, py + 52 + i * ls, fs, SigTextColor());
+
+   // Big blinking status label - positioned at top of content, below header bar
+   SigEnsureLabel(SIGDB_PREFIX + "BIGSTATUS", px + 14, py + 28, fs + 2, SigGoodColor(), "Arial Bold");
+
+   g_sigdb_objects_created = true;
+}
+
+void SigSetLine(int index, string text, color tc = clrNONE)
+{
+   if(index < 0 || index >= SIGDB_LINE_COUNT)
+      return;
+   string name = SIGDB_PREFIX + "LINE_" + (string)index;
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, (tc == clrNONE ? SigTextColor() : tc));
+}
+
+string SigMoneyStr(double v)
+{
+   return DoubleToString(v, 2);
+}
+
+string SigTimeStr(datetime t)
+{
+   if(t <= 0)
+      return "    --:--:--";
+   MqlDateTime p;
+   TimeToStruct(t, p);
+   return StringFormat("%02d:%02d:%02d", p.hour, p.min, p.sec);
+}
+
+string SigTFName(ENUM_TIMEFRAMES tf)
+{
+   switch(tf)
+   {
+      case PERIOD_M1:  return "M1";
+      case PERIOD_M5:  return "M5";
+      case PERIOD_M15: return "M15";
+      case PERIOD_M30: return "M30";
+      case PERIOD_H1:  return "H1";
+      case PERIOD_H4:  return "H4";
+      case PERIOD_D1:  return "D1";
+      case PERIOD_W1:  return "W1";
+      case PERIOD_MN1: return "MN";
+      default:
+         if(tf == PERIOD_CURRENT)
+            return "Current";
+         return "TF" + (string)tf;
+   }
+}
+
+string SigP18TradeModeName(ENUM_PATTERN18_TRADE_MODE m)
+{
+   switch(m)
+   {
+      case P18_TRADE_BUY_ONLY:  return "BuyOnly";
+      case P18_TRADE_SELL_ONLY: return "SellOnly";
+      case P18_TRADE_RANDOM:    return "Random";
+   }
+   return "?";
+}
+
+string SigP19SignalModeName(ENUM_PATTERN19_SIGNAL_MODE m)
+{
+   switch(m)
+   {
+      case P19_SIGNAL_BREAKOUT:     return "Breakout";
+      case P19_SIGNAL_NON_BREAKOUT: return "NonBreakout";
+   }
+   return "?";
+}
+
+string SigP19TradeModeName(ENUM_PATTERN19_TRADE_MODE m)
+{
+   switch(m)
+   {
+      case P19_TRADE_BUY_ONLY:      return "BuyOnly";
+      case P19_TRADE_SELL_ONLY:     return "SellOnly";
+      case P19_TRADE_BUY_AND_SELL:  return "Buy+Sell";
+      case P19_TRADE_RANDOM:        return "Random";
+   }
+   return "?";
+}
+
+void UpdateSignalDashboard()
+{
+   if(!g_sigdb_objects_created)
+      CreateSignalDashboard();
+   if(!g_sigdb_objects_created)
+      return;
+
+   ObjectSetString(0, SIGDB_PREFIX + "TITLE", OBJPROP_TEXT, "SIGNAL  DASHBOARD");
+   int line = 0;
+
+   SigSetLine(line++, " ", SigMutedColor());
+
+   // --- PATTERN ---
+   SigSetLine(line++, "PATTERN", SigAccentColor());
+   string pName = "";
+   string pSet = "";
+   switch(InpPatternType)
+   {
+      case PATTERN_1_VOLUME:
+         pName = "1: Volume Based";
+         pSet = "RSI=" + (string)InpRsiPeriod + "  Thresh=" + DoubleToString(InpRsiThreshold, 1) + "  ATR=" + (string)InpAtrPeriod;
+         break;
+      case PATTERN_2_BREAKOUT:
+         pName = "2: Middle Bar Breakout";
+         pSet = "Bars=" + (string)InpPattern2Bars + "  ATR=" + (string)InpAtrPeriod;
+         break;
+      case PATTERN_3_PREV_BAR:
+         pName = "3: Prev Bar Breakout";
+         pSet = "ATR Period=" + (string)InpAtrPeriod;
+         break;
+      case PATTERN_4_BOX_BREAKOUT:
+         pName = "4: Box Breakout";
+         pSet = "Candles=" + (string)InpPattern4BoxCandles + "  SAR=" + DoubleToString(InpPattern4SARStep, 3) + "/" + DoubleToString(InpPattern4SARMax, 3);
+         break;
+      case PATTERN_5_SUPERTREND_STOCH:
+         pName = "5: SuperTrend+Stoch";
+         pSet = "ST=" + (string)InpSupertrendPeriod + "/" + DoubleToString(InpSupertrendFactor, 1) + "  Stoch=" + (string)InpStochasticK + "/" + (string)InpStochasticD + "  Lvl=" + DoubleToString(InpStochasticLowLevel, 0) + "/" + DoubleToString(InpStochasticHighLevel, 0);
+         break;
+      case PATTERN_6_REVERSAL:
+         pName = "6: Reversal Pattern";
+         pSet = "ATR Period=" + (string)InpAtrPeriod;
+         break;
+      case PATTERN_7_HEIKINASHI_TREND:
+         pName = "7: HeikinAshi Trend";
+         pSet = "ATR Period=" + (string)InpAtrPeriod;
+         break;
+      case PATTERN_8_HEIKINASHI_CONSECUTIVE:
+         pName = "8: HA Consecutive";
+         pSet = "Consec=" + (string)InpPattern8ConsecutiveCandles + "  WaitClose=" + (InpPattern8WaitForClose ? "Y" : "N") + "  Strict=" + (InpPattern8StrictMode ? "Y" : "N");
+         break;
+      case PATTERN_9_PRICE_FALL:
+         pName = "9: Price Fall %";
+         pSet = "Fall=" + DoubleToString(InpPattern9FallPercent, 2) + "%  LkBk=" + (string)InpPattern9LookbackBars + "  BiDir=" + (InpPattern9BidirectionalMode ? "Y" : "N");
+         break;
+      case PATTERN_10_PRICE_MOVEMENT:
+         pName = "10: Price Movement";
+         pSet = "Move=" + DoubleToString(InpPattern10MovePercent, 2) + "%  LkBk=" + (string)InpPattern10LookbackBars + "  Inv=" + (InpPattern10Invert ? "Y" : "N");
+         break;
+      case PATTERN_11_TRENDLINE:
+         pName = "11: Trendline";
+         pSet = "HiLk=" + (string)InpPattern11HighLookback + "  LoLk=" + (string)InpPattern11LowLookback + "  PvW=" + (string)InpPattern11PivotWidth;
+         break;
+      case PATTERN_12_MANUAL:
+         pName = "12: Manual Trading";
+         pSet = "No automatic signals";
+         break;
+      case PATTERN_13_PREV_CANDLE_COLOR:
+         pName = "13: Prev Candle Color";
+         pSet = "TF=" + SigTFName(InpPattern13CandleTimeframe) + "  WaitClose=" + (InpPattern13WaitForClose ? "Y" : "N");
+         break;
+      case PATTERN_14_BREAK_LOW_VOLUME:
+         pName = "14: Break Low+Vol";
+         pSet = "Prev=" + (string)InpPattern14PrevCandles + "  BiDir=" + (InpPattern14Bidirectional ? "Y" : "N");
+         break;
+      case PATTERN_15_VOLUME_OSCILLATION:
+         pName = "15: Volume Oscillate";
+         pSet = "LkBk=" + (string)InpPattern15LookbackBars + "  WaitClose=" + (InpPattern15WaitForClose ? "Y" : "N");
+         break;
+      case PATTERN_16_GREEN_CANDLE_BREAKOUT:
+         pName = "16: Green Breakout";
+         pSet = "WaitClose=" + (InpPattern16WaitForClose ? "Y" : "N");
+         break;
+      case PATTERN_17_STATASTICAL:
+         pName = "17: Statistical";
+         pSet = "Step=" + (string)InpPattern17PipStepPoints + "pts  LkBk=" + (string)InpPattern17LookbackCandles + "  Up%=" + DoubleToString(InpPattern17UpperChancePercent, 0) + "%";
+         break;
+      case PATTERN_18_SIGNATURE_VOLUME:
+         pName = "18: Signature Volume";
+         pSet = "Mode=" + SigP18TradeModeName(InpPattern18TradeMode) + "  OpenTrig=" + (InpPattern18UseOpenPriceTrigger ? "Y" : "N");
+         break;
+      case PATTERN_19_OHLC_RECOVERY_ENTRY:
+         pName = "19: OHLC Recovery";
+         pSet = "Signal=" + SigP19SignalModeName(InpPattern19SignalMode) + "  Trade=" + SigP19TradeModeName(InpPattern19TradeMode) + "  D/W/M=" + (InpPattern19UseDaily ? "Y" : "N") + "/" + (InpPattern19UseWeekly ? "Y" : "N") + "/" + (InpPattern19UseMonthly ? "Y" : "N");
+         break;
+      case PATTERN_20_THREE_GREEN_HHHL_RETEST:
+         pName = "20: 3Green HH/HL";
+         pSet = "ShowLevel=" + (InpPattern20ShowLevel ? "Y" : "N");
+         break;
+   }
+   SigSetLine(line++, "  Active  " + pName, SigGoodColor());
+   SigSetLine(line++, "  Params  " + pSet);
+
+   SigSetLine(line++, " ", SigMutedColor());
+
+   // --- RISK MANAGEMENT ---
+   SigSetLine(line++, "RISK MANAGEMENT", SigAccentColor());
+   string rMeth = "";
+   string rVal = "";
+   switch(InpRiskCalcMethod)
+   {
+      case RISK_CALC_STARTING_BALANCE:
+         rMeth = "Starting Balance";
+         rVal = DoubleToString(InpRiskPerTradePercentage, 2) + "% of $" + SigMoneyStr(InpStartingBalance);
+         break;
+      case RISK_CALC_BALANCE:
+         rMeth = "Current Balance";
+         rVal = DoubleToString(InpRiskPerTradePercentage, 2) + "% of balance";
+         break;
+      case RISK_CALC_EQUITY:
+         rMeth = "Current Equity";
+         rVal = DoubleToString(InpRiskPerTradePercentage, 2) + "% of equity";
+         break;
+      case RISK_CALC_FIXED_LOT:
+         rMeth = "Fixed Lot";
+         rVal = DoubleToString(InpFixedLotSize, 2) + " lots";
+         break;
+   }
+   string sltpMethod = (InpSLTPMethod == SLTP_ATR_MULTIPLIER) ? "ATR" : "Fixed";
+   SigSetLine(line++, "  Method  " + rMeth);
+   SigSetLine(line++, "  Value   " + rVal + "  SL/TP:" + sltpMethod);
+
+   SigSetLine(line++, " ", SigMutedColor());
+
+   // --- SIGNAL DIRECTION ---
+   SigSetLine(line++, "SIGNAL DIRECTION", SigAccentColor());
+   if(InpReverseSignal)
+      SigSetLine(line++, "  Direction  REVERSED (Buy=Sell)", SigWarnColor());
+   else
+      SigSetLine(line++, "  Direction  NORMAL", SigGoodColor());
+
+   SigSetLine(line++, " ", SigMutedColor());
+
+   // --- GLOBAL EXIT ---
+   SigSetLine(line++, "GLOBAL EXIT", SigAccentColor());
+   if(InpGlobalDollarExitEnabled)
+   {
+      string modeStr = (InpGlobalDollarSLTPMode == GLOBAL_DOLLAR_SYNTHETIC_SLTP) ? "Synthetic" : "Real SL/TP";
+      SigSetLine(line++, "  Status  ON  (" + modeStr + ")", SigGoodColor());
+      SigSetLine(line++, "  Limits  Profit:$" + SigMoneyStr(InpGlobalDollarProfitTarget) + "  Loss:$" + SigMoneyStr(InpGlobalDollarLossLimit));
+   }
+   else
+   {
+      SigSetLine(line++, "  Status  OFF", SigMutedColor());
+      SigSetLine(line++, "  Limits  --");
+   }
+
+   SigSetLine(line++, " ", SigMutedColor());
+
+   // --- GLOBAL TIME CONTROL ---
+   SigSetLine(line++, "GLOBAL TIME CONTROL", SigAccentColor());
+
+   if(InpGlobalTimeControlEnabled)
+   {
+      // Master ON
+      string masterLine = "  Status   ON";
+      if(InpGlobalTimeCloseEnabled)
+         masterLine += "  |  Close: " + (InpGlobalTimeCloseEnabled ? "ON" : "OFF");
+      if(InpGlobalTimePauseSignalsEnabled)
+         masterLine += "  |  Pause: " + (InpGlobalTimePauseSignalsEnabled ? "ON" : "OFF");
+      SigSetLine(line++, masterLine, SigGoodColor());
+
+      // Close time info with countdown
+      if(InpGlobalTimeCloseEnabled)
+      {
+         string closeZoneStr = GlobalTimeZoneText(InpGlobalTimeCloseZone);
+         string closeTimeStr = StringFormat("%02d:%02d", ClampGlobalTimeHour(InpGlobalTimeCloseHour), ClampGlobalTimeMinute(InpGlobalTimeCloseMinute));
+         datetime closeNow = GlobalTimeNow(InpGlobalTimeCloseZone);
+         int closeMin = ClampGlobalTimeHour(InpGlobalTimeCloseHour) * 60 + ClampGlobalTimeMinute(InpGlobalTimeCloseMinute);
+         int nowMin = GlobalTimeMinuteOfDay(closeNow);
+         int minsLeft = closeMin - nowMin;
+         if(minsLeft < 0)
+            minsLeft += 24 * 60;
+         int hLeft = minsLeft / 60;
+         int mLeft = minsLeft % 60;
+
+         string altTz = "";
+         if(InpGlobalTimeCloseZone == GLOBAL_TIME_UTC)
          {
-            PrintFormat("CandleColorTrail: Updated SL for %s position #%d to %.5f (delta: %.5f)", (pos_type==POSITION_TYPE_BUY?"BUY":"SELL"), ticket, new_sl, delta);
+            datetime istClose = closeNow + 5 * 3600 + 30 * 60;
+            MqlDateTime p; TimeToStruct(istClose, p);
+            int h = p.hour % 12; if(h == 0) h = 12;
+            altTz = StringFormat("IST %02d:%02d%s", h, p.min, p.hour < 12 ? "AM" : "PM");
          }
          else
          {
-            PrintFormat("CandleColorTrail: Failed to update SL for position #%d. Error: %d", ticket, GetLastError());
+            datetime utcClose = closeNow - 5 * 3600 - 30 * 60;
+            MqlDateTime p; TimeToStruct(utcClose, p);
+            altTz = StringFormat("UTC %02d:%02d", p.hour, p.min);
+         }
+
+         int dayKey = GlobalTimeDayKey(closeNow);
+         if(g_globalTimeCloseCompletedDayKey == dayKey)
+            SigSetLine(line++, "  Close    " + closeTimeStr + " " + closeZoneStr + " (" + altTz + ")  DONE", SigMutedColor());
+         else
+            SigSetLine(line++, "  Close    " + closeTimeStr + " " + closeZoneStr + " (" + altTz + ")  in " + (string)hLeft + "h " + (string)mLeft + "m", SigWarnColor());
+      }
+      else
+      {
+         SigSetLine(line++, "  Close    OFF", SigMutedColor());
+      }
+
+      // Pause window info with countdown
+      if(InpGlobalTimePauseSignalsEnabled)
+      {
+         string pZoneStr = GlobalTimeZoneText(InpGlobalTimePauseZone);
+         string pStartStr = StringFormat("%02d:%02d", ClampGlobalTimeHour(InpGlobalTimePauseStartHour), ClampGlobalTimeMinute(InpGlobalTimePauseStartMinute));
+         string pEndStr = StringFormat("%02d:%02d", ClampGlobalTimeHour(InpGlobalTimePauseResumeHour), ClampGlobalTimeMinute(InpGlobalTimePauseResumeMinute));
+
+         datetime pauseNow = GlobalTimeNow(InpGlobalTimePauseZone);
+         int pNowMin = GlobalTimeMinuteOfDay(pauseNow);
+         int pStartMin = ClampGlobalTimeHour(InpGlobalTimePauseStartHour) * 60 + ClampGlobalTimeMinute(InpGlobalTimePauseStartMinute);
+         int pEndMin = ClampGlobalTimeHour(InpGlobalTimePauseResumeHour) * 60 + ClampGlobalTimeMinute(InpGlobalTimePauseResumeMinute);
+
+         string altPauseStr = "";
+         if(InpGlobalTimePauseZone == GLOBAL_TIME_UTC)
+         {
+            datetime istStart = pauseNow + 5 * 3600 + 30 * 60;
+            MqlDateTime p1; TimeToStruct(istStart, p1);
+            datetime istEnd = istStart + (pEndMin - pStartMin) * 60;
+            if(istEnd < istStart) istEnd += 24 * 3600;
+            MqlDateTime p2; TimeToStruct(istEnd, p2);
+            int h1 = p1.hour % 12; if(h1 == 0) h1 = 12;
+            int h2 = p2.hour % 12; if(h2 == 0) h2 = 12;
+            altPauseStr = StringFormat("IST %02d:%02d%s-%02d:%02d%s", h1, p1.min, p1.hour<12?"AM":"PM", h2, p2.min, p2.hour<12?"AM":"PM");
+         }
+         else
+         {
+            datetime utcStart = pauseNow - 5 * 3600 - 30 * 60;
+            datetime utcEnd = utcStart + (pEndMin - pStartMin) * 60;
+            if(utcEnd < utcStart) utcEnd += 24 * 3600;
+            MqlDateTime u1; TimeToStruct(utcStart, u1);
+            MqlDateTime u2; TimeToStruct(utcEnd, u2);
+            altPauseStr = StringFormat("UTC %02d:%02d-%02d:%02d", u1.hour, u1.min, u2.hour, u2.min);
+         }
+
+         bool pausedNow = GlobalTimeWindowContains(pNowMin, pStartMin, pEndMin);
+         if(pausedNow)
+         {
+            int toResume = pEndMin - pNowMin;
+            if(toResume < 0) toResume += 24 * 60;
+            int hR = toResume / 60;
+            int mR = toResume % 60;
+            SigSetLine(line++, "  Pause    " + pStartStr + "-" + pEndStr + " " + pZoneStr + " (" + altPauseStr + ")  res " + (string)hR + "h" + (string)mR + "m", SigBadColor());
+         }
+         else
+         {
+            int toPause = pStartMin - pNowMin;
+            if(toPause < 0) toPause += 24 * 60;
+            int hP = toPause / 60;
+            int mP = toPause % 60;
+            SigSetLine(line++, "  Pause    " + pStartStr + "-" + pEndStr + " " + pZoneStr + " (" + altPauseStr + ")  in " + (string)hP + "h" + (string)mP + "m");
+         }
+      }
+      else
+      {
+         SigSetLine(line++, "  Pause    OFF", SigMutedColor());
+      }
+
+      // --- BIG STATUS LINE (line 19, rendered by separate label) ---
+      SigSetLine(line++, " ", SigMutedColor());  // line 19: blank placeholder under big label
+
+      // Live status text
+      bool signalPaused = IsGlobalTimeSignalPauseActive();
+      bool closeActive = false;
+      if(InpGlobalTimeCloseEnabled)
+      {
+         datetime cNow = GlobalTimeNow(InpGlobalTimeCloseZone);
+         int cNowMin = GlobalTimeMinuteOfDay(cNow);
+         int cCloseMin = ClampGlobalTimeHour(InpGlobalTimeCloseHour) * 60 + ClampGlobalTimeMinute(InpGlobalTimeCloseMinute);
+         int cDayKey = GlobalTimeDayKey(cNow);
+         bool closeNotDone = (g_globalTimeCloseCompletedDayKey != cDayKey);
+         closeActive = closeNotDone && (cNowMin >= cCloseMin);
+      }
+
+      string bigText = "";
+      color bigColor = SigGoodColor();
+
+      if(closeActive)
+      {
+         bigText = ">>>  CLOSING ALL TRADES  <<<";
+         bigColor = SigBadColor();
+      }
+      else if(signalPaused)
+      {
+         // Blink every second
+         static bool blinkToggle = false;
+         blinkToggle = ((TimeCurrent() % 2) == 0);
+         bigText = "!!!  SIGNALS PAUSED  !!!";
+         bigColor = blinkToggle ? SigBadColor() : C'80,30,30';
+      }
+      else
+      {
+         bigText = ">>>  Trade Signals: ALLOWED  <<<";
+         bigColor = SigGoodColor();
+      }
+
+      ObjectSetString(0, SIGDB_PREFIX + "BIGSTATUS", OBJPROP_TEXT, bigText);
+      ObjectSetInteger(0, SIGDB_PREFIX + "BIGSTATUS", OBJPROP_COLOR, bigColor);
+
+      // Countdown status line
+      if(closeActive)
+      {
+         SigSetLine(line++, "  All EA trades are being force-closed now", SigBadColor());
+      }
+      else if(signalPaused)
+      {
+         datetime pNow = GlobalTimeNow(InpGlobalTimePauseZone);
+         int pNM = GlobalTimeMinuteOfDay(pNow);
+         int pEM = ClampGlobalTimeHour(InpGlobalTimePauseResumeHour) * 60 + ClampGlobalTimeMinute(InpGlobalTimePauseResumeMinute);
+         int toR = pEM - pNM;
+         if(toR < 0) toR += 24 * 60;
+         int hR = toR / 60;
+         int mR = toR % 60;
+         SigSetLine(line++, "  Resuming in " + (string)hR + "h " + (string)mR + "m", SigBadColor());
+      }
+      else
+      {
+         SigSetLine(line++, "  No restrictions active", SigGoodColor());
+      }
+   }
+   else
+   {
+      SigSetLine(line++, "  Status   OFF (Global Time Control disabled)", SigMutedColor());
+      SigSetLine(line++, "  Close    OFF", SigMutedColor());
+      SigSetLine(line++, "  Pause    OFF", SigMutedColor());
+      SigSetLine(line++, " ", SigMutedColor());  // big status placeholder
+      ObjectSetString(0, SIGDB_PREFIX + "BIGSTATUS", OBJPROP_TEXT, ">>>  Trade Signals: ALLOWED  <<<");
+      ObjectSetInteger(0, SIGDB_PREFIX + "BIGSTATUS", OBJPROP_COLOR, SigGoodColor());
+      SigSetLine(line++, "  No time restrictions", SigMutedColor());
+   }
+
+   SigSetLine(line++, " ", SigMutedColor());
+
+   // --- PROP FIRM GATE ---
+   SigSetLine(line++, "PROP FIRM GATE", SigAccentColor());
+   ReadReceiverStatusForPause();
+   if(g_receiver_status_loaded)
+   {
+      if(g_receiver_trading_allowed)
+      {
+         SigSetLine(line++, "  Gate    ALLOWED", SigGoodColor());
+         SigSetLine(line++, "  Reason  --");
+      }
+      else
+      {
+         SigSetLine(line++, "  Gate    BLOCKED", SigBadColor());
+         string rsn = g_receiver_pause_reason;
+         if(StringLen(rsn) > 52)
+            rsn = StringSubstr(rsn, 0, 49) + "...";
+         SigSetLine(line++, "  Reason  " + rsn, SigBadColor());
+      }
+   }
+   else
+   {
+      if(InpCheckReceiverStatus)
+      {
+         SigSetLine(line++, "  Gate    NO STATUS", SigWarnColor());
+         SigSetLine(line++, "  Reason  Receiver offline");
+      }
+      else
+      {
+         SigSetLine(line++, "  Gate    DISABLED", SigMutedColor());
+         SigSetLine(line++, "  Reason  CheckReceiverStatus=OFF");
+      }
+   }
+
+   SigSetLine(line++, " ", SigMutedColor());
+
+   // --- LAST 5 SIGNALS ---
+   SigSetLine(line++, "LAST 5 SIGNALS", SigAccentColor());
+   SigSetLine(line++, "  Time       Dir  Status  Reason", SigMutedColor());
+
+   if(g_sigdb_historyCount == 0)
+   {
+      for(int s = 0; s < SIGDB_HISTORY_SIZE; s++)
+         SigSetLine(line++, "  --:--:--   --   --      --", SigMutedColor());
+   }
+   else
+   {
+      int oldest = g_sigdb_historyIndex - g_sigdb_historyCount;
+      if(oldest < 0)
+         oldest += SIGDB_HISTORY_SIZE;
+
+      for(int s = 0; s < SIGDB_HISTORY_SIZE; s++)
+      {
+         int idx = (oldest + s) % SIGDB_HISTORY_SIZE;
+         if(s < g_sigdb_historyCount)
+         {
+            string ts = SigTimeStr(g_sigdb_history[idx].time);
+            string ds = g_sigdb_history[idx].direction;
+            if(ds == "SELL") ds = "SEL";
+            int dLen = StringLen(ds);
+            if(dLen < 4) { for(int p = dLen; p < 4; p++) ds += " "; }
+            bool exec = g_sigdb_history[idx].executed;
+            string ss = exec ? "OK " : "SKIP";
+            string rs = g_sigdb_history[idx].reason;
+            if(StringLen(rs) > 18)
+               rs = StringSubstr(rs, 0, 15) + "...";
+            if(rs == "")
+               rs = "--";
+            SigSetLine(line++, "  " + ts + "  " + ds + "  " + ss + "  " + rs,
+                       exec ? SigGoodColor() : SigWarnColor());
+         }
+         else
+         {
+            SigSetLine(line++, "  --:--:--   --   --      --", SigMutedColor());
          }
       }
    }
+
+   ChartRedraw(0);
+}
+
+void DeleteSignalDashboard()
+{
+   for(int i = ObjectsTotal(0, 0, -1) - 1; i >= 0; i--)
+   {
+      string name = ObjectName(0, i, 0, -1);
+      if(StringFind(name, SIGDB_PREFIX) == 0)
+         ObjectDelete(0, name);
+   }
+   g_sigdb_objects_created = false;
 }
