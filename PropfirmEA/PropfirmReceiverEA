@@ -454,6 +454,7 @@ void SyncPositions()
    UpdateDashboard();
    UpdateStatsDashboard();
    RememberLastSeenSources();
+   PruneStaleArrays();
    EvaluateTelegramAlerts();
    ProcessTelegramAlertQueue();
 }
@@ -464,113 +465,93 @@ bool ReadSources()
    ArrayResize(source_close_events, 0);
    ArrayResize(blocked_source_notices, 0);
 
-   for(int attempt = 0; attempt < 3; attempt++)
+   int handle = FileOpen(CopierFileName(),
+                         FILE_READ | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
+                         ';');
+   if(handle == INVALID_HANDLE)
+      return false;
+
+   string version = FileReadString(handle);
+   if(version != "MT5_MINIMAL_TRADE_COPIER_V2")
    {
-      int handle = FileOpen(CopierFileName(),
-                            FILE_READ | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
-                            ';');
-      if(handle == INVALID_HANDLE)
-      {
-         if(attempt < 2)
-            Sleep(20);
-         continue;
-      }
-
-      string version = FileReadString(handle);
-      if(version != "MT5_MINIMAL_TRADE_COPIER_V2")
-      {
-         FileClose(handle);
-         if(attempt < 2)
-            Sleep(20);
-         continue;
-      }
-
-      bool completed = false;
-      source_login = (long)StringToInteger(FileReadString(handle));
-      source_time = (datetime)StringToInteger(FileReadString(handle));
-      last_successful_read = TimeCurrent();
-      last_error = "";
-
-      while(!FileIsEnding(handle))
-      {
-         string ticket_text = FileReadString(handle);
-         if(ticket_text == "")
-            break;
-
-         if(ticket_text == "COMPLETED")
-         {
-            completed = true;
-            break;
-         }
-
-         if(ticket_text == "CLOSE")
-         {
-            SourceCloseEvent event;
-            event.ticket = (ulong)StringToInteger(FileReadString(handle));
-            event.symbol = FileReadString(handle);
-            event.type = (long)StringToInteger(FileReadString(handle));
-            event.close_price = StringToDouble(FileReadString(handle));
-            event.close_time = (datetime)StringToInteger(FileReadString(handle));
-
-            if(event.ticket > 0 && event.symbol != "" && event.close_price > 0.0)
-            {
-               int size = ArraySize(source_close_events);
-               ArrayResize(source_close_events, size + 1);
-               source_close_events[size] = event;
-            }
-            continue;
-         }
-
-         if(ticket_text == "BLOCKED")
-         {
-            BlockedSourceNotice notice;
-            notice.ticket = (ulong)StringToInteger(FileReadString(handle));
-            notice.symbol = FileReadString(handle);
-            notice.type = (long)StringToInteger(FileReadString(handle));
-            notice.volume = StringToDouble(FileReadString(handle));
-            notice.blocked_time = (datetime)StringToInteger(FileReadString(handle));
-            notice.reason = FileReadString(handle);
-
-            if(notice.ticket > 0 && notice.symbol != "")
-            {
-               int size = ArraySize(blocked_source_notices);
-               ArrayResize(blocked_source_notices, size + 1);
-               blocked_source_notices[size] = notice;
-            }
-            continue;
-         }
-
-         SourcePosition src;
-         src.ticket = (ulong)StringToInteger(ticket_text);
-         src.symbol = FileReadString(handle);
-         src.type = (long)StringToInteger(FileReadString(handle));
-         src.volume = StringToDouble(FileReadString(handle));
-         src.price_open = StringToDouble(FileReadString(handle));
-         src.sl = StringToDouble(FileReadString(handle));
-         src.tp = StringToDouble(FileReadString(handle));
-
-         if(src.ticket > 0 && src.symbol != "" && src.volume > 0.0)
-         {
-            int size = ArraySize(sources);
-            ArrayResize(sources, size + 1);
-            sources[size] = src;
-         }
-      }
-
       FileClose(handle);
-      if(completed)
-         return true;
+      return false;
+   }
 
-      if(attempt < 2)
+   bool completed = false;
+   source_login = (long)StringToInteger(FileReadString(handle));
+   source_time = (datetime)StringToInteger(FileReadString(handle));
+   last_successful_read = TimeCurrent();
+   last_error = "";
+
+   while(!FileIsEnding(handle))
+   {
+      string ticket_text = FileReadString(handle);
+      if(ticket_text == "")
+         break;
+
+      if(ticket_text == "COMPLETED")
       {
-         ArrayResize(sources, 0);
-         ArrayResize(source_close_events, 0);
-         ArrayResize(blocked_source_notices, 0);
-         Sleep(20);
+         completed = true;
+         break;
+      }
+
+      if(ticket_text == "CLOSE")
+      {
+         SourceCloseEvent event;
+         event.ticket = (ulong)StringToInteger(FileReadString(handle));
+         event.symbol = FileReadString(handle);
+         event.type = (long)StringToInteger(FileReadString(handle));
+         event.close_price = StringToDouble(FileReadString(handle));
+         event.close_time = (datetime)StringToInteger(FileReadString(handle));
+
+         if(event.ticket > 0 && event.symbol != "" && event.close_price > 0.0)
+         {
+            int size = ArraySize(source_close_events);
+            ArrayResize(source_close_events, size + 1);
+            source_close_events[size] = event;
+         }
+         continue;
+      }
+
+      if(ticket_text == "BLOCKED")
+      {
+         BlockedSourceNotice notice;
+         notice.ticket = (ulong)StringToInteger(FileReadString(handle));
+         notice.symbol = FileReadString(handle);
+         notice.type = (long)StringToInteger(FileReadString(handle));
+         notice.volume = StringToDouble(FileReadString(handle));
+         notice.blocked_time = (datetime)StringToInteger(FileReadString(handle));
+         notice.reason = FileReadString(handle);
+
+         if(notice.ticket > 0 && notice.symbol != "")
+         {
+            int size = ArraySize(blocked_source_notices);
+            ArrayResize(blocked_source_notices, size + 1);
+            blocked_source_notices[size] = notice;
+         }
+         continue;
+      }
+
+      SourcePosition src;
+      src.ticket = (ulong)StringToInteger(ticket_text);
+      src.symbol = FileReadString(handle);
+      src.type = (long)StringToInteger(FileReadString(handle));
+      src.volume = StringToDouble(FileReadString(handle));
+      src.price_open = StringToDouble(FileReadString(handle));
+      src.sl = StringToDouble(FileReadString(handle));
+      src.tp = StringToDouble(FileReadString(handle));
+
+      if(src.ticket > 0 && src.symbol != "" && src.volume > 0.0 && src.price_open > 0.0)
+      {
+         int size = ArraySize(sources);
+         ArrayResize(sources, size + 1);
+         sources[size] = src;
       }
    }
 
-   return false;
+   FileClose(handle);
+   return completed;
 }
 
 string ServerTimeToIstText(const datetime server_time)
@@ -1142,9 +1123,10 @@ bool HandleCopiedPositionByDetectedSenderExit(const ulong ticket, const ulong so
                     " exited away from TP/SL, likely random/manual exit";
       Print(last_action);
       ClosePosition(ticket);
-      return true;
-   }
+       return true;
+    }
 
+   // defensive default — all enum values handled above
    return false;
 }
 
@@ -1424,6 +1406,125 @@ bool MarkSourceLoggedOnce(ulong &logged_sources[], const ulong source_ticket)
    ArrayResize(logged_sources, total + 1);
    logged_sources[total] = source_ticket;
    return true;
+}
+
+#define PRUNE_ARRAY_CAP 500
+
+bool SourceTicketStillActive(const ulong source_ticket)
+{
+   int total = ArraySize(sources);
+   for(int i = 0; i < total; i++)
+   {
+      if(sources[i].ticket == source_ticket)
+         return true;
+   }
+   return false;
+}
+
+void DeleteSourceLifecycleGlobalVariables(const ulong source_ticket)
+{
+   string names[] = {
+      "MTC1_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket,
+      "MTC1_PROT_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket,
+      "MTC1_SKIP_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket,
+      "MTC1_PTP_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket,
+      "MTC1_PTRAIL_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket,
+      "MTC1_SLREM_" + (string)MagicNumber + "_" + ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_" + (string)source_ticket
+   };
+   for(int i = 0; i < ArraySize(names); i++)
+   {
+      if(GlobalVariableCheck(names[i]))
+         GlobalVariableDel(names[i]);
+   }
+}
+
+void PruneStaleSourceArrays(ulong &arr[])
+{
+   int write_index = 0;
+   int total = ArraySize(arr);
+   for(int i = 0; i < total; i++)
+   {
+      if(SourceTicketStillActive(arr[i]))
+      {
+         if(write_index != i)
+            arr[write_index] = arr[i];
+         write_index++;
+      }
+      else
+      {
+         DeleteSourceLifecycleGlobalVariables(arr[i]);
+      }
+   }
+   ArrayResize(arr, write_index);
+}
+
+void PruneStaleRememberedSourceStops()
+{
+   int write_index = 0;
+   int total = ArraySize(remembered_source_stops);
+   for(int i = 0; i < total; i++)
+   {
+      if(SourceTicketStillActive(remembered_source_stops[i].ticket))
+      {
+         if(write_index != i)
+            remembered_source_stops[write_index] = remembered_source_stops[i];
+         write_index++;
+      }
+      else
+      {
+         DeleteSourceLifecycleGlobalVariables(remembered_source_stops[i].ticket);
+      }
+   }
+   ArrayResize(remembered_source_stops, write_index);
+}
+
+void PruneStaleBestPriceReferences()
+{
+   int write_index = 0;
+   int total = ArraySize(best_price_close_references);
+   for(int i = 0; i < total; i++)
+   {
+      if(PositionSelectByTicket(best_price_close_references[i].ticket))
+      {
+         if(write_index != i)
+            best_price_close_references[write_index] = best_price_close_references[i];
+         write_index++;
+      }
+   }
+   ArrayResize(best_price_close_references, write_index);
+}
+
+void PruneStaleRememberedCopiedPositions()
+{
+   int write_index = 0;
+   int total = ArraySize(remembered_copied_positions);
+   for(int i = 0; i < total; i++)
+   {
+      if(PositionSelectByTicket((ulong)remembered_copied_positions[i].identifier) ||
+         SourceTicketStillActive(remembered_copied_positions[i].source_ticket))
+      {
+         if(write_index != i)
+            remembered_copied_positions[write_index] = remembered_copied_positions[i];
+         write_index++;
+      }
+   }
+   ArrayResize(remembered_copied_positions, write_index);
+}
+
+void PruneStaleArrays()
+{
+   if(ArraySize(remembered_source_stops) > PRUNE_ARRAY_CAP)
+      PruneStaleRememberedSourceStops();
+   if(ArraySize(logged_missing_sltp_rr_adjust_sources) > PRUNE_ARRAY_CAP)
+      PruneStaleSourceArrays(logged_missing_sltp_rr_adjust_sources);
+   if(ArraySize(logged_incomplete_sltp_rr_adjust_sources) > PRUNE_ARRAY_CAP)
+      PruneStaleSourceArrays(logged_incomplete_sltp_rr_adjust_sources);
+   if(ArraySize(logged_no_reentry_sources) > PRUNE_ARRAY_CAP)
+      PruneStaleSourceArrays(logged_no_reentry_sources);
+   if(ArraySize(best_price_close_references) > PRUNE_ARRAY_CAP)
+      PruneStaleBestPriceReferences();
+   if(ArraySize(remembered_copied_positions) > PRUNE_ARRAY_CAP)
+      PruneStaleRememberedCopiedPositions();
 }
 
 bool FindLastSeenSource(const ulong source_ticket, SourcePosition &src)
@@ -3204,16 +3305,8 @@ void StopsForCopiedTrade(const SourcePosition &src, const long target_type, doub
       return;
    }
 
-   if(target_type == POSITION_TYPE_BUY)
-   {
-      sl = src.tp;
-      tp = src.sl;
-   }
-   else
-   {
-      sl = src.tp;
-      tp = src.sl;
-   }
+   sl = src.tp;
+   tp = src.sl;
 }
 
 double DesiredCopiedVolume(const SourcePosition &src, const string target_symbol, const long target_type, const bool log_details)
@@ -3446,11 +3539,13 @@ bool SendSellWithRetries(const double volume, const string symbol, const double 
 void RememberTradeError(const string prefix)
 {
    long retcode = trade.ResultRetcode();
-   last_error = prefix +
+   string error_detail = prefix +
                 " | retcode " + (string)retcode +
                 " " + trade.ResultRetcodeDescription() +
                 " | terminal error " + (string)GetLastError();
-   Print(last_error);
+   Print(error_detail);
+   if(last_error == "")
+      last_error = error_detail;
    if(IsAutoTradingDisabledRetcode(retcode))
       SuspendTradeRequests("server/terminal refused algo trading, retcode " + (string)retcode + " " + trade.ResultRetcodeDescription());
 }
@@ -4073,8 +4168,24 @@ void ResetProtectionState(const string reason)
    g_alert_total_floor_active = false;
    g_alert_equity_stop_active = false;
    g_alert_custom_active = false;
-   ArrayResize(g_telegram_alert_queue, 0);
-   ArrayResize(logged_blocked_source_notices, 0);
+    ArrayResize(g_telegram_alert_queue, 0);
+    ArrayResize(logged_blocked_source_notices, 0);
+    ArrayResize(logged_missing_sltp_rr_adjust_sources, 0);
+    ArrayResize(logged_incomplete_sltp_rr_adjust_sources, 0);
+    ArrayResize(logged_no_reentry_sources, 0);
+    ArrayResize(remembered_source_stops, 0);
+    ArrayResize(best_price_close_references, 0);
+    ArrayResize(remembered_copied_positions, 0);
+    g_last_streak_history_deals = -1;
+    g_cached_streak_type = 0;
+    g_cached_streak_length = 0;
+    g_trade_requests_suspended_until = 0;
+
+    string source_gv_prefix = "MTC1_" + (string)MagicNumber + "_" +
+                              ShortSafeKey(CopierKey, 12) + "_" + (string)source_login + "_";
+    int deleted_gv = GlobalVariablesDeleteAll(source_gv_prefix);
+    if(PrintProtectionLogs && deleted_gv > 0)
+       PrintFormat("PropfirmReceiver: reset deleted %d source lifecycle global variables (prefix %s)", deleted_gv, source_gv_prefix);
    string loss_alert_key = TelegramAlertStateKey("loss_streak_active");
    string win_alert_key = TelegramAlertStateKey("win_streak_active");
    if(GlobalVariableCheck(loss_alert_key))
@@ -4116,10 +4227,14 @@ void CheckRemoteResetRequest()
 
    double last_handled = (GlobalVariableCheck(LastRemoteResetKey()) ? GlobalVariableGet(LastRemoteResetKey()) : 0.0);
    if((double)request_time <= last_handled)
+   {
+      FileDelete(ResetRequestFileName(), FILE_COMMON);
       return;
+   }
 
    GlobalVariableSet(LastRemoteResetKey(), (double)request_time);
    ResetProtectionState("remote sender " + (string)sender_login + " " + reason);
+   FileDelete(ResetRequestFileName(), FILE_COMMON);
 }
 
 double DrawdownLimitMoney(ENUM_DRAWDOWN_LIMIT_MODE mode, double value, double baseline)
@@ -4221,16 +4336,16 @@ void UpdatePropFirmProtectionState()
          return;
       }
 
-      if(PauseUntilNextDailyResetAfterProfitTarget && g_manual_reset_target_pause)
-      {
-         g_profit_target_reached = false;
-         g_target_pause_latched = false;
-         g_prop_protection_breached = false;
-         g_prop_trading_allowed = true;
-         g_prop_block_reason = "manual reset after profit target";
-         // Continue to protection checks so equity stop and daily/total drawdown
-         // can still block trading even after a manual profit-target reset.
-      }
+       if(PauseUntilNextDailyResetAfterProfitTarget && g_manual_reset_target_pause)
+       {
+          g_target_pause_latched = false;
+          g_prop_protection_breached = false;
+          g_prop_trading_allowed = true;
+          g_prop_block_reason = "manual reset after profit target";
+          g_manual_reset_target_pause = false;
+          // Continue to protection checks so equity stop and daily/total drawdown
+          // can still block trading even after a manual profit-target reset.
+       }
 
       if(g_profit_target_reached)
       {
@@ -4464,34 +4579,32 @@ ReceiverTradeStats CalculateReceiverTradeStats()
       return stats;
    
    int total_deals = HistoryDealsTotal();
-   int exit_deals = 0;
-   int zero_profit_deals = 0;
    ulong entry_trade_ids[];
    ulong close_trade_ids[];
    ulong trade_ids[];
    double trade_profits[];
-   
+
    // First pass: collect all receiver entry trade ids by magic
    for(int i = 0; i < total_deals; i++)
    {
       ulong deal_ticket = HistoryDealGetTicket(i);
       if(deal_ticket == 0)
          continue;
-      
+
       long magic = HistoryDealGetInteger(deal_ticket, DEAL_MAGIC);
       if(magic != (long)MagicNumber)
          continue;
-      
+
       long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
       if(entry != DEAL_ENTRY_IN && entry != DEAL_ENTRY_INOUT)
          continue;
-      
+
       ulong trade_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
       if(trade_id == 0)
          trade_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_ORDER);
       if(trade_id == 0)
          continue;
-      
+
       if(!PositionIdExists(entry_trade_ids, trade_id))
       {
          int idx = ArraySize(entry_trade_ids);
@@ -4499,40 +4612,38 @@ ReceiverTradeStats CalculateReceiverTradeStats()
          entry_trade_ids[idx] = trade_id;
       }
    }
-   
+
    // Second pass: aggregate profits by receiver trade id, including exits even if magic differs
    for(int i = 0; i < total_deals; i++)
    {
       ulong deal_ticket = HistoryDealGetTicket(i);
       if(deal_ticket == 0)
          continue;
-      
+
       long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
       if(entry == DEAL_ENTRY_IN)
          continue;
-      
+
       ulong trade_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
       if(trade_id == 0)
          trade_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_ORDER);
       if(trade_id == 0)
          continue;
-      
+
       if(!PositionIdExists(entry_trade_ids, trade_id))
          continue;
-      
-      exit_deals++;
-      
+
       if(!PositionIdExists(close_trade_ids, trade_id))
       {
          int idx = ArraySize(close_trade_ids);
          ArrayResize(close_trade_ids, idx + 1);
          close_trade_ids[idx] = trade_id;
       }
-      
+
       double profit = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT) +
                       HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION) +
                       HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
-      
+
       int trade_index = FindTradeIdIndex(trade_ids, trade_id);
       if(trade_index < 0)
       {
@@ -4544,7 +4655,7 @@ ReceiverTradeStats CalculateReceiverTradeStats()
       }
       trade_profits[trade_index] += profit;
    }
-   
+
    for(int i = 0; i < ArraySize(trade_ids); i++)
    {
       double trade_profit = trade_profits[i];
@@ -4558,18 +4669,14 @@ ReceiverTradeStats CalculateReceiverTradeStats()
          stats.total_loss += MathAbs(trade_profit);
          stats.loss_count++;
       }
-      else
-      {
-         zero_profit_deals++;
-      }
    }
-   
+
    if(stats.win_count > 0)
       stats.avg_win_per_trade = stats.total_win / stats.win_count;
-   
+
    if(stats.loss_count > 0)
       stats.avg_loss_per_trade = stats.total_loss / stats.loss_count;
-   
+
    return stats;
 }
 
@@ -4579,25 +4686,13 @@ void WriteReceiverStatus()
       return;
 
    string final_file = ReceiverStatusFileName();
-   int attempts = 3;
-   int handle = INVALID_HANDLE;
-
-   for(int a = 0; a < attempts; a++)
-   {
-      handle = FileOpen(final_file,
-                        FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
-                        ';');
-      if(handle != INVALID_HANDLE)
-         break;
-      if(PrintProtectionLogs)
-         PrintFormat("PropfirmReceiver: cannot open status file '%s' (attempt %d/%d) error %d", final_file, a+1, attempts, GetLastError());
-      Sleep(20);
-   }
-
+   int handle = FileOpen(final_file,
+                         FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
+                         ';');
    if(handle == INVALID_HANDLE)
    {
       if(PrintProtectionLogs)
-         PrintFormat("PropfirmReceiver: failed to write status file '%s' after %d attempts", final_file, attempts);
+         PrintFormat("PropfirmReceiver: cannot open status file '%s' error %d", final_file, GetLastError());
       return;
    }
 
@@ -4760,8 +4855,7 @@ void EvaluateTelegramAlerts()
    if(AlertMaxDrawdownFloorReached && total_floor_now && !g_alert_total_floor_active)
       QueueTelegramAlert("MAX TOTAL DRAWDOWN HARD FLOOR REACHED", "Protection hit: " + ProtectionHitTicketsText());
 
-   bool equity_stop_blocked = (g_prop_protection_breached && StringFind(g_prop_block_reason, "equity protection stop reached") >= 0);
-   if(AlertEquityProtectionStopReached && equity_stop_now && equity_stop_blocked && !g_alert_equity_stop_active)
+   if(AlertEquityProtectionStopReached && equity_stop_now && !g_alert_equity_stop_active)
       QueueTelegramAlert("EARLY EQUITY PROTECTION STOP REACHED",
                          "Protection hit: " + ProtectionHitTicketsText() +
                          "\nHit time: " + ProtectionHitIstText());
@@ -5264,16 +5358,6 @@ void UpdateDashboard()
    ChartRedraw(0);
 }
 
-string PropProtectionStatusLine()
-{
-   if(!EnablePropFirmProtection)
-      return "off";
-
-   string status = (g_prop_trading_allowed ? "allowed" : "blocked");
-   return status + ", reason " + g_prop_block_reason +
-          ", buffer " + MoneyText(g_equity_buffer_money + MathMax(0.0, ExtraRiskBufferMoney));
-}
-
 color ReceiverPanelColor()  { return C'16,18,24'; }
 color ReceiverHeaderColor() { return C'28,32,42'; }
 color ReceiverBorderColor() { return C'74,85,104'; }
@@ -5535,24 +5619,7 @@ string BestPriceSenderExitStatusLine()
    else
       text += ", timeout market close";
 
-   return text;
-}
-
-string AggressiveSenderExitTpStatusLine()
-{
-   if(!AggressiveCloseNearTpOnSenderExit)
-      return "off";
-
-   return "on, spread x" + DoubleToString(MathMax(0.0, AggressiveCloseSpreadMultiplier), 2);
-}
-
-string BadBehaviourSenderHandlingStatusLine()
-{
-   if(!BadBehaviourSenderExitDetection)
-      return "off";
-
-   return "on, TP progress " + DoubleToString(MathMax(0.0, MathMin(100.0, BadBehaviourTpExitProgressPercent)), 1) +
-          "% / SL progress " + DoubleToString(MathMax(0.0, MathMin(100.0, BadBehaviourSlExitProgressPercent)), 1) + "%";
+    return text;
 }
 
 string OneTradePerSymbolStatusLine()
