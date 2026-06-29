@@ -1476,16 +1476,14 @@ void CalculateFeeRecoveryStats()
    int receiver_wins = fee_stats.receiver_wins;
    int receiver_losses = fee_stats.receiver_losses;
 
+   // If receiver published status is available, prefer its realtime stats
+   // because the sender cannot read the receiver's trade history directly.
    if(receiver_status.loaded)
    {
-      if(receiver_avg_loss <= 0.01)
-         receiver_avg_loss = receiver_status.avg_receiver_loss_per_trade;
-      if(receiver_avg_win <= 0.01)
-         receiver_avg_win = receiver_status.avg_receiver_win_per_trade;
-      if(receiver_wins == 0)
-         receiver_wins = receiver_status.receiver_win_count;
-      if(receiver_losses == 0)
-         receiver_losses = receiver_status.receiver_loss_count;
+      receiver_avg_loss = receiver_status.avg_receiver_loss_per_trade;
+      receiver_avg_win = receiver_status.avg_receiver_win_per_trade;
+      receiver_wins = receiver_status.receiver_win_count;
+      receiver_losses = receiver_status.receiver_loss_count;
    }
 
    fee_stats.avg_receiver_loss = receiver_avg_loss;
