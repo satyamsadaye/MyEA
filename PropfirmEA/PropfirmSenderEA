@@ -1,5 +1,5 @@
 #property strict
-#property version   "1.10"
+#property version   "1.11"
 #property description "Prop-firm protected trade sender. Publishes master trades only when receiver drawdown room allows it."
 
 #include <Trade/Trade.mqh>
@@ -11,7 +11,8 @@
 #define SENDER_RESET_BUTTON (SENDER_PREFIX + "RESET_BUTTON")
 #define SENDER_LINE_COUNT 50
 #define FEE_DASHBOARD_PREFIX "PROP_FEE_DASHBOARD_"
-#define FEE_LINE_COUNT 30
+#define FEE_LINE_COUNT 50
+#define FEE_PANEL_WIDTH_EXTRA 200
 
 input group "Connection"
 input string CopierKey = "client1";
@@ -42,6 +43,7 @@ input bool EnableFeeRecovery = true;
 input double FeeToRecover = 20.0;              // Amount to recover (e.g., $20 hedge)
 input ulong MagicNumberFeeTracking = 26052501;  // Magic number for tracking SENDER trades
 input ulong ReceiverMagicNumber = 0;           // Magic number for receiver trades (0 = use all account history)
+input double SenderStartingBalance = 0.0;      // Optional: set to non-zero to use as starting balance for fee projections
 
 input group "Display and Logs"
 input bool ShowDashboard = true;
@@ -1198,17 +1200,18 @@ void CreateFeeRecoveryDashboard()
    if(!ShowDashboard)
       return;
 
-   int width = MathMax(650, PanelWidth);
-   int line_step = 16;
-   int height = 88 + FEE_LINE_COUNT * line_step;
-   int fee_panel_x = PanelX + width + 20;
-   
-   EnsureBox(FEE_DASHBOARD_PREFIX + "BG", fee_panel_x, PanelY, width, height, PanelColor(), BorderColor());
-   EnsureBox(FEE_DASHBOARD_PREFIX + "HEADER", fee_panel_x, PanelY, width, 42, HeaderColor(), HeaderColor());
-   EnsureBox(FEE_DASHBOARD_PREFIX + "ACCENT", fee_panel_x, PanelY, 4, height, GoodColor(), GoodColor());
-   EnsureLabel(FEE_DASHBOARD_PREFIX + "TITLE", fee_panel_x + 18, PanelY + 12, FontSize + 4, TextColor(), "Arial Bold");
-   for(int i = 0; i < FEE_LINE_COUNT; i++)
-      EnsureLabel(FEE_DASHBOARD_PREFIX + "LINE_" + (string)i, fee_panel_x + 18, PanelY + 56 + i * line_step, FontSize, TextColor());
+    int width = MathMax(650, PanelWidth);
+    int fee_width = width + FEE_PANEL_WIDTH_EXTRA;
+    int line_step = 16;
+    int height = 88 + FEE_LINE_COUNT * line_step;
+    int fee_panel_x = PanelX + width + 20;
+    
+    EnsureBox(FEE_DASHBOARD_PREFIX + "BG", fee_panel_x, PanelY, fee_width, height, PanelColor(), BorderColor());
+    EnsureBox(FEE_DASHBOARD_PREFIX + "HEADER", fee_panel_x, PanelY, fee_width, 42, HeaderColor(), HeaderColor());
+    EnsureBox(FEE_DASHBOARD_PREFIX + "ACCENT", fee_panel_x, PanelY, 4, height, GoodColor(), GoodColor());
+    EnsureLabel(FEE_DASHBOARD_PREFIX + "TITLE", fee_panel_x + 18, PanelY + 12, FontSize + 4, TextColor(), "Arial Bold");
+    for(int i = 0; i < FEE_LINE_COUNT; i++)
+       EnsureLabel(FEE_DASHBOARD_PREFIX + "LINE_" + (string)i, fee_panel_x + 18, PanelY + 56 + i * line_step, FontSize, TextColor());
 }
 
 void SetLine(int index, string text, color text_color = clrNONE)
@@ -1262,16 +1265,37 @@ void UpdateFeeRecoveryDashboard()
    // Calculate scenario 2: If propfirm hits drawdown (blows)
    double scenario2_trades_to_dd = fee_stats.propfirm_trades_to_drawdown;
    double scenario2_fee_recovered = scenario2_trades_to_dd * fee_stats.avg_sender_win;
+
+   // Current balance and final-balance projections
+   double current_balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double starting_balance = (SenderStartingBalance > 0.0 ? SenderStartingBalance : current_balance);
+   double scenario1_final_balance = starting_balance - scenario1_fee_loss;
+   double scenario1_pct = (starting_balance != 0.0) ? ((scenario1_final_balance - starting_balance) / starting_balance * 100.0) : 0.0;
+   double scenario2_final_balance = starting_balance + scenario2_fee_recovered;
+   double scenario2_pct = (starting_balance != 0.0) ? ((scenario2_final_balance - starting_balance) / starting_balance * 100.0) : 0.0;
    
    SetLineFeeRecovery(line++, "SCENARIO 1: PROPFIRM REACHES TARGET", WarnColor());
    SetLineFeeRecovery(line++, "Capital needed more     " + Money(scenario1_capital_needed), scenario1_capital_needed > 0 ? BadColor() : GoodColor());
    SetLineFeeRecovery(line++, "Expected loss (sender)  " + Money(scenario1_fee_loss), BadColor());
-   SetLineFeeRecovery(line++, "Fee recovery possible  " + Money(-scenario1_fee_loss) + " (LOSS)", BadColor());
+      SetLineFeeRecovery(line++, "Fee recovery possible  " + Money(-scenario1_fee_loss) + " (LOSS)", BadColor());
+      // Detailed math for Scenario 1
+      SetLineFeeRecovery(line++, "Propfirm target left     " + Money(receiver_status.profit_target_left));
+      SetLineFeeRecovery(line++, "Avg prop WIN/trade      " + Money(fee_stats.avg_receiver_win));
+      SetLineFeeRecovery(line++, "Trades to target        " + (string)(int)fee_stats.propfirm_trades_to_target);
+      SetLineFeeRecovery(line++, "Avg sender LOSS/trade   " + Money(fee_stats.avg_sender_loss));
+      SetLineFeeRecovery(line++, "Computation             " + DoubleToString(fee_stats.propfirm_trades_to_target,2) + " * " + Money(fee_stats.avg_sender_loss) + " = " + Money(scenario1_fee_loss));
+      SetLineFeeRecovery(line++, "Final master balance    " + Money(scenario1_final_balance) + "  (" + SignedMoney(scenario1_final_balance - current_balance) + ", " + DoubleToString(scenario1_pct, 2) + "%)", scenario1_final_balance < current_balance ? BadColor() : GoodColor());
    SetLineFeeRecovery(line++, " ");
    
    SetLineFeeRecovery(line++, "SCENARIO 2: PROPFIRM HITS DRAWDOWN", GoodColor());
+   SetLineFeeRecovery(line++, "Propfirm DD left         " + Money(receiver_status.total_left));
+   SetLineFeeRecovery(line++, "Avg prop LOSS/trade     " + Money(fee_stats.avg_receiver_loss));
+   SetLineFeeRecovery(line++, "Trades to DD            " + (string)(int)fee_stats.propfirm_trades_to_drawdown);
+   SetLineFeeRecovery(line++, "Avg sender WIN/trade    " + Money(fee_stats.avg_sender_win));
+   SetLineFeeRecovery(line++, "Computation             " + DoubleToString(fee_stats.propfirm_trades_to_drawdown,2) + " * " + Money(fee_stats.avg_sender_win) + " = " + Money(scenario2_fee_recovered));
    SetLineFeeRecovery(line++, "Trades until DD breach  " + (string)(int)scenario2_trades_to_dd);
    SetLineFeeRecovery(line++, "Fee recoverable in case " + Money(scenario2_fee_recovered), scenario2_fee_recovered > 0 ? GoodColor() : WarnColor());
+   SetLineFeeRecovery(line++, "Final master balance    " + Money(scenario2_final_balance) + "  (" + SignedMoney(scenario2_final_balance - current_balance) + ", " + DoubleToString(scenario2_pct, 2) + "%)", scenario2_final_balance >= current_balance ? GoodColor() : WarnColor());
    SetLineFeeRecovery(line++, " ");
 
    string fee_status = (fee_stats.fee_to_recover > 0 ? "ACTIVE" : "NONE");
