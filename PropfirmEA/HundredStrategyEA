@@ -186,6 +186,15 @@ input double StopLossPercentOfStart = 0.0;          // 0 disables
 input double StopDrawdownPercentOfStart = 0.0;      // 0 disables
 input bool ClosePositionsWhenProtectionHit = true;
 
+input group "Global Time Controls"
+input bool EnableGlobalTimeControls = true;          // Apply pause/close/resume schedule to live trading
+input int  GlobalPauseSignalsHourUTC = 18;           // Hour (UTC) to stop opening new positions
+input int  GlobalPauseSignalsMinuteUTC = 30;         // Minute (UTC) to stop opening new positions
+input int  GlobalCloseAllHourUTC = 19;               // Hour (UTC) to force-close all positions
+input int  GlobalCloseAllMinuteUTC = 30;             // Minute (UTC) to force-close all positions
+input int  GlobalResumeSignalsHourUTC = 1;          // Hour (UTC) to resume opening new positions
+input int  GlobalResumeSignalsMinuteUTC = 30;        // Minute (UTC) to resume opening new positions
+
 enum ENUM_PROP_SPAWN_INTERVAL
 {
    SPAWN_DAILY_AT_RESUME = 0,
@@ -394,6 +403,23 @@ void OnTick()
 
    if(CheckProtectionStops())
       return;
+
+   if(GlobalIsCloseTime())
+   {
+      if(CountOpenPositions() > 0)
+      {
+         CloseAllEaPositions();
+         LogEvent("GLOBAL_CLOSE", "Force-close all at " + StringFormat("%02d:%02d", GlobalCloseAllHourUTC, GlobalCloseAllMinuteUTC) + " UTC window");
+      }
+      UpdateDashboard();
+      return;
+   }
+
+   if(GlobalSignalsPaused())
+   {
+      UpdateDashboard();
+      return;
+   }
 
    if(OneTradePerBar)
    {
@@ -752,37 +778,37 @@ bool OpenTrade(const int orderType, const StrategySignal &signal)
    double slDistance = 0.0;
    double tpDistance = 0.0;
 
-    if(useBrokerStops)
-    {
-       if(EnableVirtualDollarExit)
-       {
-          slDistance = MoneyToPriceDistance(VirtualStopLossMoney, VirtualExitLot);
-          tpDistance = MoneyToPriceDistance(VirtualTakeProfitMoney, VirtualExitLot);
-          bool slNeeded = (VirtualStopLossMoney > 0.0);
-          bool tpNeeded = (VirtualTakeProfitMoney > 0.0);
-          if((slNeeded && slDistance <= 0.0) || (tpNeeded && tpDistance <= 0.0))
-          {
-             LogEvent("TRADE_SKIPPED", "Invalid SL/TP distance");
-             return false;
-          }
-       }
-       else
-       {
-          slDistance = StopDistance(StopLossMode, true);
-          tpDistance = StopDistance(TakeProfitMode, false);
-          if(slDistance <= 0.0 || tpDistance <= 0.0)
-          {
-             LogEvent("TRADE_SKIPPED", "Invalid SL/TP distance");
-             return false;
-          }
-       }
-       if(ReverseSignals)
-       {
-          double tmp = slDistance;
-          slDistance = tpDistance;
-          tpDistance = tmp;
-       }
-    }
+     if(useBrokerStops)
+     {
+        if(EnableVirtualDollarExit)
+        {
+           slDistance = MoneyToPriceDistance(VirtualStopLossMoney, VirtualExitLot);
+           tpDistance = MoneyToPriceDistance(VirtualTakeProfitMoney, VirtualExitLot);
+           bool slNeeded = (VirtualStopLossMoney > 0.0);
+           bool tpNeeded = (VirtualTakeProfitMoney > 0.0);
+           if((slNeeded && slDistance <= 0.0) || (tpNeeded && tpDistance <= 0.0))
+           {
+              LogEvent("TRADE_SKIPPED", "Invalid SL/TP distance");
+              return false;
+           }
+        }
+        else
+        {
+           slDistance = StopDistance(StopLossMode, true);
+           tpDistance = StopDistance(TakeProfitMode, false);
+           if(slDistance <= 0.0 || tpDistance <= 0.0)
+           {
+              LogEvent("TRADE_SKIPPED", "Invalid SL/TP distance");
+              return false;
+           }
+           if(ReverseSignals)
+           {
+              double tmp = slDistance;
+              slDistance = tpDistance;
+              tpDistance = tmp;
+           }
+        }
+     }
     else if(!EnableVirtualDollarExit)
     {
        slDistance = StopDistance(StopLossMode, true);
@@ -1273,6 +1299,104 @@ int PropMinuteOfDay(const datetime t)
    MqlDateTime dt;
    TimeToStruct(t, dt);
    return dt.hour * 60 + dt.min;
+}
+
+int GlobalMinuteOfDay(const datetime t)
+{
+   MqlDateTime dt;
+   TimeToStruct(t, dt);
+   return dt.hour * 60 + dt.min;
+}
+
+bool GlobalSignalsPaused()
+{
+   if(!EnableGlobalTimeControls)
+      return false;
+   int minuteOfDay = GlobalMinuteOfDay(TimeCurrent());
+   int pauseMinute = GlobalPauseSignalsHourUTC * 60 + GlobalPauseSignalsMinuteUTC;
+   int resumeMinute = GlobalResumeSignalsHourUTC * 60 + GlobalResumeSignalsMinuteUTC;
+   if(pauseMinute > resumeMinute)
+      return (minuteOfDay >= pauseMinute || minuteOfDay < resumeMinute);
+   return (minuteOfDay >= pauseMinute && minuteOfDay < resumeMinute);
+}
+
+bool GlobalIsCloseTime()
+{
+   if(!EnableGlobalTimeControls)
+      return false;
+   int minuteOfDay = GlobalMinuteOfDay(TimeCurrent());
+   int closeMinute = GlobalCloseAllHourUTC * 60 + GlobalCloseAllMinuteUTC;
+   int resumeMinute = GlobalResumeSignalsHourUTC * 60 + GlobalResumeSignalsMinuteUTC;
+   if(closeMinute > resumeMinute)
+      return (minuteOfDay >= closeMinute || minuteOfDay < resumeMinute);
+   return (minuteOfDay >= closeMinute && minuteOfDay < resumeMinute);
+}
+
+int GlobalMinutesUntil(const int targetHour, const int targetMinute)
+{
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   int nowMin = dt.hour * 60 + dt.min;
+   int targetMin = targetHour * 60 + targetMinute;
+   int diff = targetMin - nowMin;
+   if(diff <= 0)
+      diff += 1440;
+   return diff;
+}
+
+int GlobalSecondsUntil(const int targetHour, const int targetMinute)
+{
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   int nowSec = dt.hour * 3600 + dt.min * 60 + dt.sec;
+   int targetSec = targetHour * 3600 + targetMinute * 60;
+   int diff = targetSec - nowSec;
+   if(diff <= 0)
+      diff += 86400;
+   return diff;
+}
+
+string GlobalFormatCountdown(const int minutes)
+{
+   int h = minutes / 60;
+   int m = minutes % 60;
+   return StringFormat("%dh %02dm", h, m);
+}
+
+string GlobalFormatCountdownSec(const int totalSeconds)
+{
+   int h = totalSeconds / 3600;
+   int m = (totalSeconds % 3600) / 60;
+   int s = totalSeconds % 60;
+   return StringFormat("%dh %02dm %02ds", h, m, s);
+}
+
+datetime GlobalNextOccurrence(const int targetHour, const int targetMinute)
+{
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   dt.hour = targetHour;
+   dt.min = targetMinute;
+   dt.sec = 0;
+   datetime target = StructToTime(dt);
+   if(target <= TimeCurrent())
+      target += 86400;
+   return target;
+}
+
+string GlobalDateLabel(const datetime t)
+{
+   MqlDateTime nowDt, targetDt;
+   TimeToStruct(TimeCurrent(), nowDt);
+   TimeToStruct(t, targetDt);
+   if(nowDt.year == targetDt.year && nowDt.mon == targetDt.mon && nowDt.day == targetDt.day)
+      return "Today";
+   datetime tomorrow = TimeCurrent() + 86400;
+   MqlDateTime tomDt;
+   TimeToStruct(tomorrow, tomDt);
+   if(tomDt.year == targetDt.year && tomDt.mon == targetDt.mon && tomDt.day == targetDt.day)
+      return "Tomorrow";
+   return TimeToString(t, TIME_DATE);
 }
 
 datetime PropCurrentResetTime(const datetime t)
@@ -1831,6 +1955,87 @@ void ExportPropfirmRollingReport()
     bool useRecency = (PropRecencyHalfLifeDays > 0.0);
     double testSpanDays = (testStart > 0) ? (double)(testEndTime - testStart) / 86400.0 : 0.0;
     bool recencyIneffective = useRecency && testSpanDays > 0.0 && PropRecencyHalfLifeDays > testSpanDays * 3.0;
+
+    int recentDays = (int)MathCeil(0.30 * testSpanDays);
+    if(recentDays < 1) recentDays = 1;
+    if(recentDays > 14) recentDays = 14;
+    datetime windowStart = testEndTime - (datetime)(recentDays * 86400);
+
+    datetime dayList[];
+    ArrayResize(dayList, 0);
+    for(int i = 0; i < totalRuns; i++)
+    {
+       if(propRuns[i].startDay < windowStart)
+          continue;
+       long raw = (long)propRuns[i].startDay;
+       datetime bucket = (datetime)(raw - (raw % 86400));
+       bool found = false;
+       for(int d = 0; d < ArraySize(dayList); d++)
+       {
+          if(dayList[d] == bucket) { found = true; break; }
+       }
+       if(!found)
+       {
+          int sz = ArraySize(dayList);
+          ArrayResize(dayList, sz + 1);
+          dayList[sz] = bucket;
+       }
+    }
+    int dayCount = ArraySize(dayList);
+    for(int d = 0; d < dayCount - 1; d++)
+    {
+       for(int e = d + 1; e < dayCount; e++)
+       {
+          if(dayList[e] < dayList[d])
+          {
+             datetime tmp = dayList[d];
+             dayList[d] = dayList[e];
+             dayList[e] = tmp;
+          }
+       }
+    }
+
+    int histPass[100][14];
+    int histBlow[100][14];
+    int histNet[100];
+    ArrayInitialize(histNet, 0);
+    for(int s = 0; s < 100; s++)
+    {
+       for(int d = 0; d < 14; d++)
+       {
+          histPass[s][d] = 0;
+          histBlow[s][d] = 0;
+       }
+    }
+    int histMaxPass = 1, histMaxBlow = 1;
+    for(int i = 0; i < totalRuns; i++)
+    {
+       if(propRuns[i].startDay < windowStart)
+          continue;
+       int sid = propRuns[i].strategyId - 1;
+       if(sid < 0 || sid >= 100) continue;
+       long raw = (long)propRuns[i].startDay;
+       datetime bucket = (datetime)(raw - (raw % 86400));
+       int dayIdx = -1;
+       for(int d = 0; d < dayCount; d++)
+       {
+          if(dayList[d] == bucket) { dayIdx = d; break; }
+       }
+       if(dayIdx < 0 || dayIdx >= 14) continue;
+       if(propRuns[i].passed)
+       {
+          histPass[sid][dayIdx]++;
+          histNet[sid]++;
+          if(histPass[sid][dayIdx] > histMaxPass) histMaxPass = histPass[sid][dayIdx];
+       }
+       else if(propRuns[i].breached)
+       {
+          histBlow[sid][dayIdx]++;
+          histNet[sid]--;
+          if(histBlow[sid][dayIdx] > histMaxBlow) histMaxBlow = histBlow[sid][dayIdx];
+       }
+    }
+
     for(int i = 0; i < 99; i++)
     {
        for(int j = i + 1; j < 100; j++)
@@ -1928,7 +2133,7 @@ void ExportPropfirmRollingReport()
        "<th data-type=\"num\">Passed</th>\n<th data-type=\"num\">Blown</th>\n<th data-type=\"num\">Active</th>\n" +
         (useRecency ? "<th data-type=\"num\">Recency Score</th>\n" : "") +
         "<th data-type=\"num\">All-Time Pass Rate</th>\n<th data-type=\"num\">Avg Win Rate</th>\n" +
-        (useRecency ? "<th data-type=\"str\">Trend</th>\n" : "") +
+        "<th data-type=\"num\">Recent Trend<br><span style=\"font-weight:400;font-size:10px\">latest " + IntegerToString(recentDays) + "d (30%) &middot; green&#8593;pass red&#8595;blow</span></th>\n" +
         "<th data-type=\"num\">PF</th>\n<th data-type=\"num\">Avg R:R</th>\n" +
         "<th data-type=\"num\">Avg Net P/L</th>\n<th data-type=\"num\">Best Net</th>\n<th data-type=\"num\">Worst Net</th>\n" +
          "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
@@ -1949,15 +2154,27 @@ void ExportPropfirmRollingReport()
       string netClass = (avgNet > 0.0) ? "pos" : ((avgNet < 0.0) ? "neg" : "zero");
       string bestClass = (aggBestNet[sid] > 0.0) ? "pos" : "zero";
       string worstClass = (aggWorstNet[sid] < 0.0) ? "neg" : "zero";
-      string pfClass = (profitFactor >= 1.0) ? "pos" : "neg";
-      string trendSymbol = "&#9472;";
-      string trendClass = "zero";
-      if(useRecency && aggStarts[sid] > 0)
-      {
-         double diff = recencyScore - passRate;
-         if(diff > 1.0) { trendSymbol = "&#9650;"; trendClass = "pos"; }
-         else if(diff < -1.0) { trendSymbol = "&#9660;"; trendClass = "neg"; }
-      }
+       string pfClass = (profitFactor >= 1.0) ? "pos" : "neg";
+       string histCell = "<td class=\"hist\" data-sort=\"" + IntegerToString(histNet[sid]) + "\">";
+       if(dayCount == 0)
+          histCell += "<span class=\"zero\">n/a</span>";
+       else
+       {
+          histCell += "<div class=\"hist\">";
+          for(int hd = 0; hd < dayCount; hd++)
+          {
+             int hp = histPass[sid][hd];
+             int hb = histBlow[sid][hd];
+             int upH = (int)MathRound((double)hp / (double)histMaxPass * 20.0);
+             int dnH = (int)MathRound((double)hb / (double)histMaxBlow * 20.0);
+             MqlDateTime hdt;
+             TimeToStruct(dayList[hd], hdt);
+             string dayLabel = StringFormat("%02d-%02d", hdt.mon, hdt.day);
+             histCell += StringFormat("<div class=\"dcell\" title=\"%s: %d pass / %d blow\"><div class=\"bar-up\" style=\"height:%dpx\"></div><div class=\"bar-down\" style=\"height:%dpx\"></div></div>", dayLabel, hp, hb, upH, dnH);
+          }
+          histCell += "</div>";
+       }
+       histCell += "</td>";
 
       string row = "";
       row += StringFormat("<tr><td class=\"num\">%d</td>", rank + 1);
@@ -1966,23 +2183,22 @@ void ExportPropfirmRollingReport()
       row += StringFormat("<td class=\"num pos\">%d</td>", aggPassed[sid]);
       row += StringFormat("<td class=\"num neg\">%d</td>", aggBlown[sid]);
       row += StringFormat("<td class=\"num\">%d</td>", aggActive[sid]);
-      if(useRecency)
-      {
-         if(aggRecencyWeightSum[sid] > 0.0)
-            row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", recencyScore, (int)MathRound(recencyScore), recencyScore);
-         else
-            row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
-      }
-      if(aggStarts[sid] > 0)
-         row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", passRate, (int)MathRound(passRate), passRate);
-      else
-         row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
-      if(aggWinRateCount[sid] > 0)
-         row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", avgWinRate, (int)MathRound(avgWinRate), avgWinRate);
-      else
-         row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
-      if(useRecency)
-         row += StringFormat("<td class=\"num %s\" data-sort=\"%.4f\">%s</td>", trendClass, recencyScore - passRate, trendSymbol);
+       if(useRecency)
+       {
+          if(aggRecencyWeightSum[sid] > 0.0)
+             row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", recencyScore, (int)MathRound(recencyScore), recencyScore);
+          else
+             row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+       }
+       if(aggStarts[sid] > 0)
+          row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", passRate, (int)MathRound(passRate), passRate);
+       else
+          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+       if(aggWinRateCount[sid] > 0)
+          row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", avgWinRate, (int)MathRound(avgWinRate), avgWinRate);
+       else
+          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+       row += histCell;
       if(aggGrossLoss[sid] < 0.0)
          row += StringFormat("<td class=\"num %s\">%.2f</td>", pfClass, profitFactor);
       else
@@ -2159,6 +2375,10 @@ void PropWriteHtmlHead(const int handle)
       ".reason{font-size:11px;color:#64748b}\n" +
        ".barwrap{background:#e2e8f0;border-radius:4px;height:8px;width:64px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:6px}\n" +
        ".barfill{height:100%;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e)}\n" +
+       ".hist{display:inline-flex;align-items:center;height:40px;gap:1px;vertical-align:middle}\n" +
+       ".dcell{width:7px;height:40px;position:relative;display:inline-block}\n" +
+       ".bar-up{position:absolute;bottom:50%;left:0;width:100%;background:#22c55e;border-radius:1px 1px 0 0}\n" +
+       ".bar-down{position:absolute;top:50%;left:0;width:100%;background:#ef4444;border-radius:0 0 1px 1px}\n" +
        ".collapse-header{cursor:pointer;padding:12px 16px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;font-weight:600;font-size:13px;color:#475569;user-select:none;transition:background .15s}\n" +
        ".collapse-header:hover{background:#e2e8f0}\n" +
        ".collapse-header.open{background:#e0e7ff;border-color:#6366f1;color:#4f46e5}\n" +
@@ -2371,7 +2591,7 @@ string DirectionText(const int orderType)
 }
 
 #define H100_PREFIX "H100_"
-#define H100_LINE_COUNT 38
+#define H100_LINE_COUNT 46
 
 color PanelColor()  { return C'16,18,24'; }
 color HeaderColor() { return C'28,32,42'; }
@@ -2452,6 +2672,8 @@ void UpdateDashboard()
    ObjectSetString(0, H100_PREFIX + "TITLE", OBJPROP_TEXT, "HundredStrategyEA  |  " + AccountInfoString(ACCOUNT_NAME));
 
    int line = 0;
+   SetLine(line++, "Server time   " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS), GoodColor());
+   SetLine(line++, " ", MutedColor());
    SetLine(line++, "STRATEGY", MutedColor());
    SetLine(line++, "Mode          " + (StrategyMode == STRATEGY_SINGLE ? "SINGLE" : "ALL-100") + "    Min votes    " + IntegerToString(MinVotesToTrade));
    if(StrategyMode == STRATEGY_SINGLE)
@@ -2516,6 +2738,26 @@ void UpdateDashboard()
       else
          SetLine(line++, "Magic         " + IntegerToString((long)MagicNumber) + "    Status        ACTIVE", GoodColor());
       SetLine(line++, " ");
+
+      if(EnableGlobalTimeControls)
+      {
+         SetLine(line++, "TIME CONTROLS (UTC)", MutedColor());
+         bool inPause = GlobalSignalsPaused();
+         bool inClose = GlobalIsCloseTime();
+         datetime pauseDt = GlobalNextOccurrence(GlobalPauseSignalsHourUTC, GlobalPauseSignalsMinuteUTC);
+         datetime closeDt = GlobalNextOccurrence(GlobalCloseAllHourUTC, GlobalCloseAllMinuteUTC);
+         datetime resumeDt = GlobalNextOccurrence(GlobalResumeSignalsHourUTC, GlobalResumeSignalsMinuteUTC);
+         string pauseDate = GlobalDateLabel(pauseDt);
+         string closeDate = GlobalDateLabel(closeDt);
+         string resumeDate = GlobalDateLabel(resumeDt);
+         string pauseStatus = inPause ? "ACTIVE now" : "in " + GlobalFormatCountdownSec(GlobalSecondsUntil(GlobalPauseSignalsHourUTC, GlobalPauseSignalsMinuteUTC));
+         string closeStatus = inClose ? "ACTIVE now" : "in " + GlobalFormatCountdownSec(GlobalSecondsUntil(GlobalCloseAllHourUTC, GlobalCloseAllMinuteUTC));
+         string resumeStatus = (inPause || inClose) ? "in " + GlobalFormatCountdownSec(GlobalSecondsUntil(GlobalResumeSignalsHourUTC, GlobalResumeSignalsMinuteUTC)) : "-";
+         SetLine(line++, "Pause signals " + StringFormat("%02d:%02d", GlobalPauseSignalsHourUTC, GlobalPauseSignalsMinuteUTC) + " " + pauseDate + "  " + pauseStatus, inPause ? WarnColor() : MutedColor());
+         SetLine(line++, "Close all     " + StringFormat("%02d:%02d", GlobalCloseAllHourUTC, GlobalCloseAllMinuteUTC) + " " + closeDate + "  " + closeStatus, inClose ? BadColor() : MutedColor());
+         SetLine(line++, "Resume signal " + StringFormat("%02d:%02d", GlobalResumeSignalsHourUTC, GlobalResumeSignalsMinuteUTC) + " " + resumeDate + "  " + resumeStatus, (inPause || inClose) ? GoodColor() : MutedColor());
+         SetLine(line++, " ");
+      }
    }
 
    SetLine(line++, "LAST 5 SIGNALS", MutedColor());
