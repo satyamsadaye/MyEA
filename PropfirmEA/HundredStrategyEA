@@ -255,6 +255,7 @@ struct PropStrategyResult
    int wins;
    int losses;
    int breakevenTrades;
+   int totalSignals;
    double startingBalance;
    double grossProfit;
    double grossLoss;
@@ -299,6 +300,7 @@ struct PropRunResult
 PropRunResult propRuns[];
 datetime propLastResumeSpawn = 0;
 int propSignalCache[PROP_STRATEGY_COUNT];
+int propSignalCounts[PROP_STRATEGY_COUNT];
 datetime propSignalCacheBar = 0;
 
 int atrHandle = INVALID_HANDLE;
@@ -752,12 +754,27 @@ bool OpenTrade(const int orderType, const StrategySignal &signal)
 
     if(useBrokerStops)
     {
-       slDistance = StopDistance(StopLossMode, true);
-       tpDistance = StopDistance(TakeProfitMode, false);
-       if(slDistance <= 0.0 || tpDistance <= 0.0)
+       if(EnableVirtualDollarExit)
        {
-          LogEvent("TRADE_SKIPPED", "Invalid SL/TP distance");
-          return false;
+          slDistance = MoneyToPriceDistance(VirtualStopLossMoney, VirtualExitLot);
+          tpDistance = MoneyToPriceDistance(VirtualTakeProfitMoney, VirtualExitLot);
+          bool slNeeded = (VirtualStopLossMoney > 0.0);
+          bool tpNeeded = (VirtualTakeProfitMoney > 0.0);
+          if((slNeeded && slDistance <= 0.0) || (tpNeeded && tpDistance <= 0.0))
+          {
+             LogEvent("TRADE_SKIPPED", "Invalid SL/TP distance");
+             return false;
+          }
+       }
+       else
+       {
+          slDistance = StopDistance(StopLossMode, true);
+          tpDistance = StopDistance(TakeProfitMode, false);
+          if(slDistance <= 0.0 || tpDistance <= 0.0)
+          {
+             LogEvent("TRADE_SKIPPED", "Invalid SL/TP distance");
+             return false;
+          }
        }
        if(ReverseSignals)
        {
@@ -789,8 +806,10 @@ bool OpenTrade(const int orderType, const StrategySignal &signal)
     double tp = 0.0;
     if(useBrokerStops)
     {
-       sl = (orderType == ORDER_TYPE_BUY) ? entry - slDistance : entry + slDistance;
-       tp = (orderType == ORDER_TYPE_BUY) ? entry + tpDistance : entry - tpDistance;
+       if(slDistance > 0.0)
+          sl = (orderType == ORDER_TYPE_BUY) ? entry - slDistance : entry + slDistance;
+       if(tpDistance > 0.0)
+          tp = (orderType == ORDER_TYPE_BUY) ? entry + tpDistance : entry - tpDistance;
        sl = NormalizeDouble(sl, _Digits);
        tp = NormalizeDouble(tp, _Digits);
     }
@@ -991,15 +1010,17 @@ void CloseAllEaPositions()
 void InitPropfirmBacktest()
 {
    propCurrentDayReset = PropCurrentResetTime(TimeCurrent());
-   if(PropRollingStartMode)
-   {
-      ArrayResize(propRuns, 0);
-      propLastResumeSpawn = 0;
-      propSignalCacheBar = 0;
-      LogEvent("PROP_INIT", "Rolling spawn mode enabled (" + PropSpawnIntervalLabel() + "). Real orders disabled; spawning fresh runs per strategy during the active window (pause/close hours skipped).");
-      return;
-   }
-   for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+    if(PropRollingStartMode)
+    {
+       ArrayResize(propRuns, 0);
+       propLastResumeSpawn = 0;
+       propSignalCacheBar = 0;
+       ArrayInitialize(propSignalCounts, 0);
+       LogEvent("PROP_INIT", "Rolling spawn mode enabled (" + PropSpawnIntervalLabel() + "). Real orders disabled; spawning fresh runs per strategy during the active window (pause/close hours skipped).");
+       return;
+    }
+    ArrayInitialize(propSignalCounts, 0);
+    for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
    {
       propResults[i].name = StrategyName(i + 1);
       propResults[i].breached = false;
@@ -1014,11 +1035,12 @@ void InitPropfirmBacktest()
       propResults[i].daysToTarget = 0;
       propResults[i].daysToBreach = 0;
       propResults[i].equityProtectionTriggers = 0;
-      propResults[i].trades = 0;
-      propResults[i].wins = 0;
-      propResults[i].losses = 0;
-      propResults[i].breakevenTrades = 0;
-      propResults[i].startingBalance = PropStartingBalance;
+       propResults[i].trades = 0;
+       propResults[i].wins = 0;
+       propResults[i].losses = 0;
+       propResults[i].breakevenTrades = 0;
+       propResults[i].totalSignals = 0;
+       propResults[i].startingBalance = PropStartingBalance;
       propResults[i].grossProfit = 0.0;
       propResults[i].grossLoss = 0.0;
       propResults[i].protectionTriggeredToday = false;
@@ -1060,36 +1082,39 @@ void RunPropfirmBacktestTick()
    if(PropSignalsPaused(now))
       return;
 
-   for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
-   {
-      int index = id - 1;
-      if(propResults[index].breached || propResults[index].passed || propResults[index].pos.open)
-         continue;
-      if(propResults[index].protectionTriggeredToday)
-         continue;
+    for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
+    {
+       int index = id - 1;
 
-      StrategySignal signal;
-      signal.buyVotes = 0;
-      signal.sellVotes = 0;
-      signal.details = "";
-      EvaluateStrategy(id, signal);
+       StrategySignal signal;
+       signal.buyVotes = 0;
+       signal.sellVotes = 0;
+       signal.details = "";
+       EvaluateStrategy(id, signal);
 
-      int direction = 0;
-      if(signal.buyVotes > 0)
-         direction = ORDER_TYPE_BUY;
-      else if(signal.sellVotes > 0)
-         direction = ORDER_TYPE_SELL;
+       int direction = 0;
+       if(signal.buyVotes > 0)
+          direction = ORDER_TYPE_BUY;
+       else if(signal.sellVotes > 0)
+          direction = ORDER_TYPE_SELL;
 
-      if(direction == 0)
-         continue;
-      if(ReverseSignals)
-         direction = (direction == ORDER_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-      if((AllowedDirection == SIGNAL_BUY_ONLY && direction == ORDER_TYPE_SELL) ||
-         (AllowedDirection == SIGNAL_SELL_ONLY && direction == ORDER_TYPE_BUY))
-         continue;
+       if(direction != 0)
+          propResults[index].totalSignals++;
 
-      PropOpenVirtualPosition(index, direction, now);
-   }
+       if(direction == 0)
+          continue;
+       if(propResults[index].breached || propResults[index].passed || propResults[index].pos.open)
+          continue;
+       if(propResults[index].protectionTriggeredToday)
+          continue;
+       if(ReverseSignals)
+          direction = (direction == ORDER_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+       if((AllowedDirection == SIGNAL_BUY_ONLY && direction == ORDER_TYPE_SELL) ||
+          (AllowedDirection == SIGNAL_SELL_ONLY && direction == ORDER_TYPE_BUY))
+          continue;
+
+       PropOpenVirtualPosition(index, direction, now);
+    }
 }
 
 void PropOpenVirtualPosition(const int index, const int type, const datetime now)
@@ -1283,23 +1308,25 @@ void RunPropfirmRollingTick()
 
    PropRollingUpdatePositions();
 
-   if(newBar && !PropSignalsPaused(now))
-   {
-      for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
-      {
-         StrategySignal signal;
-         signal.buyVotes = 0;
-         signal.sellVotes = 0;
-         signal.details = "";
-         EvaluateStrategy(id, signal);
-         if(signal.buyVotes > 0)
-            propSignalCache[id - 1] = ORDER_TYPE_BUY;
-         else if(signal.sellVotes > 0)
-            propSignalCache[id - 1] = ORDER_TYPE_SELL;
-         else
-            propSignalCache[id - 1] = 0;
-      }
-   }
+    if(newBar && !PropSignalsPaused(now))
+    {
+       for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
+       {
+          StrategySignal signal;
+          signal.buyVotes = 0;
+          signal.sellVotes = 0;
+          signal.details = "";
+          EvaluateStrategy(id, signal);
+          if(signal.buyVotes > 0)
+             propSignalCache[id - 1] = ORDER_TYPE_BUY;
+          else if(signal.sellVotes > 0)
+             propSignalCache[id - 1] = ORDER_TYPE_SELL;
+          else
+             propSignalCache[id - 1] = 0;
+          if(propSignalCache[id - 1] != 0)
+             propSignalCounts[id - 1]++;
+       }
+    }
 
    PropRollingCheckRules();
 
@@ -1558,6 +1585,19 @@ string PropSpawnIntervalLabel()
    return "every " + IntegerToString(intervalHours) + "h";
 }
 
+string PropTimestampedReportFileName()
+{
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   string stamp = StringFormat("%04d%02d%02d_%02d%02d%02d",
+                               dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec);
+   string base = PropHtmlReportFileName;
+   int dot = StringFind(base, ".", 0);
+   if(dot <= 0)
+      return base + "_" + stamp;
+   return StringSubstr(base, 0, dot) + "_" + stamp + StringSubstr(base, dot);
+}
+
 void ExportPropfirmHtmlReport()
 {
    if(PropRollingStartMode)
@@ -1570,6 +1610,7 @@ void ExportPropfirmSingleReport()
 {
    int passedCount = 0, blownCount = 0, activeCount = 0;
    long totalTrades = 0;
+   long totalSignals = 0;
    double totalWinRateSum = 0.0;
    int winRateCount = 0;
    double bestNetProfit = -DBL_MAX;
@@ -1584,6 +1625,7 @@ void ExportPropfirmSingleReport()
       else activeCount++;
 
       totalTrades += propResults[i].trades;
+      totalSignals += propResults[i].totalSignals;
 
       int closedTrades = propResults[i].wins + propResults[i].losses;
       if(closedTrades > 0)
@@ -1606,7 +1648,8 @@ void ExportPropfirmSingleReport()
 
    PropSortResults();
 
-   int handle = FileOpen(PropHtmlReportFileName, FILE_WRITE | FILE_TXT | FILE_COMMON);
+   string reportFileName = PropTimestampedReportFileName();
+   int handle = FileOpen(reportFileName, FILE_WRITE | FILE_TXT | FILE_COMMON);
    if(handle == INVALID_HANDLE)
    {
       Print("Failed to export propfirm HTML report. error=", GetLastError());
@@ -1629,8 +1672,9 @@ void ExportPropfirmSingleReport()
       "<div class=\"card act\"><div class=\"label\">Active</div><div class=\"value\">" + IntegerToString(activeCount) + "</div><div class=\"sub\">still running</div></div>\n" +
       "<div class=\"card rate\"><div class=\"label\">Pass Rate</div><div class=\"value\">" + DoubleToString(passRate, 1) + "%</div><div class=\"sub\">target hit</div></div>\n" +
       "<div class=\"card avg\"><div class=\"label\">Avg Win Rate</div><div class=\"value\">" + DoubleToString(avgWinRate, 1) + "%</div><div class=\"sub\">across closed trades</div></div>\n" +
-      "<div class=\"card tot\"><div class=\"label\">Total Trades</div><div class=\"value\">" + IntegerToString(totalTrades) + "</div><div class=\"sub\">virtual positions</div></div>\n" +
-      "</div>\n</div>\n");
+       "<div class=\"card tot\"><div class=\"label\">Total Trades</div><div class=\"value\">" + IntegerToString(totalTrades) + "</div><div class=\"sub\">virtual positions</div></div>\n" +
+       "<div class=\"card sig\"><div class=\"label\">Total Signals</div><div class=\"value\">" + IntegerToString(totalSignals) + "</div><div class=\"sub\">strategy triggers</div></div>\n" +
+       "</div>\n</div>\n");
 
    FileWriteString(handle,
       "<div class=\"section\">\n<h2>Strategy Results (ranked)</h2>\n" +
@@ -1639,7 +1683,7 @@ void ExportPropfirmSingleReport()
       "<th data-type=\"num\">Rank</th>\n<th data-type=\"str\">Strategy</th>\n<th data-type=\"str\">Status</th>\n" +
       "<th data-type=\"str\">Reason</th>\n<th data-type=\"num\">Start Bal</th>\n<th data-type=\"num\">End Bal</th>\n" +
       "<th data-type=\"num\">Net P/L</th>\n<th data-type=\"num\">Win Rate</th>\n<th data-type=\"num\">Wins</th>\n" +
-      "<th data-type=\"num\">Losses</th>\n<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">PF</th>\n" +
+       "<th data-type=\"num\">Losses</th>\n<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">PF</th>\n" +
       "<th data-type=\"num\">Max Profit</th>\n<th data-type=\"num\">Max DD</th>\n<th data-type=\"num\">Days->Target</th>\n" +
       "<th data-type=\"num\">Days->Breach</th>\n<th data-type=\"num\">Eq. Prot</th>\n<th data-type=\"str\">Started</th>\n" +
       "<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody>\n");
@@ -1672,8 +1716,12 @@ void ExportPropfirmSingleReport()
          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
       row += StringFormat("<td class=\"num pos\">%d</td>", propResults[i].wins);
       row += StringFormat("<td class=\"num neg\">%d</td>", propResults[i].losses);
-      row += StringFormat("<td class=\"num\">%d</td>", propResults[i].trades);
-      if(propResults[i].grossLoss < 0.0)
+       row += StringFormat("<td class=\"num\">%d</td>", propResults[i].trades);
+       double singleTestDays = (testEnd > testStart) ? (double)(testEnd - testStart) / 86400.0 : 0.0;
+       double avgSigDay = (singleTestDays > 0.0) ? (double)propResults[i].totalSignals / singleTestDays : 0.0;
+       row += StringFormat("<td class=\"num\">%d</td>", propResults[i].totalSignals);
+       row += StringFormat("<td class=\"num\">%.1f</td>", avgSigDay);
+       if(propResults[i].grossLoss < 0.0)
          row += StringFormat("<td class=\"num\">%.2f</td>", propResults[i].grossProfit / MathAbs(propResults[i].grossLoss));
       else
          row += "<td class=\"num zero\">n/a</td>";
@@ -1692,7 +1740,7 @@ void ExportPropfirmSingleReport()
    PropWriteFooter(handle, "results");
    FileWriteString(handle, "</div>\n</body>\n</html>\n");
    FileClose(handle);
-   Print("Propfirm HTML report exported to Common Files: ", PropHtmlReportFileName);
+   Print("Propfirm HTML report exported to Common Files: ", reportFileName);
 }
 
 void ExportPropfirmRollingReport()
@@ -1815,6 +1863,7 @@ void ExportPropfirmRollingReport()
 
     int totalPassed = 0, totalBlown = 0, totalActive = 0;
     long grandTotalTrades = 0;
+    long grandTotalSignals = 0;
     string bestStratName = "";
     double bestStratRate = -1.0;
     string bestRecentStratName = "";
@@ -1826,6 +1875,7 @@ void ExportPropfirmRollingReport()
        totalBlown += aggBlown[i];
        totalActive += aggActive[i];
        grandTotalTrades += aggTrades[i];
+       grandTotalSignals += propSignalCounts[i];
        double rate = (aggStarts[i] > 0) ? (double)aggPassed[i] / (double)aggStarts[i] * 100.0 : 0.0;
        if(rate > bestStratRate) { bestStratRate = rate; bestStratName = StrategyName(i + 1); }
        if(useRecency)
@@ -1837,7 +1887,8 @@ void ExportPropfirmRollingReport()
    double overallPassRate = (totalRuns > 0) ? (double)totalPassed / (double)totalRuns * 100.0 : 0.0;
    datetime testEnd = TimeCurrent();
 
-   int handle = FileOpen(PropHtmlReportFileName, FILE_WRITE | FILE_TXT | FILE_COMMON);
+   string reportFileName = PropTimestampedReportFileName();
+   int handle = FileOpen(reportFileName, FILE_WRITE | FILE_TXT | FILE_COMMON);
    if(handle == INVALID_HANDLE)
    {
       Print("Failed to export propfirm HTML report. error=", GetLastError());
@@ -1862,6 +1913,7 @@ void ExportPropfirmRollingReport()
        "<div class=\"card act\"><div class=\"label\">Active Runs</div><div class=\"value\">" + IntegerToString(totalActive) + "</div><div class=\"sub\">still running at end</div></div>\n" +
        "<div class=\"card rate\"><div class=\"label\">Overall Pass Rate</div><div class=\"value\">" + DoubleToString(overallPassRate, 1) + "%</div><div class=\"sub\">passed / total runs</div></div>\n" +
        "<div class=\"card avg\"><div class=\"label\">Total Trades</div><div class=\"value\">" + IntegerToString(grandTotalTrades) + "</div><div class=\"sub\">virtual positions</div></div>\n" +
+       "<div class=\"card sig\"><div class=\"label\">Total Signals</div><div class=\"value\">" + IntegerToString(grandTotalSignals) + "</div><div class=\"sub\">strategy triggers</div></div>\n" +
        "<div class=\"card tot\"><div class=\"label\">Total Runs</div><div class=\"value\">" + IntegerToString(totalRuns) + "</div><div class=\"sub\">strategy x start-days</div></div>\n" +
        (useRecency ?
           "<div class=\"card rec\"><div class=\"label\">Top Strategy (Recent)</div><div class=\"value\" style=\"font-size:13px;line-height:1.3\">" + bestRecentStratName + "</div><div class=\"sub\">Recency: " + DoubleToString(bestRecentStratScore, 1) + "% &nbsp;|&nbsp; All-time: " + DoubleToString(bestRecentAllTimeRate, 1) + "%</div></div>\n" :
@@ -1879,7 +1931,7 @@ void ExportPropfirmRollingReport()
         (useRecency ? "<th data-type=\"str\">Trend</th>\n" : "") +
         "<th data-type=\"num\">PF</th>\n<th data-type=\"num\">Avg R:R</th>\n" +
         "<th data-type=\"num\">Avg Net P/L</th>\n<th data-type=\"num\">Best Net</th>\n<th data-type=\"num\">Worst Net</th>\n" +
-        "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
+         "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
         "<th data-type=\"num\">Avg Days->Target</th>\n</tr></thead>\n<tbody>\n");
 
    for(int rank = 0; rank < 100; rank++)
@@ -1943,9 +1995,12 @@ void ExportPropfirmRollingReport()
       row += StringFormat("<td class=\"num %s\">%.2f</td>", bestClass, aggBestNet[sid]);
       row += StringFormat("<td class=\"num %s\">%.2f</td>", worstClass, aggWorstNet[sid]);
       row += StringFormat("<td class=\"num\">%d</td>", aggTrades[sid]);
-      double avgTradesPerDay = (aggDuration[sid] > 0.0) ? (double)aggTrades[sid] / aggDuration[sid] : 0.0;
-      row += StringFormat("<td class=\"num\">%.1f</td>", avgTradesPerDay);
-      row += StringFormat("<td class=\"num pos\">%d</td>", aggWins[sid]);
+       double avgTradesPerDay = (aggDuration[sid] > 0.0) ? (double)aggTrades[sid] / aggDuration[sid] : 0.0;
+       row += StringFormat("<td class=\"num\">%.1f</td>", avgTradesPerDay);
+       double avgSigDay = (testSpanDays > 0.0) ? (double)propSignalCounts[sid] / testSpanDays : 0.0;
+       row += StringFormat("<td class=\"num\">%d</td>", propSignalCounts[sid]);
+       row += StringFormat("<td class=\"num\">%.1f</td>", avgSigDay);
+       row += StringFormat("<td class=\"num pos\">%d</td>", aggWins[sid]);
       row += StringFormat("<td class=\"num neg\">%d</td>", aggLosses[sid]);
       row += StringFormat("<td class=\"num\">%.1f</td>", avgDays);
       row += "</tr>\n";
@@ -2033,7 +2088,7 @@ void ExportPropfirmRollingReport()
     PropWriteRunsFooter(handle, useRecency);
     FileWriteString(handle, "</div>\n</body>\n</html>\n");
     FileClose(handle);
-    Print("Propfirm rolling HTML report exported to Common Files: ", PropHtmlReportFileName, " (", IntegerToString(totalRuns), " runs)");
+    Print("Propfirm rolling HTML report exported to Common Files: ", reportFileName, " (", IntegerToString(totalRuns), " runs)");
 }
 
 string PropJsonEscape(const string s)
@@ -2073,7 +2128,7 @@ void PropWriteHtmlHead(const int handle)
       ".card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px 18px;position:relative;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.05)}\n" +
       ".card::before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:4px;border-radius:10px 0 0 10px}\n" +
       ".card.pass::before{background:#22c55e}\n.card.blow::before{background:#ef4444}\n.card.act::before{background:#3b82f6}\n" +
-      ".card.rate::before{background:#a855f7}\n.card.avg::before{background:#f59e0b}\n.card.tot::before{background:#14b8a6}\n" +
+      ".card.rate::before{background:#a855f7}\n.card.avg::before{background:#f59e0b}\n.card.tot::before{background:#14b8a6}\n.card.sig::before{background:#0ea5e9}\n" +
       ".card .label{color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.8px}\n" +
       ".card .value{color:#1e293b;font-size:22px;font-weight:700;margin-top:6px}\n" +
       ".card .sub{color:#94a3b8;font-size:11px;margin-top:2px}\n" +
@@ -2316,7 +2371,7 @@ string DirectionText(const int orderType)
 }
 
 #define H100_PREFIX "H100_"
-#define H100_LINE_COUNT 36
+#define H100_LINE_COUNT 38
 
 color PanelColor()  { return C'16,18,24'; }
 color HeaderColor() { return C'28,32,42'; }
@@ -2432,13 +2487,25 @@ void UpdateDashboard()
    SetLine(line++, "Loss %        " + DoubleToString(StopLossPercentOfStart, 2) + "    Drawdown %    " + DoubleToString(StopDrawdownPercentOfStart, 2));
    SetLine(line++, " ");
 
-    if(EnablePropfirmBacktestMode)
-    {
-       SetLine(line++, "BACKTEST MODE", WarnColor());
-       SetLine(line++, "Virtual simulation running - no real trades placed");
-       SetLine(line++, "Recency HL    " + DoubleToString(PropRecencyHalfLifeDays, 1) + "d" + (PropRecencyHalfLifeDays > 0.0 ? " (active)" : " (disabled)"), PropRecencyHalfLifeDays > 0.0 ? GoodColor() : MutedColor());
-       SetLine(line++, " ");
-    }
+     if(EnablePropfirmBacktestMode)
+     {
+        SetLine(line++, "BACKTEST MODE", WarnColor());
+        SetLine(line++, "Virtual simulation running - no real trades placed");
+        SetLine(line++, "Recency HL    " + DoubleToString(PropRecencyHalfLifeDays, 1) + "d" + (PropRecencyHalfLifeDays > 0.0 ? " (active)" : " (disabled)"), PropRecencyHalfLifeDays > 0.0 ? GoodColor() : MutedColor());
+        int liveTotalSignals = 0;
+        if(PropRollingStartMode)
+        {
+           for(int s = 0; s < PROP_STRATEGY_COUNT; s++)
+              liveTotalSignals += propSignalCounts[s];
+        }
+        else
+        {
+           for(int s = 0; s < PROP_STRATEGY_COUNT; s++)
+              liveTotalSignals += propResults[s].totalSignals;
+        }
+        SetLine(line++, "Total Signals " + IntegerToString(liveTotalSignals), GoodColor());
+        SetLine(line++, " ");
+     }
    else
    {
       SetLine(line++, "LIVE STATE", MutedColor());
