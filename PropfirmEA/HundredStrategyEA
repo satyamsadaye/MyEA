@@ -1,0 +1,2350 @@
+#property strict
+#property version   "1.00"
+#property description "100-strategy MT5 EA with flexible risk management, SL/TP models, protection stops, and CSV logging."
+
+#include <Trade/Trade.mqh>
+
+CTrade trade;
+
+enum ENUM_SIGNAL_DIRECTION
+{
+   SIGNAL_BUY_ONLY = 0,
+   SIGNAL_SELL_ONLY = 1,
+   SIGNAL_BOTH = 2
+};
+
+enum ENUM_LOT_MODE
+{
+   LOT_RISK_CURRENT_BALANCE = 0,
+   LOT_RISK_STARTING_BALANCE = 1,
+   LOT_FIXED = 2
+};
+
+enum ENUM_STOP_MODE
+{
+   STOP_ATR_MULTIPLIER = 0,
+   STOP_FIXED_POINTS = 1,
+   STOP_FIXED_MONEY = 2
+};
+
+enum ENUM_STRATEGY_MODE
+{
+   STRATEGY_ALL_100 = 0,
+   STRATEGY_SINGLE = 1
+};
+
+enum ENUM_NAMED_STRATEGY
+{
+   STRAT_001_EMA_SCALP_CROSS = 1,
+   STRAT_002_EMA_FAST_PULLBACK,
+   STRAT_003_EMA_SWING_CROSS,
+   STRAT_004_EMA_TREND_RIDER,
+   STRAT_005_EMA_MOMENTUM_SHIFT,
+   STRAT_006_EMA_DEEP_PULLBACK,
+   STRAT_007_EMA_SESSION_TREND,
+   STRAT_008_EMA_BREAK_TREND,
+   STRAT_009_EMA_POSITION_SWING,
+   STRAT_010_EMA_MAJOR_TREND,
+   STRAT_011_RSI_SNAPBACK_FAST,
+   STRAT_012_RSI_OVERSOLD_RECOVERY,
+   STRAT_013_RSI_BALANCE_REVERSION,
+   STRAT_014_RSI_SWING_REBOUND,
+   STRAT_015_RSI_TREND_REENTRY,
+   STRAT_016_RSI_DEEP_REVERSAL,
+   STRAT_017_RSI_SOFT_EXTREME,
+   STRAT_018_RSI_SHARP_EXTREME,
+   STRAT_019_RSI_RANGE_FADE,
+   STRAT_020_RSI_EXHAUSTION_TURN,
+   STRAT_021_BREAKOUT_MICRO_RANGE,
+   STRAT_022_BREAKOUT_SHORT_RANGE,
+   STRAT_023_BREAKOUT_INTRADAY_RANGE,
+   STRAT_024_BREAKOUT_SWING_RANGE,
+   STRAT_025_BREAKOUT_EXPANSION,
+   STRAT_026_BREAKOUT_TREND_CONTINUE,
+   STRAT_027_BREAKOUT_VOLATILITY_PUSH,
+   STRAT_028_BREAKOUT_STRUCTURE_BREAK,
+   STRAT_029_BREAKOUT_POSITION_RANGE,
+   STRAT_030_BREAKOUT_MAJOR_RANGE,
+   STRAT_031_BB_LOWER_RECLAIM,
+   STRAT_032_BB_MEAN_REVERSION,
+   STRAT_033_BB_VOLATILITY_FADE,
+   STRAT_034_BB_SWING_REVERT,
+   STRAT_035_BB_BALANCED_BOUNCE,
+   STRAT_036_BB_DEEP_BAND_REJECT,
+   STRAT_037_BB_SOFT_BAND_REJECT,
+   STRAT_038_BB_TREND_PULLBACK,
+   STRAT_039_BB_POSITION_BOUNCE,
+   STRAT_040_BB_EXTREME_REVERSION,
+   STRAT_041_MACD_FAST_FLIP,
+   STRAT_042_MACD_SCALP_CROSS,
+   STRAT_043_MACD_TREND_SHIFT,
+   STRAT_044_MACD_SWING_CROSS,
+   STRAT_045_MACD_MOMENTUM_BUILD,
+   STRAT_046_MACD_DEEP_TREND,
+   STRAT_047_MACD_BALANCED_SIGNAL,
+   STRAT_048_MACD_SLOW_REVERSAL,
+   STRAT_049_MACD_POSITION_SHIFT,
+   STRAT_050_MACD_MAJOR_CYCLE,
+   STRAT_051_STOCH_FAST_TURN,
+   STRAT_052_STOCH_OVERSOLD_CROSS,
+   STRAT_053_STOCH_RANGE_RECOVERY,
+   STRAT_054_STOCH_SWING_TURN,
+   STRAT_055_STOCH_TREND_REENTRY,
+   STRAT_056_STOCH_DEEP_CYCLE,
+   STRAT_057_STOCH_SOFT_REVERSAL,
+   STRAT_058_STOCH_SHARP_REVERSAL,
+   STRAT_059_STOCH_POSITION_CYCLE,
+   STRAT_060_STOCH_MAJOR_TURN,
+   STRAT_061_CCI_FAST_RECLAIM,
+   STRAT_062_CCI_OVERSOLD_REBOUND,
+   STRAT_063_CCI_RANGE_REVERSION,
+   STRAT_064_CCI_SWING_RECLAIM,
+   STRAT_065_CCI_TREND_REENTRY,
+   STRAT_066_CCI_DEEP_EXTREME,
+   STRAT_067_CCI_SOFT_EXTREME,
+   STRAT_068_CCI_SHARP_EXTREME,
+   STRAT_069_CCI_POSITION_REVERT,
+   STRAT_070_CCI_MAJOR_REVERSAL,
+   STRAT_071_MOMENTUM_FAST_PUSH,
+   STRAT_072_MOMENTUM_SCALP_BURST,
+   STRAT_073_MOMENTUM_TREND_CONFIRM,
+   STRAT_074_MOMENTUM_SWING_PUSH,
+   STRAT_075_MOMENTUM_EXPANSION,
+   STRAT_076_MOMENTUM_CONTINUATION,
+   STRAT_077_MOMENTUM_VOLATILITY_BURST,
+   STRAT_078_MOMENTUM_STRUCTURE_PUSH,
+   STRAT_079_MOMENTUM_POSITION_PUSH,
+   STRAT_080_MOMENTUM_MAJOR_PUSH,
+   STRAT_081_ATR_CHANNEL_FAST_BREAK,
+   STRAT_082_ATR_CHANNEL_SCALP_BREAK,
+   STRAT_083_ATR_CHANNEL_TREND_BREAK,
+   STRAT_084_ATR_CHANNEL_SWING_BREAK,
+   STRAT_085_ATR_CHANNEL_EXPANSION,
+   STRAT_086_ATR_CHANNEL_CONTINUE,
+   STRAT_087_ATR_CHANNEL_VOLATILE,
+   STRAT_088_ATR_CHANNEL_STRUCTURE,
+   STRAT_089_ATR_CHANNEL_POSITION,
+   STRAT_090_ATR_CHANNEL_MAJOR,
+   STRAT_091_PRICE_ACTION_MICRO_ENGULF,
+   STRAT_092_PRICE_ACTION_SHORT_BREAK,
+   STRAT_093_PRICE_ACTION_INTRADAY_PUSH,
+   STRAT_094_PRICE_ACTION_SWING_CANDLE,
+   STRAT_095_PRICE_ACTION_RANGE_BREAK,
+   STRAT_096_PRICE_ACTION_TREND_CANDLE,
+   STRAT_097_PRICE_ACTION_VOLATILE_BAR,
+   STRAT_098_PRICE_ACTION_STRUCTURE_BAR,
+   STRAT_099_PRICE_ACTION_POSITION_BAR,
+   STRAT_100_PRICE_ACTION_MAJOR_BAR
+};
+
+input group "Strategy Selection"
+input ENUM_STRATEGY_MODE StrategyMode = STRATEGY_ALL_100;
+input ENUM_NAMED_STRATEGY SelectedStrategy = STRAT_001_EMA_SCALP_CROSS; // Used when StrategyMode = STRATEGY_SINGLE
+input ENUM_SIGNAL_DIRECTION AllowedDirection = SIGNAL_BOTH;
+input int MinVotesToTrade = 1;                      // For all-100 mode: number of matching strategy signals required
+input bool OneTradePerBar = true;
+input bool ReverseSignals = false;                  // If true, BUY signals become SELL and vice versa; SL/TP distances swap so price levels mirror
+
+input group "Position Limits"
+input int MaxOpenPositions = 1;                     // Default 1. New signal is skipped when this EA already has this many positions.
+input ulong MagicNumber = 100260629;
+input int SlippagePoints = 30;
+
+input group "Lot Sizing"
+input ENUM_LOT_MODE LotMode = LOT_RISK_CURRENT_BALANCE;
+input double RiskPerTradePercent = 1.0;             // Percent of selected balance base
+input double CustomStartingBalance = 10000.0;       // Reference balance for starting-balance risk and protection percent checks
+input double FixedLot = 0.01;
+input double MaxLot = 10.0;
+
+input group "Stop Loss / Take Profit"
+input ENUM_STOP_MODE StopLossMode = STOP_ATR_MULTIPLIER;
+input ENUM_STOP_MODE TakeProfitMode = STOP_ATR_MULTIPLIER;
+input int AtrPeriod = 14;
+input double SlAtrMultiplier = 2.0;
+input double TpAtrMultiplier = 3.0;
+input double FixedSlPoints = 300.0;
+input double FixedTpPoints = 600.0;
+input double SlMoney = 50.0;                        // Used by STOP_FIXED_MONEY
+input double TpMoney = 100.0;                       // Used by STOP_FIXED_MONEY
+input bool PlaceBrokerStopLossTakeProfit = true;    // If false, no SL/TP is sent with the order
+
+input group "Virtual Dollar Exit"
+input bool EnableVirtualDollarExit = false;         // If true, closes positions when dollar profit/loss is reached
+input double VirtualExitLot = 0.05;                 // Special fixed lot used when EnableVirtualDollarExit = true
+input double VirtualTakeProfitMoney = 50.0;         // Close position at this floating profit in account currency
+input double VirtualStopLossMoney = 25.0;           // Close position at this floating loss in account currency
+input bool DisableBrokerStopsWhenVirtualExitOn = true; // When true, normal SL/TP settings are ignored and no broker SL/TP is placed
+
+input group "EA Stop Protection"
+input bool EnableProtectionStops = true;
+input double StopProfitMoney = 0.0;                 // 0 disables
+input double StopLossMoney = 0.0;                   // 0 disables, based on EA closed+floating P/L
+input double StopDrawdownMoney = 0.0;               // 0 disables, based on equity drawdown from reference
+input double StopProfitPercentOfStart = 0.0;        // 0 disables
+input double StopLossPercentOfStart = 0.0;          // 0 disables
+input double StopDrawdownPercentOfStart = 0.0;      // 0 disables
+input bool ClosePositionsWhenProtectionHit = true;
+
+enum ENUM_PROP_SPAWN_INTERVAL
+{
+   SPAWN_DAILY_AT_RESUME = 0,
+   SPAWN_EVERY_1H  = 1,
+   SPAWN_EVERY_2H  = 2,
+   SPAWN_EVERY_3H  = 3,
+   SPAWN_EVERY_4H  = 4,
+   SPAWN_EVERY_5H  = 5,
+   SPAWN_EVERY_6H  = 6,
+   SPAWN_EVERY_12H = 12,
+   SPAWN_EVERY_20H = 20
+};
+
+input group "Propfirm All-Strategy Backtest"
+input bool EnablePropfirmBacktestMode = false;      // If true, no real trades are placed. It virtually tests all 100 strategies in this EA.
+input double PropStartingBalance = 5000.0;
+input double PropMaxTotalDrawdownPercent = 6.0;
+input double PropProfitTargetPercent = 10.0;
+input double PropDailyDrawdownPercent = 4.0;
+input double PropDailyProtectionBufferPercent = 1.0; // Example: 4% daily DD with 1% buffer protects at 3%
+input int PropDailyResetHourUTC = 0;
+input int PropDailyResetMinuteUTC = 0;
+input int PropPauseSignalsHourUTC = 18;
+input int PropPauseSignalsMinuteUTC = 30;
+input int PropCloseAllHourUTC = 19;
+input int PropCloseAllMinuteUTC = 30;
+input int PropResumeSignalsHourUTC = 1;
+input int PropResumeSignalsMinuteUTC = 30;
+input bool PropRollingStartMode = true;               // If true, spawns a fresh run per strategy (interval controlled below)
+input ENUM_PROP_SPAWN_INTERVAL PropSpawnInterval = SPAWN_DAILY_AT_RESUME; // How often to spawn a fresh batch of 100 runs (skips pause/close window)
+input int PropMaxStartDays = 0;                       // 0 = unlimited spawn batches per strategy
+input string PropHtmlReportFileName = "Propfirm_100_Strategy_Report.html";
+
+input group "Logging"
+input bool EnableCsvLog = true;
+input string LogFileName = "HundredStrategyEA_Log.csv";
+input bool PrintDetailedLog = true;
+
+#define PROP_STRATEGY_COUNT 100
+
+struct PropVirtualPosition
+{
+   bool open;
+   int type;
+   double entry;
+   double lot;
+   datetime openTime;
+};
+
+struct PropStrategyResult
+{
+   string name;
+   bool breached;
+   bool passed;
+   datetime started;
+   datetime ended;
+   double balance;
+   double equity;
+   double dayStartReference;
+   double maxDrawdown;
+   double maxProfit;
+   int daysToTarget;
+   int daysToBreach;
+   int equityProtectionTriggers;
+   int trades;
+   int wins;
+   int losses;
+   int breakevenTrades;
+   double startingBalance;
+   double grossProfit;
+   double grossLoss;
+   bool protectionTriggeredToday;
+   string breachReason;
+   PropVirtualPosition pos;
+};
+
+PropStrategyResult propResults[PROP_STRATEGY_COUNT];
+datetime propCurrentDayReset = 0;
+
+struct PropRunResult
+{
+   int strategyId;
+   string strategyName;
+   datetime startDay;
+   datetime ended;
+   bool breached;
+   bool passed;
+   bool protectionTriggeredToday;
+   string breachReason;
+   datetime dayReset;
+   datetime lastTradeBar;
+   double balance;
+   double equity;
+   double dayStartReference;
+   double startingBalance;
+   double maxDrawdown;
+   double maxProfit;
+   double grossProfit;
+   double grossLoss;
+   int daysToTarget;
+   int daysToBreach;
+   int equityProtectionTriggers;
+   int trades;
+   int wins;
+   int losses;
+   int breakevenTrades;
+   PropVirtualPosition pos;
+};
+
+PropRunResult propRuns[];
+datetime propLastResumeSpawn = 0;
+int propSignalCache[PROP_STRATEGY_COUNT];
+datetime propSignalCacheBar = 0;
+
+int atrHandle = INVALID_HANDLE;
+datetime lastBarTime = 0;
+bool eaStopped = false;
+string stopReason = "";
+
+struct SignalAuditEntry
+{
+   datetime time;
+   string direction;
+   string reason;
+   bool executed;
+   string details;
+};
+
+SignalAuditEntry signalHistory[5];
+int signalHistoryCount = 0;
+bool dashboardCreated = false;
+
+struct StrategySignal
+{
+   int buyVotes;
+   int sellVotes;
+   string details;
+};
+
+int OnInit()
+{
+   trade.SetExpertMagicNumber(MagicNumber);
+   trade.SetDeviationInPoints(SlippagePoints);
+
+   atrHandle = iATR(_Symbol, _Period, AtrPeriod);
+   if(atrHandle == INVALID_HANDLE)
+   {
+      LogEvent("INIT_ERROR", "Failed to create ATR handle");
+      return INIT_FAILED;
+   }
+
+   int selectedStrategyId = (int)SelectedStrategy;
+   if(selectedStrategyId < 1 || selectedStrategyId > 100)
+   {
+      LogEvent("INIT_ERROR", "SelectedStrategy must be between 1 and 100");
+      return INIT_PARAMETERS_INCORRECT;
+   }
+
+   if(MaxOpenPositions < 1)
+   {
+      LogEvent("INIT_ERROR", "MaxOpenPositions must be at least 1");
+      return INIT_PARAMETERS_INCORRECT;
+   }
+
+   EnsureLogHeader();
+   if(EnablePropfirmBacktestMode)
+      InitPropfirmBacktest();
+   EventSetMillisecondTimer(1000);
+   CreateDashboard();
+   UpdateDashboard();
+   LogEvent("INIT", "HundredStrategyEA started on " + _Symbol + " | mode=" + (StrategyMode == STRATEGY_SINGLE ? "SINGLE" : "ALL-100"));
+   return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason)
+{
+   if(EnablePropfirmBacktestMode)
+      ExportPropfirmHtmlReport();
+   if(atrHandle != INVALID_HANDLE)
+      IndicatorRelease(atrHandle);
+   EventKillTimer();
+   DeleteDashboard();
+   LogEvent("DEINIT", "EA stopped. reason=" + IntegerToString(reason));
+}
+
+void OnTimer()
+{
+   UpdateDashboard();
+}
+
+void OnTick()
+{
+   if(eaStopped)
+      return;
+
+   if(EnablePropfirmBacktestMode)
+   {
+      RunPropfirmBacktestTick();
+      return;
+   }
+
+   ManageVirtualDollarExits();
+
+   if(CheckProtectionStops())
+      return;
+
+   if(OneTradePerBar)
+   {
+      datetime currentBar = iTime(_Symbol, _Period, 0);
+      if(currentBar == lastBarTime)
+         return;
+      lastBarTime = currentBar;
+   }
+
+   int openPositions = CountOpenPositions();
+   if(openPositions >= MaxOpenPositions)
+   {
+      LogEvent("SIGNAL_SKIPPED", "MaxOpenPositions reached: " + IntegerToString(openPositions));
+      return;
+   }
+
+   StrategySignal signal;
+   signal.buyVotes = 0;
+   signal.sellVotes = 0;
+   signal.details = "";
+   EvaluateStrategies(signal);
+
+    int direction = 0;
+    if(signal.buyVotes >= MinVotesToTrade && signal.buyVotes > signal.sellVotes)
+       direction = ORDER_TYPE_BUY;
+    else if(signal.sellVotes >= MinVotesToTrade && signal.sellVotes > signal.buyVotes)
+       direction = ORDER_TYPE_SELL;
+    else
+    {
+       LogEvent("NO_TRADE", "buyVotes=" + IntegerToString(signal.buyVotes) + ", sellVotes=" + IntegerToString(signal.sellVotes));
+       return;
+    }
+
+    if(ReverseSignals)
+       direction = (direction == ORDER_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+
+    if((AllowedDirection == SIGNAL_BUY_ONLY && direction == ORDER_TYPE_SELL) ||
+        (AllowedDirection == SIGNAL_SELL_ONLY && direction == ORDER_TYPE_BUY))
+   {
+      string skipReason = "Direction blocked by AllowedDirection";
+      LogEvent("SIGNAL_SKIPPED", skipReason);
+      RecordSignalAudit(DirectionText(direction), skipReason, false, signal.details);
+      UpdateDashboard();
+      return;
+   }
+
+   bool tradeOpened = OpenTrade(direction, signal);
+   RecordSignalAudit(DirectionText(direction), tradeOpened ? "OPENED" : "FAILED", tradeOpened, signal.details);
+   UpdateDashboard();
+}
+
+void EvaluateStrategies(StrategySignal &signal)
+{
+   if(StrategyMode == STRATEGY_SINGLE)
+   {
+      EvaluateStrategy((int)SelectedStrategy, signal);
+      return;
+   }
+
+   for(int id = 1; id <= 100; id++)
+      EvaluateStrategy(id, signal);
+}
+
+void EvaluateStrategy(const int id, StrategySignal &signal)
+{
+   int family = (id - 1) / 10;
+   int variant = (id - 1) % 10;
+   int fast = 5 + variant * 2;
+   int slow = 20 + variant * 5;
+   int lookback = 10 + variant * 3;
+   double threshold = 0.2 + variant * 0.1;
+
+   int result = 0;
+   switch(family)
+   {
+      case 0: result = MaTrendSignal(fast, slow); break;
+      case 1: result = RsiSignal(7 + variant * 2, 30.0 + variant, 70.0 - variant); break;
+      case 2: result = BreakoutSignal(lookback); break;
+      case 3: result = BollingerSignal(14 + variant, 1.5 + variant * 0.15); break;
+      case 4: result = MacdSignal(8 + variant, 21 + variant * 2, 5 + variant); break;
+      case 5: result = StochasticSignal(5 + variant, 3, 3, 20 + variant, 80 - variant); break;
+      case 6: result = CciSignal(14 + variant * 2, 100 + variant * 10); break;
+      case 7: result = MomentumSignal(10 + variant, threshold); break;
+      case 8: result = AtrChannelSignal(14 + variant, 1.0 + variant * 0.12); break;
+      case 9: result = PriceActionSignal(lookback); break;
+   }
+
+   if(result > 0)
+   {
+      signal.buyVotes++;
+      signal.details += StrategyName(id) + "=BUY;";
+   }
+   else if(result < 0)
+   {
+      signal.sellVotes++;
+      signal.details += StrategyName(id) + "=SELL;";
+   }
+}
+
+string StrategyName(const int id)
+{
+   switch(id)
+   {
+      case 1: return "001_EMA_SCALP_CROSS";
+      case 2: return "002_EMA_FAST_PULLBACK";
+      case 3: return "003_EMA_SWING_CROSS";
+      case 4: return "004_EMA_TREND_RIDER";
+      case 5: return "005_EMA_MOMENTUM_SHIFT";
+      case 6: return "006_EMA_DEEP_PULLBACK";
+      case 7: return "007_EMA_SESSION_TREND";
+      case 8: return "008_EMA_BREAK_TREND";
+      case 9: return "009_EMA_POSITION_SWING";
+      case 10: return "010_EMA_MAJOR_TREND";
+      case 11: return "011_RSI_SNAPBACK_FAST";
+      case 12: return "012_RSI_OVERSOLD_RECOVERY";
+      case 13: return "013_RSI_BALANCE_REVERSION";
+      case 14: return "014_RSI_SWING_REBOUND";
+      case 15: return "015_RSI_TREND_REENTRY";
+      case 16: return "016_RSI_DEEP_REVERSAL";
+      case 17: return "017_RSI_SOFT_EXTREME";
+      case 18: return "018_RSI_SHARP_EXTREME";
+      case 19: return "019_RSI_RANGE_FADE";
+      case 20: return "020_RSI_EXHAUSTION_TURN";
+      case 21: return "021_BREAKOUT_MICRO_RANGE";
+      case 22: return "022_BREAKOUT_SHORT_RANGE";
+      case 23: return "023_BREAKOUT_INTRADAY_RANGE";
+      case 24: return "024_BREAKOUT_SWING_RANGE";
+      case 25: return "025_BREAKOUT_EXPANSION";
+      case 26: return "026_BREAKOUT_TREND_CONTINUE";
+      case 27: return "027_BREAKOUT_VOLATILITY_PUSH";
+      case 28: return "028_BREAKOUT_STRUCTURE_BREAK";
+      case 29: return "029_BREAKOUT_POSITION_RANGE";
+      case 30: return "030_BREAKOUT_MAJOR_RANGE";
+      case 31: return "031_BB_LOWER_RECLAIM";
+      case 32: return "032_BB_MEAN_REVERSION";
+      case 33: return "033_BB_VOLATILITY_FADE";
+      case 34: return "034_BB_SWING_REVERT";
+      case 35: return "035_BB_BALANCED_BOUNCE";
+      case 36: return "036_BB_DEEP_BAND_REJECT";
+      case 37: return "037_BB_SOFT_BAND_REJECT";
+      case 38: return "038_BB_TREND_PULLBACK";
+      case 39: return "039_BB_POSITION_BOUNCE";
+      case 40: return "040_BB_EXTREME_REVERSION";
+      case 41: return "041_MACD_FAST_FLIP";
+      case 42: return "042_MACD_SCALP_CROSS";
+      case 43: return "043_MACD_TREND_SHIFT";
+      case 44: return "044_MACD_SWING_CROSS";
+      case 45: return "045_MACD_MOMENTUM_BUILD";
+      case 46: return "046_MACD_DEEP_TREND";
+      case 47: return "047_MACD_BALANCED_SIGNAL";
+      case 48: return "048_MACD_SLOW_REVERSAL";
+      case 49: return "049_MACD_POSITION_SHIFT";
+      case 50: return "050_MACD_MAJOR_CYCLE";
+      case 51: return "051_STOCH_FAST_TURN";
+      case 52: return "052_STOCH_OVERSOLD_CROSS";
+      case 53: return "053_STOCH_RANGE_RECOVERY";
+      case 54: return "054_STOCH_SWING_TURN";
+      case 55: return "055_STOCH_TREND_REENTRY";
+      case 56: return "056_STOCH_DEEP_CYCLE";
+      case 57: return "057_STOCH_SOFT_REVERSAL";
+      case 58: return "058_STOCH_SHARP_REVERSAL";
+      case 59: return "059_STOCH_POSITION_CYCLE";
+      case 60: return "060_STOCH_MAJOR_TURN";
+      case 61: return "061_CCI_FAST_RECLAIM";
+      case 62: return "062_CCI_OVERSOLD_REBOUND";
+      case 63: return "063_CCI_RANGE_REVERSION";
+      case 64: return "064_CCI_SWING_RECLAIM";
+      case 65: return "065_CCI_TREND_REENTRY";
+      case 66: return "066_CCI_DEEP_EXTREME";
+      case 67: return "067_CCI_SOFT_EXTREME";
+      case 68: return "068_CCI_SHARP_EXTREME";
+      case 69: return "069_CCI_POSITION_REVERT";
+      case 70: return "070_CCI_MAJOR_REVERSAL";
+      case 71: return "071_MOMENTUM_FAST_PUSH";
+      case 72: return "072_MOMENTUM_SCALP_BURST";
+      case 73: return "073_MOMENTUM_TREND_CONFIRM";
+      case 74: return "074_MOMENTUM_SWING_PUSH";
+      case 75: return "075_MOMENTUM_EXPANSION";
+      case 76: return "076_MOMENTUM_CONTINUATION";
+      case 77: return "077_MOMENTUM_VOLATILITY_BURST";
+      case 78: return "078_MOMENTUM_STRUCTURE_PUSH";
+      case 79: return "079_MOMENTUM_POSITION_PUSH";
+      case 80: return "080_MOMENTUM_MAJOR_PUSH";
+      case 81: return "081_ATR_CHANNEL_FAST_BREAK";
+      case 82: return "082_ATR_CHANNEL_SCALP_BREAK";
+      case 83: return "083_ATR_CHANNEL_TREND_BREAK";
+      case 84: return "084_ATR_CHANNEL_SWING_BREAK";
+      case 85: return "085_ATR_CHANNEL_EXPANSION";
+      case 86: return "086_ATR_CHANNEL_CONTINUE";
+      case 87: return "087_ATR_CHANNEL_VOLATILE";
+      case 88: return "088_ATR_CHANNEL_STRUCTURE";
+      case 89: return "089_ATR_CHANNEL_POSITION";
+      case 90: return "090_ATR_CHANNEL_MAJOR";
+      case 91: return "091_PRICE_ACTION_MICRO_ENGULF";
+      case 92: return "092_PRICE_ACTION_SHORT_BREAK";
+      case 93: return "093_PRICE_ACTION_INTRADAY_PUSH";
+      case 94: return "094_PRICE_ACTION_SWING_CANDLE";
+      case 95: return "095_PRICE_ACTION_RANGE_BREAK";
+      case 96: return "096_PRICE_ACTION_TREND_CANDLE";
+      case 97: return "097_PRICE_ACTION_VOLATILE_BAR";
+      case 98: return "098_PRICE_ACTION_STRUCTURE_BAR";
+      case 99: return "099_PRICE_ACTION_POSITION_BAR";
+      case 100: return "100_PRICE_ACTION_MAJOR_BAR";
+   }
+   return "UNKNOWN_STRATEGY";
+}
+
+int MaTrendSignal(const int fast, const int slow)
+{
+   double f1 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double f2 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 2);
+   double s1 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double s2 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 2);
+   if(f2 <= s2 && f1 > s1) return 1;
+   if(f2 >= s2 && f1 < s1) return -1;
+   return 0;
+}
+
+int RsiSignal(const int period, const double low, const double high)
+{
+   double r1 = IndicatorValue(iRSI(_Symbol, _Period, period, PRICE_CLOSE), 1);
+   double r2 = IndicatorValue(iRSI(_Symbol, _Period, period, PRICE_CLOSE), 2);
+   if(r2 < low && r1 >= low) return 1;
+   if(r2 > high && r1 <= high) return -1;
+   return 0;
+}
+
+int BreakoutSignal(const int lookback)
+{
+   int hi = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
+   int lo = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
+   if(hi < 0 || lo < 0) return 0;
+   double close1 = iClose(_Symbol, _Period, 1);
+   if(close1 > iHigh(_Symbol, _Period, hi)) return 1;
+   if(close1 < iLow(_Symbol, _Period, lo)) return -1;
+   return 0;
+}
+
+int BollingerSignal(const int period, const double deviation)
+{
+   int handle = iBands(_Symbol, _Period, period, 0, deviation, PRICE_CLOSE);
+   double upper = BufferValue(handle, 1, 1);
+   double lower = BufferValue(handle, 2, 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   if(close2 < lower && close1 > lower) return 1;
+   if(close2 > upper && close1 < upper) return -1;
+   return 0;
+}
+
+int MacdSignal(const int fast, const int slow, const int signalPeriod)
+{
+   int handle = iMACD(_Symbol, _Period, fast, slow, signalPeriod, PRICE_CLOSE);
+   double main1 = BufferValue(handle, 0, 1);
+   double sig1 = BufferValue(handle, 1, 1);
+   double main2 = BufferValue(handle, 0, 2);
+   double sig2 = BufferValue(handle, 1, 2);
+   if(main2 <= sig2 && main1 > sig1) return 1;
+   if(main2 >= sig2 && main1 < sig1) return -1;
+   return 0;
+}
+
+int StochasticSignal(const int k, const int d, const int slowing, const double low, const double high)
+{
+   int handle = iStochastic(_Symbol, _Period, k, d, slowing, MODE_SMA, STO_LOWHIGH);
+   double k1 = BufferValue(handle, 0, 1);
+   double d1 = BufferValue(handle, 1, 1);
+   double k2 = BufferValue(handle, 0, 2);
+   double d2 = BufferValue(handle, 1, 2);
+   if(k2 <= d2 && k1 > d1 && k1 < low) return 1;
+   if(k2 >= d2 && k1 < d1 && k1 > high) return -1;
+   return 0;
+}
+
+int CciSignal(const int period, const double level)
+{
+   double c1 = IndicatorValue(iCCI(_Symbol, _Period, period, PRICE_TYPICAL), 1);
+   double c2 = IndicatorValue(iCCI(_Symbol, _Period, period, PRICE_TYPICAL), 2);
+   if(c2 < -level && c1 >= -level) return 1;
+   if(c2 > level && c1 <= level) return -1;
+   return 0;
+}
+
+int MomentumSignal(const int period, const double threshold)
+{
+   double m1 = IndicatorValue(iMomentum(_Symbol, _Period, period, PRICE_CLOSE), 1);
+   double m2 = IndicatorValue(iMomentum(_Symbol, _Period, period, PRICE_CLOSE), 2);
+   if(m2 <= 100.0 + threshold && m1 > 100.0 + threshold) return 1;
+   if(m2 >= 100.0 - threshold && m1 < 100.0 - threshold) return -1;
+   return 0;
+}
+
+int AtrChannelSignal(const int period, const double multiplier)
+{
+   double atr = IndicatorValue(iATR(_Symbol, _Period, period), 1);
+   double ma = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_SMA, PRICE_CLOSE), 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   if(close1 > ma + atr * multiplier) return 1;
+   if(close1 < ma - atr * multiplier) return -1;
+   return 0;
+}
+
+int PriceActionSignal(const int lookback)
+{
+   double close1 = iClose(_Symbol, _Period, 1);
+   double open1 = iOpen(_Symbol, _Period, 1);
+   double high2 = iHigh(_Symbol, _Period, 2);
+   double low2 = iLow(_Symbol, _Period, 2);
+   double rangeAvg = AverageRange(lookback);
+   if(close1 > open1 && close1 > high2 && (close1 - open1) > rangeAvg * 0.35) return 1;
+   if(close1 < open1 && close1 < low2 && (open1 - close1) > rangeAvg * 0.35) return -1;
+   return 0;
+}
+
+double IndicatorValue(const int handle, const int shift)
+{
+   return BufferValue(handle, 0, shift);
+}
+
+double BufferValue(const int handle, const int buffer, const int shift)
+{
+   if(handle == INVALID_HANDLE)
+      return 0.0;
+   double values[];
+   ArraySetAsSeries(values, true);
+   if(CopyBuffer(handle, buffer, shift, 1, values) != 1)
+   {
+      IndicatorRelease(handle);
+      return 0.0;
+   }
+   IndicatorRelease(handle);
+   return values[0];
+}
+
+double AverageRange(const int lookback)
+{
+   double sum = 0.0;
+   int count = 0;
+   for(int i = 1; i <= lookback; i++)
+   {
+      double high = iHigh(_Symbol, _Period, i);
+      double low = iLow(_Symbol, _Period, i);
+      if(high > 0 && low > 0)
+      {
+         sum += high - low;
+         count++;
+      }
+   }
+   return count > 0 ? sum / count : 0.0;
+}
+
+bool OpenTrade(const int orderType, const StrategySignal &signal)
+{
+   double entry = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   bool useBrokerStops = PlaceBrokerStopLossTakeProfit && !(EnableVirtualDollarExit && DisableBrokerStopsWhenVirtualExitOn);
+   double slDistance = 0.0;
+   double tpDistance = 0.0;
+
+    if(useBrokerStops)
+    {
+       slDistance = StopDistance(StopLossMode, true);
+       tpDistance = StopDistance(TakeProfitMode, false);
+       if(slDistance <= 0.0 || tpDistance <= 0.0)
+       {
+          LogEvent("TRADE_SKIPPED", "Invalid SL/TP distance");
+          return false;
+       }
+       if(ReverseSignals)
+       {
+          double tmp = slDistance;
+          slDistance = tpDistance;
+          tpDistance = tmp;
+       }
+    }
+    else if(!EnableVirtualDollarExit)
+    {
+       slDistance = StopDistance(StopLossMode, true);
+       if(slDistance <= 0.0)
+       {
+          LogEvent("TRADE_SKIPPED", "Invalid risk distance for lot sizing while broker stops are disabled");
+          return false;
+       }
+       if(ReverseSignals)
+          slDistance = StopDistance(TakeProfitMode, false);
+    }
+
+    double lots = CalculateLot(slDistance);
+    if(lots <= 0.0)
+    {
+       LogEvent("TRADE_SKIPPED", "Calculated lot is zero");
+       return false;
+    }
+
+    double sl = 0.0;
+    double tp = 0.0;
+    if(useBrokerStops)
+    {
+       sl = (orderType == ORDER_TYPE_BUY) ? entry - slDistance : entry + slDistance;
+       tp = (orderType == ORDER_TYPE_BUY) ? entry + tpDistance : entry - tpDistance;
+       sl = NormalizeDouble(sl, _Digits);
+       tp = NormalizeDouble(tp, _Digits);
+    }
+
+    string comment = "H100 Sigs B" + IntegerToString(signal.buyVotes) + " S" + IntegerToString(signal.sellVotes);
+    if(ReverseSignals)
+       comment += " REV";
+    bool ok = false;
+    if(orderType == ORDER_TYPE_BUY)
+       ok = trade.Buy(lots, _Symbol, 0.0, sl, tp, comment);
+    else
+       ok = trade.Sell(lots, _Symbol, 0.0, sl, tp, comment);
+
+    string message = StringFormat("type=%s,lots=%.2f,entry=%.5f,sl=%.5f,tp=%.5f,brokerStops=%s,virtualExit=%s,virtualTP=%.2f,virtualSL=%.2f,buyVotes=%d,sellVotes=%d,reversed=%s,strategies=%s,retcode=%d",
+                                  orderType == ORDER_TYPE_BUY ? "BUY" : "SELL", lots, entry, sl, tp,
+                                  useBrokerStops ? "true" : "false", EnableVirtualDollarExit ? "true" : "false",
+                                  VirtualTakeProfitMoney, VirtualStopLossMoney,
+                                  signal.buyVotes, signal.sellVotes, ReverseSignals ? "true" : "false", signal.details, trade.ResultRetcode());
+   LogEvent(ok ? "TRADE_OPENED" : "TRADE_FAILED", message);
+   return ok;
+}
+
+double StopDistance(const ENUM_STOP_MODE mode, const bool isStopLoss)
+{
+   if(mode == STOP_ATR_MULTIPLIER)
+   {
+      double atr = CurrentAtr();
+      return atr * (isStopLoss ? SlAtrMultiplier : TpAtrMultiplier);
+   }
+
+   if(mode == STOP_FIXED_POINTS)
+      return (isStopLoss ? FixedSlPoints : FixedTpPoints) * _Point;
+
+   double money = isStopLoss ? SlMoney : TpMoney;
+   double lot = MathMax(FixedLot, SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
+   return MoneyToPriceDistance(money, lot);
+}
+
+double CurrentAtr()
+{
+   double values[];
+   ArraySetAsSeries(values, true);
+   if(CopyBuffer(atrHandle, 0, 1, 1, values) != 1)
+      return 0.0;
+   return values[0];
+}
+
+double CalculateLot(const double slDistance)
+{
+   if(EnableVirtualDollarExit)
+      return NormalizeLot(VirtualExitLot);
+
+   if(LotMode == LOT_FIXED)
+      return NormalizeLot(FixedLot);
+
+   double base = (LotMode == LOT_RISK_STARTING_BALANCE) ? CustomStartingBalance : AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskMoney = base * RiskPerTradePercent / 100.0;
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tickValue <= 0.0 || tickSize <= 0.0 || slDistance <= 0.0)
+      return 0.0;
+
+   double lossPerLot = (slDistance / tickSize) * tickValue;
+   if(lossPerLot <= 0.0)
+      return 0.0;
+
+   return NormalizeLot(riskMoney / lossPerLot);
+}
+
+double MoneyToPriceDistance(const double money, const double lots)
+{
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(money <= 0.0 || lots <= 0.0 || tickValue <= 0.0 || tickSize <= 0.0)
+      return 0.0;
+   return (money / (tickValue * lots)) * tickSize;
+}
+
+double NormalizeLot(const double rawLot)
+{
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = MathMin(SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX), MaxLot);
+   double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   if(step <= 0.0)
+      step = 0.01;
+
+   double lot = MathMax(minLot, MathMin(maxLot, rawLot));
+   lot = MathFloor(lot / step) * step;
+   return NormalizeDouble(lot, 2);
+}
+
+int CountOpenPositions()
+{
+   int count = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == (long)MagicNumber)
+         count++;
+   }
+   return count;
+}
+
+double EaFloatingProfit()
+{
+   double profit = 0.0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == (long)MagicNumber)
+         profit += PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+   }
+   return profit;
+}
+
+void ManageVirtualDollarExits()
+{
+   if(!EnableVirtualDollarExit)
+      return;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != (long)MagicNumber)
+         continue;
+
+      double positionProfit = PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);
+      bool takeProfitHit = VirtualTakeProfitMoney > 0.0 && positionProfit >= VirtualTakeProfitMoney;
+      bool stopLossHit = VirtualStopLossMoney > 0.0 && positionProfit <= -VirtualStopLossMoney;
+      if(!takeProfitHit && !stopLossHit)
+         continue;
+
+      string reason = takeProfitHit ? "virtual dollar take profit hit" : "virtual dollar stop loss hit";
+      bool ok = trade.PositionClose(ticket);
+      LogEvent(ok ? "VIRTUAL_EXIT_CLOSED" : "VIRTUAL_EXIT_CLOSE_FAILED",
+               StringFormat("ticket=%I64u,profit=%.2f,reason=%s,retcode=%d", ticket, positionProfit, reason, trade.ResultRetcode()));
+   }
+}
+
+bool CheckProtectionStops()
+{
+   if(!EnableProtectionStops)
+      return false;
+
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double floating = EaFloatingProfit();
+   double pnlFromReference = (balance - CustomStartingBalance) + floating;
+   double drawdown = MathMax(0.0, CustomStartingBalance - equity);
+
+   if(StopProfitMoney > 0.0 && pnlFromReference >= StopProfitMoney)
+      return StopEa("Profit money target hit");
+   if(StopLossMoney > 0.0 && pnlFromReference <= -StopLossMoney)
+      return StopEa("Loss money limit hit");
+   if(StopDrawdownMoney > 0.0 && drawdown >= StopDrawdownMoney)
+      return StopEa("Drawdown money limit hit");
+   if(StopProfitPercentOfStart > 0.0 && pnlFromReference >= CustomStartingBalance * StopProfitPercentOfStart / 100.0)
+      return StopEa("Profit percent target hit");
+   if(StopLossPercentOfStart > 0.0 && pnlFromReference <= -CustomStartingBalance * StopLossPercentOfStart / 100.0)
+      return StopEa("Loss percent limit hit");
+   if(StopDrawdownPercentOfStart > 0.0 && drawdown >= CustomStartingBalance * StopDrawdownPercentOfStart / 100.0)
+      return StopEa("Drawdown percent limit hit");
+
+   return false;
+}
+
+bool StopEa(const string reason)
+{
+   eaStopped = true;
+   stopReason = reason;
+   LogEvent("EA_STOPPED", reason);
+   if(ClosePositionsWhenProtectionHit)
+      CloseAllEaPositions();
+   return true;
+}
+
+void CloseAllEaPositions()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == (long)MagicNumber)
+      {
+         bool ok = trade.PositionClose(ticket);
+         LogEvent(ok ? "POSITION_CLOSED" : "POSITION_CLOSE_FAILED", "ticket=" + IntegerToString((int)ticket) + ",retcode=" + IntegerToString((int)trade.ResultRetcode()));
+      }
+   }
+}
+
+void InitPropfirmBacktest()
+{
+   propCurrentDayReset = PropCurrentResetTime(TimeCurrent());
+   if(PropRollingStartMode)
+   {
+      ArrayResize(propRuns, 0);
+      propLastResumeSpawn = 0;
+      propSignalCacheBar = 0;
+      LogEvent("PROP_INIT", "Rolling spawn mode enabled (" + PropSpawnIntervalLabel() + "). Real orders disabled; spawning fresh runs per strategy during the active window (pause/close hours skipped).");
+      return;
+   }
+   for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+   {
+      propResults[i].name = StrategyName(i + 1);
+      propResults[i].breached = false;
+      propResults[i].passed = false;
+      propResults[i].started = TimeCurrent();
+      propResults[i].ended = 0;
+      propResults[i].balance = PropStartingBalance;
+      propResults[i].equity = PropStartingBalance;
+      propResults[i].dayStartReference = PropStartingBalance;
+      propResults[i].maxDrawdown = 0.0;
+      propResults[i].maxProfit = 0.0;
+      propResults[i].daysToTarget = 0;
+      propResults[i].daysToBreach = 0;
+      propResults[i].equityProtectionTriggers = 0;
+      propResults[i].trades = 0;
+      propResults[i].wins = 0;
+      propResults[i].losses = 0;
+      propResults[i].breakevenTrades = 0;
+      propResults[i].startingBalance = PropStartingBalance;
+      propResults[i].grossProfit = 0.0;
+      propResults[i].grossLoss = 0.0;
+      propResults[i].protectionTriggeredToday = false;
+      propResults[i].breachReason = "";
+      propResults[i].pos.open = false;
+   }
+   LogEvent("PROP_INIT", "Single-run mode enabled. Real orders disabled; testing all 100 strategies virtually.");
+}
+
+void RunPropfirmBacktestTick()
+{
+   if(PropRollingStartMode)
+   {
+      RunPropfirmRollingTick();
+      return;
+   }
+
+   datetime now = TimeCurrent();
+   while(now >= propCurrentDayReset + 86400)
+   {
+      propCurrentDayReset += 86400;
+      PropResetDailyReferences();
+   }
+
+   if(PropIsCloseTime(now))
+      PropCloseAllVirtualPositions();
+
+   PropUpdateOpenPositions();
+   PropCheckRules();
+
+   if(OneTradePerBar)
+   {
+      datetime currentBar = iTime(_Symbol, _Period, 0);
+      if(currentBar == lastBarTime)
+         return;
+      lastBarTime = currentBar;
+   }
+
+   if(PropSignalsPaused(now))
+      return;
+
+   for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
+   {
+      int index = id - 1;
+      if(propResults[index].breached || propResults[index].passed || propResults[index].pos.open)
+         continue;
+      if(propResults[index].protectionTriggeredToday)
+         continue;
+
+      StrategySignal signal;
+      signal.buyVotes = 0;
+      signal.sellVotes = 0;
+      signal.details = "";
+      EvaluateStrategy(id, signal);
+
+      int direction = 0;
+      if(signal.buyVotes > 0)
+         direction = ORDER_TYPE_BUY;
+      else if(signal.sellVotes > 0)
+         direction = ORDER_TYPE_SELL;
+
+      if(direction == 0)
+         continue;
+      if(ReverseSignals)
+         direction = (direction == ORDER_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+      if((AllowedDirection == SIGNAL_BUY_ONLY && direction == ORDER_TYPE_SELL) ||
+         (AllowedDirection == SIGNAL_SELL_ONLY && direction == ORDER_TYPE_BUY))
+         continue;
+
+      PropOpenVirtualPosition(index, direction, now);
+   }
+}
+
+void PropOpenVirtualPosition(const int index, const int type, const datetime now)
+{
+   propResults[index].pos.open = true;
+   propResults[index].pos.type = type;
+   propResults[index].pos.entry = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   propResults[index].pos.lot = VirtualExitLot;
+   propResults[index].pos.openTime = now;
+   propResults[index].trades++;
+}
+
+void PropUpdateOpenPositions()
+{
+   for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+   {
+      if(propResults[i].breached || propResults[i].passed)
+         continue;
+
+      if(propResults[i].pos.open)
+      {
+         double profit = PropPositionProfit(i);
+         if(VirtualTakeProfitMoney > 0.0 && profit >= VirtualTakeProfitMoney)
+            PropCloseVirtualPosition(i);
+         else if(VirtualStopLossMoney > 0.0 && profit <= -VirtualStopLossMoney)
+            PropCloseVirtualPosition(i);
+      }
+
+      propResults[i].equity = propResults[i].balance + (propResults[i].pos.open ? PropPositionProfit(i) : 0.0);
+      propResults[i].maxDrawdown = MathMax(propResults[i].maxDrawdown, PropStartingBalance - propResults[i].equity);
+      propResults[i].maxProfit = MathMax(propResults[i].maxProfit, propResults[i].equity - PropStartingBalance);
+   }
+}
+
+double PropPositionProfit(const int index)
+{
+   if(!propResults[index].pos.open)
+      return 0.0;
+
+   int type = propResults[index].pos.type;
+   double price = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double diff = (type == ORDER_TYPE_BUY) ? price - propResults[index].pos.entry : propResults[index].pos.entry - price;
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tickValue <= 0.0 || tickSize <= 0.0)
+      return 0.0;
+   return diff / tickSize * tickValue * propResults[index].pos.lot;
+}
+
+void PropCloseVirtualPosition(const int index)
+{
+   if(!propResults[index].pos.open)
+      return;
+   double profit = PropPositionProfit(index);
+   propResults[index].balance += profit;
+   propResults[index].equity = propResults[index].balance;
+   if(profit > 0.0)
+   {
+      propResults[index].wins++;
+      propResults[index].grossProfit += profit;
+   }
+   else if(profit < 0.0)
+   {
+      propResults[index].losses++;
+      propResults[index].grossLoss += profit;
+   }
+   else
+      propResults[index].breakevenTrades++;
+   propResults[index].pos.open = false;
+}
+
+void PropCloseAllVirtualPositions()
+{
+   for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+      PropCloseVirtualPosition(i);
+}
+
+void PropResetDailyReferences()
+{
+   for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+   {
+      propResults[i].dayStartReference = propResults[i].balance;
+      propResults[i].protectionTriggeredToday = false;
+   }
+}
+
+void PropCheckRules()
+{
+   datetime now = TimeCurrent();
+   for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+   {
+      if(propResults[i].breached || propResults[i].passed)
+         continue;
+
+      double totalDrawdown = PropStartingBalance - propResults[i].equity;
+      double dailyDrawdown = propResults[i].dayStartReference - propResults[i].equity;
+      double targetMoney = PropStartingBalance * PropProfitTargetPercent / 100.0;
+      double maxDrawdownMoney = PropStartingBalance * PropMaxTotalDrawdownPercent / 100.0;
+      double protectedDailyPercent = MathMax(0.0, PropDailyDrawdownPercent - PropDailyProtectionBufferPercent);
+      double dailyProtectionMoney = propResults[i].dayStartReference * protectedDailyPercent / 100.0;
+      double dailyBreachMoney = propResults[i].dayStartReference * PropDailyDrawdownPercent / 100.0;
+
+      if(dailyProtectionMoney > 0.0 && dailyDrawdown >= dailyProtectionMoney && propResults[i].pos.open && !propResults[i].protectionTriggeredToday)
+      {
+         propResults[i].equityProtectionTriggers++;
+         propResults[i].protectionTriggeredToday = true;
+         PropCloseVirtualPosition(i);
+      }
+
+      if(propResults[i].equity - PropStartingBalance >= targetMoney)
+      {
+         propResults[i].passed = true;
+         propResults[i].ended = now;
+         propResults[i].daysToTarget = (int)((now - propResults[i].started) / 86400) + 1;
+         propResults[i].breachReason = "Target hit";
+         PropCloseVirtualPosition(i);
+      }
+      else if(totalDrawdown >= maxDrawdownMoney || dailyDrawdown >= dailyBreachMoney)
+      {
+         propResults[i].breached = true;
+         propResults[i].ended = now;
+         propResults[i].daysToBreach = (int)((now - propResults[i].started) / 86400) + 1;
+         if(totalDrawdown >= maxDrawdownMoney && dailyDrawdown >= dailyBreachMoney)
+            propResults[i].breachReason = "Total + Daily DD";
+         else if(totalDrawdown >= maxDrawdownMoney)
+            propResults[i].breachReason = "Total DD";
+         else
+            propResults[i].breachReason = "Daily DD";
+         PropCloseVirtualPosition(i);
+      }
+   }
+}
+
+bool PropSignalsPaused(const datetime t)
+{
+   int minuteOfDay = PropMinuteOfDay(t);
+   int pauseMinute = PropPauseSignalsHourUTC * 60 + PropPauseSignalsMinuteUTC;
+   int resumeMinute = PropResumeSignalsHourUTC * 60 + PropResumeSignalsMinuteUTC;
+   if(pauseMinute > resumeMinute)
+      return (minuteOfDay >= pauseMinute || minuteOfDay < resumeMinute);
+   return (minuteOfDay >= pauseMinute && minuteOfDay < resumeMinute);
+}
+
+bool PropIsCloseTime(const datetime t)
+{
+   int minuteOfDay = PropMinuteOfDay(t);
+   int closeMinute = PropCloseAllHourUTC * 60 + PropCloseAllMinuteUTC;
+   int resumeMinute = PropResumeSignalsHourUTC * 60 + PropResumeSignalsMinuteUTC;
+   if(closeMinute > resumeMinute)
+      return (minuteOfDay >= closeMinute || minuteOfDay < resumeMinute);
+   return (minuteOfDay >= closeMinute && minuteOfDay < resumeMinute);
+}
+
+int PropMinuteOfDay(const datetime t)
+{
+   MqlDateTime dt;
+   TimeToStruct(t, dt);
+   return dt.hour * 60 + dt.min;
+}
+
+datetime PropCurrentResetTime(const datetime t)
+{
+   MqlDateTime dt;
+   TimeToStruct(t, dt);
+   dt.hour = PropDailyResetHourUTC;
+   dt.min = PropDailyResetMinuteUTC;
+   dt.sec = 0;
+   datetime reset = StructToTime(dt);
+   if(t < reset)
+      reset -= 86400;
+   return reset;
+}
+
+void RunPropfirmRollingTick()
+{
+   datetime now = TimeCurrent();
+
+   while(now >= propCurrentDayReset + 86400)
+   {
+      propCurrentDayReset += 86400;
+      PropRollingResetDaily();
+   }
+
+   if(PropIsCloseTime(now))
+      PropRollingCloseAll();
+
+   datetime currentBar = iTime(_Symbol, _Period, 0);
+   bool newBar = (currentBar != propSignalCacheBar);
+   if(newBar)
+      propSignalCacheBar = currentBar;
+
+   PropRollingUpdatePositions();
+
+   if(newBar && !PropSignalsPaused(now))
+   {
+      for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
+      {
+         StrategySignal signal;
+         signal.buyVotes = 0;
+         signal.sellVotes = 0;
+         signal.details = "";
+         EvaluateStrategy(id, signal);
+         if(signal.buyVotes > 0)
+            propSignalCache[id - 1] = ORDER_TYPE_BUY;
+         else if(signal.sellVotes > 0)
+            propSignalCache[id - 1] = ORDER_TYPE_SELL;
+         else
+            propSignalCache[id - 1] = 0;
+      }
+   }
+
+   PropRollingCheckRules();
+
+   if(PropRollingShouldSpawn(now))
+      PropRollingSpawnRuns(now);
+
+   if(PropSignalsPaused(now))
+      return;
+
+   if(OneTradePerBar && !newBar)
+      return;
+
+   for(int i = 0; i < ArraySize(propRuns); i++)
+   {
+      if(propRuns[i].breached || propRuns[i].passed || propRuns[i].pos.open)
+         continue;
+      if(propRuns[i].protectionTriggeredToday)
+         continue;
+
+      int dir = propSignalCache[propRuns[i].strategyId - 1];
+      if(dir == 0)
+         continue;
+      if(ReverseSignals)
+         dir = (dir == ORDER_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+      if((AllowedDirection == SIGNAL_BUY_ONLY && dir == ORDER_TYPE_SELL) ||
+         (AllowedDirection == SIGNAL_SELL_ONLY && dir == ORDER_TYPE_BUY))
+         continue;
+
+      PropRollingOpenPosition(i, dir, now);
+   }
+}
+
+bool PropRollingShouldSpawn(const datetime now)
+{
+   if(PropSignalsPaused(now))
+      return false;
+
+   MqlDateTime dt;
+   TimeToStruct(now, dt);
+   dt.hour = PropResumeSignalsHourUTC;
+   dt.min = PropResumeSignalsMinuteUTC;
+   dt.sec = 0;
+   datetime resumeToday = StructToTime(dt);
+
+   if(now < resumeToday)
+      return false;
+
+   if(propLastResumeSpawn >= resumeToday)
+   {
+      int intervalHours = (int)PropSpawnInterval;
+      if(intervalHours <= 0)
+         return false;
+      long intervalSeconds = (long)intervalHours * 3600;
+      if((long)(now - propLastResumeSpawn) < intervalSeconds)
+         return false;
+   }
+
+   if(PropMaxStartDays > 0)
+   {
+      int totalBatches = ArraySize(propRuns) / PROP_STRATEGY_COUNT;
+      if(totalBatches >= PropMaxStartDays)
+         return false;
+   }
+
+   return true;
+}
+
+void PropRollingSpawnRuns(const datetime now)
+{
+   int oldSize = ArraySize(propRuns);
+   ArrayResize(propRuns, oldSize + PROP_STRATEGY_COUNT);
+   datetime dayReset = PropCurrentResetTime(now);
+
+   for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+   {
+      int idx = oldSize + i;
+      propRuns[idx].strategyId = i + 1;
+      propRuns[idx].strategyName = StrategyName(i + 1);
+      propRuns[idx].startDay = now;
+      propRuns[idx].ended = 0;
+      propRuns[idx].breached = false;
+      propRuns[idx].passed = false;
+      propRuns[idx].protectionTriggeredToday = false;
+      propRuns[idx].breachReason = "";
+      propRuns[idx].dayReset = dayReset;
+      propRuns[idx].lastTradeBar = 0;
+      propRuns[idx].balance = PropStartingBalance;
+      propRuns[idx].equity = PropStartingBalance;
+      propRuns[idx].dayStartReference = PropStartingBalance;
+      propRuns[idx].startingBalance = PropStartingBalance;
+      propRuns[idx].maxDrawdown = 0.0;
+      propRuns[idx].maxProfit = 0.0;
+      propRuns[idx].grossProfit = 0.0;
+      propRuns[idx].grossLoss = 0.0;
+      propRuns[idx].daysToTarget = 0;
+      propRuns[idx].daysToBreach = 0;
+      propRuns[idx].equityProtectionTriggers = 0;
+      propRuns[idx].trades = 0;
+      propRuns[idx].wins = 0;
+      propRuns[idx].losses = 0;
+      propRuns[idx].breakevenTrades = 0;
+      propRuns[idx].pos.open = false;
+   }
+
+   propLastResumeSpawn = now;
+   LogEvent("PROP_SPAWN", "Spawned " + IntegerToString(PROP_STRATEGY_COUNT) + " runs at " + TimeToString(now, TIME_DATE | TIME_MINUTES) + ". Total runs: " + IntegerToString(ArraySize(propRuns)));
+}
+
+void PropRollingOpenPosition(const int index, const int type, const datetime now)
+{
+   propRuns[index].pos.open = true;
+   propRuns[index].pos.type = type;
+   propRuns[index].pos.entry = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   propRuns[index].pos.lot = VirtualExitLot;
+   propRuns[index].pos.openTime = now;
+   propRuns[index].trades++;
+}
+
+double PropRollingPositionProfit(const int index)
+{
+   if(!propRuns[index].pos.open)
+      return 0.0;
+   int type = propRuns[index].pos.type;
+   double price = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double diff = (type == ORDER_TYPE_BUY) ? price - propRuns[index].pos.entry : propRuns[index].pos.entry - price;
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tickValue <= 0.0 || tickSize <= 0.0)
+      return 0.0;
+   return diff / tickSize * tickValue * propRuns[index].pos.lot;
+}
+
+void PropRollingCloseVirtualPosition(const int index)
+{
+   if(!propRuns[index].pos.open)
+      return;
+   double profit = PropRollingPositionProfit(index);
+   propRuns[index].balance += profit;
+   propRuns[index].equity = propRuns[index].balance;
+   if(profit > 0.0)
+   {
+      propRuns[index].wins++;
+      propRuns[index].grossProfit += profit;
+   }
+   else if(profit < 0.0)
+   {
+      propRuns[index].losses++;
+      propRuns[index].grossLoss += profit;
+   }
+   else
+      propRuns[index].breakevenTrades++;
+   propRuns[index].pos.open = false;
+}
+
+void PropRollingCloseAll()
+{
+   for(int i = 0; i < ArraySize(propRuns); i++)
+      PropRollingCloseVirtualPosition(i);
+}
+
+void PropRollingUpdatePositions()
+{
+   for(int i = 0; i < ArraySize(propRuns); i++)
+   {
+      if(propRuns[i].breached || propRuns[i].passed)
+         continue;
+
+      if(propRuns[i].pos.open)
+      {
+         double profit = PropRollingPositionProfit(i);
+         if(VirtualTakeProfitMoney > 0.0 && profit >= VirtualTakeProfitMoney)
+            PropRollingCloseVirtualPosition(i);
+         else if(VirtualStopLossMoney > 0.0 && profit <= -VirtualStopLossMoney)
+            PropRollingCloseVirtualPosition(i);
+      }
+
+      propRuns[i].equity = propRuns[i].balance + (propRuns[i].pos.open ? PropRollingPositionProfit(i) : 0.0);
+      propRuns[i].maxDrawdown = MathMax(propRuns[i].maxDrawdown, propRuns[i].startingBalance - propRuns[i].equity);
+      propRuns[i].maxProfit = MathMax(propRuns[i].maxProfit, propRuns[i].equity - propRuns[i].startingBalance);
+   }
+}
+
+void PropRollingCheckRules()
+{
+   datetime now = TimeCurrent();
+   for(int i = 0; i < ArraySize(propRuns); i++)
+   {
+      if(propRuns[i].breached || propRuns[i].passed)
+         continue;
+
+      double totalDrawdown = propRuns[i].startingBalance - propRuns[i].equity;
+      double dailyDrawdown = propRuns[i].dayStartReference - propRuns[i].equity;
+      double targetMoney = propRuns[i].startingBalance * PropProfitTargetPercent / 100.0;
+      double maxDrawdownMoney = propRuns[i].startingBalance * PropMaxTotalDrawdownPercent / 100.0;
+      double protectedDailyPercent = MathMax(0.0, PropDailyDrawdownPercent - PropDailyProtectionBufferPercent);
+      double dailyProtectionMoney = propRuns[i].dayStartReference * protectedDailyPercent / 100.0;
+      double dailyBreachMoney = propRuns[i].dayStartReference * PropDailyDrawdownPercent / 100.0;
+
+      if(dailyProtectionMoney > 0.0 && dailyDrawdown >= dailyProtectionMoney && propRuns[i].pos.open && !propRuns[i].protectionTriggeredToday)
+      {
+         propRuns[i].equityProtectionTriggers++;
+         propRuns[i].protectionTriggeredToday = true;
+         PropRollingCloseVirtualPosition(i);
+      }
+
+      if(propRuns[i].equity - propRuns[i].startingBalance >= targetMoney)
+      {
+         propRuns[i].passed = true;
+         propRuns[i].ended = now;
+         propRuns[i].daysToTarget = (int)((now - propRuns[i].startDay) / 86400) + 1;
+         propRuns[i].breachReason = "Target hit";
+         PropRollingCloseVirtualPosition(i);
+      }
+      else if(totalDrawdown >= maxDrawdownMoney || dailyDrawdown >= dailyBreachMoney)
+      {
+         propRuns[i].breached = true;
+         propRuns[i].ended = now;
+         propRuns[i].daysToBreach = (int)((now - propRuns[i].startDay) / 86400) + 1;
+         if(totalDrawdown >= maxDrawdownMoney && dailyDrawdown >= dailyBreachMoney)
+            propRuns[i].breachReason = "Total + Daily DD";
+         else if(totalDrawdown >= maxDrawdownMoney)
+            propRuns[i].breachReason = "Total DD";
+         else
+            propRuns[i].breachReason = "Daily DD";
+         PropRollingCloseVirtualPosition(i);
+      }
+   }
+}
+
+void PropRollingResetDaily()
+{
+   for(int i = 0; i < ArraySize(propRuns); i++)
+   {
+      if(propRuns[i].breached || propRuns[i].passed)
+         continue;
+      propRuns[i].dayStartReference = propRuns[i].balance;
+      propRuns[i].protectionTriggeredToday = false;
+   }
+}
+
+string PropKv(const string key, const string val)
+{
+   return "<div class=\"kv\"><span class=\"k\">" + key + "</span><span class=\"v\">" + val + "</span></div>\n";
+}
+
+string PropBoolStr(const bool b)
+{
+   return b ? "true" : "false";
+}
+
+string PropSpawnIntervalLabel()
+{
+   int intervalHours = (int)PropSpawnInterval;
+   if(intervalHours <= 0)
+      return "daily at resume time";
+   return "every " + IntegerToString(intervalHours) + "h";
+}
+
+void ExportPropfirmHtmlReport()
+{
+   if(PropRollingStartMode)
+      ExportPropfirmRollingReport();
+   else
+      ExportPropfirmSingleReport();
+}
+
+void ExportPropfirmSingleReport()
+{
+   int passedCount = 0, blownCount = 0, activeCount = 0;
+   long totalTrades = 0;
+   double totalWinRateSum = 0.0;
+   int winRateCount = 0;
+   double bestNetProfit = -DBL_MAX;
+   double worstNetProfit = DBL_MAX;
+   string bestName = "", worstName = "";
+   datetime testStart = 0;
+
+   for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+   {
+      if(propResults[i].passed) passedCount++;
+      else if(propResults[i].breached) blownCount++;
+      else activeCount++;
+
+      totalTrades += propResults[i].trades;
+
+      int closedTrades = propResults[i].wins + propResults[i].losses;
+      if(closedTrades > 0)
+      {
+         totalWinRateSum += (double)propResults[i].wins / (double)closedTrades * 100.0;
+         winRateCount++;
+      }
+
+      double net = propResults[i].balance - propResults[i].startingBalance;
+      if(net > bestNetProfit) { bestNetProfit = net; bestName = propResults[i].name; }
+      if(net < worstNetProfit) { worstNetProfit = net; worstName = propResults[i].name; }
+
+      if(testStart == 0 || propResults[i].started < testStart)
+         testStart = propResults[i].started;
+   }
+
+   double avgWinRate = (winRateCount > 0) ? totalWinRateSum / (double)winRateCount : 0.0;
+   double passRate = (PROP_STRATEGY_COUNT > 0) ? (double)passedCount / (double)PROP_STRATEGY_COUNT * 100.0 : 0.0;
+   datetime testEnd = TimeCurrent();
+
+   PropSortResults();
+
+   int handle = FileOpen(PropHtmlReportFileName, FILE_WRITE | FILE_TXT | FILE_COMMON);
+   if(handle == INVALID_HANDLE)
+   {
+      Print("Failed to export propfirm HTML report. error=", GetLastError());
+      return;
+   }
+
+   PropWriteHtmlHead(handle);
+   PropWriteHeader(handle, "Propfirm 100 Strategy Backtest Report", testEnd);
+
+   FileWriteString(handle, "<div class=\"section\">\n<h2>Run Report - Settings Used For This Run</h2>\n<div class=\"settings-grid\">\n");
+   PropWriteCommonSettings(handle, testStart, testEnd);
+   FileWriteString(handle, PropKv("Rolling Start Mode", PropBoolStr(false)));
+   FileWriteString(handle, PropKv("Total Strategies Tested", IntegerToString(PROP_STRATEGY_COUNT)));
+   FileWriteString(handle, "</div>\n<div class=\"note\">Best performer: <b>" + bestName + "</b> (" + DoubleToString(bestNetProfit, 2) + ") &nbsp;|&nbsp; Worst performer: <b>" + worstName + "</b> (" + DoubleToString(worstNetProfit, 2) + ")</div>\n</div>\n");
+
+   FileWriteString(handle,
+      "<div class=\"section\">\n<h2>Summary Dashboard</h2>\n<div class=\"cards\">\n" +
+      "<div class=\"card pass\"><div class=\"label\">Passed</div><div class=\"value\">" + IntegerToString(passedCount) + "</div><div class=\"sub\">of " + IntegerToString(PROP_STRATEGY_COUNT) + " strategies</div></div>\n" +
+      "<div class=\"card blow\"><div class=\"label\">Blown</div><div class=\"value\">" + IntegerToString(blownCount) + "</div><div class=\"sub\">rule breach</div></div>\n" +
+      "<div class=\"card act\"><div class=\"label\">Active</div><div class=\"value\">" + IntegerToString(activeCount) + "</div><div class=\"sub\">still running</div></div>\n" +
+      "<div class=\"card rate\"><div class=\"label\">Pass Rate</div><div class=\"value\">" + DoubleToString(passRate, 1) + "%</div><div class=\"sub\">target hit</div></div>\n" +
+      "<div class=\"card avg\"><div class=\"label\">Avg Win Rate</div><div class=\"value\">" + DoubleToString(avgWinRate, 1) + "%</div><div class=\"sub\">across closed trades</div></div>\n" +
+      "<div class=\"card tot\"><div class=\"label\">Total Trades</div><div class=\"value\">" + IntegerToString(totalTrades) + "</div><div class=\"sub\">virtual positions</div></div>\n" +
+      "</div>\n</div>\n");
+
+   FileWriteString(handle,
+      "<div class=\"section\">\n<h2>Strategy Results (ranked)</h2>\n" +
+      PropToolbarHtml("results") +
+      "<div class=\"table-scroll\">\n<table id=\"results\">\n<thead><tr>\n" +
+      "<th data-type=\"num\">Rank</th>\n<th data-type=\"str\">Strategy</th>\n<th data-type=\"str\">Status</th>\n" +
+      "<th data-type=\"str\">Reason</th>\n<th data-type=\"num\">Start Bal</th>\n<th data-type=\"num\">End Bal</th>\n" +
+      "<th data-type=\"num\">Net P/L</th>\n<th data-type=\"num\">Win Rate</th>\n<th data-type=\"num\">Wins</th>\n" +
+      "<th data-type=\"num\">Losses</th>\n<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">PF</th>\n" +
+      "<th data-type=\"num\">Max Profit</th>\n<th data-type=\"num\">Max DD</th>\n<th data-type=\"num\">Days->Target</th>\n" +
+      "<th data-type=\"num\">Days->Breach</th>\n<th data-type=\"num\">Eq. Prot</th>\n<th data-type=\"str\">Started</th>\n" +
+      "<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody>\n");
+
+   for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+   {
+      string status = propResults[i].passed ? "pass" : (propResults[i].breached ? "blow" : "act");
+      string badge = propResults[i].passed ? "PASSED" : (propResults[i].breached ? "BLOWN" : "ACTIVE");
+      int closedTrades = propResults[i].wins + propResults[i].losses;
+      double winRate = (closedTrades > 0) ? (double)propResults[i].wins / (double)closedTrades * 100.0 : 0.0;
+      double netProfit = propResults[i].balance - propResults[i].startingBalance;
+      string netClass = (netProfit > 0.0) ? "pos" : ((netProfit < 0.0) ? "neg" : "zero");
+      string netStr = DoubleToString(netProfit, 2);
+      if(netProfit > 0.0) netStr = "+" + netStr;
+      string reason = propResults[i].breachReason;
+      if(reason == "") reason = propResults[i].passed ? "Target hit" : "-";
+
+      string row = "";
+      row += StringFormat("<tr class=\"%s\" data-status=\"%s\">", status, status);
+      row += StringFormat("<td class=\"num\">%d</td>", i + 1);
+      row += StringFormat("<td>%s</td>", propResults[i].name);
+      row += StringFormat("<td><span class=\"badge %s\">%s</span></td>", status, badge);
+      row += StringFormat("<td class=\"reason\">%s</td>", reason);
+      row += StringFormat("<td class=\"num\">%.2f</td>", propResults[i].startingBalance);
+      row += StringFormat("<td class=\"num\">%.2f</td>", propResults[i].balance);
+      row += StringFormat("<td class=\"num %s\">%s</td>", netClass, netStr);
+      if(closedTrades > 0)
+         row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill\" style=\"width:%.1f%%\"></div></div>%.1f%%</td>", winRate, winRate, winRate);
+      else
+         row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+      row += StringFormat("<td class=\"num pos\">%d</td>", propResults[i].wins);
+      row += StringFormat("<td class=\"num neg\">%d</td>", propResults[i].losses);
+      row += StringFormat("<td class=\"num\">%d</td>", propResults[i].trades);
+      if(propResults[i].grossLoss < 0.0)
+         row += StringFormat("<td class=\"num\">%.2f</td>", propResults[i].grossProfit / MathAbs(propResults[i].grossLoss));
+      else
+         row += "<td class=\"num zero\">n/a</td>";
+      row += StringFormat("<td class=\"num pos\">%.2f</td>", propResults[i].maxProfit);
+      row += StringFormat("<td class=\"num neg\">%.2f</td>", propResults[i].maxDrawdown);
+      row += StringFormat("<td class=\"num\">%d</td>", propResults[i].daysToTarget);
+      row += StringFormat("<td class=\"num\">%d</td>", propResults[i].daysToBreach);
+      row += StringFormat("<td class=\"num\">%d</td>", propResults[i].equityProtectionTriggers);
+      row += StringFormat("<td>%s</td>", TimeToString(propResults[i].started, TIME_DATE | TIME_MINUTES));
+      row += StringFormat("<td>%s</td>", propResults[i].ended > 0 ? TimeToString(propResults[i].ended, TIME_DATE | TIME_MINUTES) : "n/a");
+      row += "</tr>\n";
+      FileWriteString(handle, row);
+   }
+
+   FileWriteString(handle, "</tbody>\n</table>\n</div>\n</div>\n");
+   PropWriteFooter(handle, "results");
+   FileWriteString(handle, "</div>\n</body>\n</html>\n");
+   FileClose(handle);
+   Print("Propfirm HTML report exported to Common Files: ", PropHtmlReportFileName);
+}
+
+void ExportPropfirmRollingReport()
+{
+   int totalRuns = ArraySize(propRuns);
+   int aggStarts[100], aggPassed[100], aggBlown[100], aggActive[100];
+   int aggWins[100], aggLosses[100], aggTrades[100], aggDaysToTarget[100];
+   double aggNetSum[100], aggBestNet[100], aggWorstNet[100], aggWinRateSum[100];
+   double aggGrossProfit[100], aggGrossLoss[100];
+   double aggDuration[100];
+   int aggWinRateCount[100];
+   datetime testStart = 0;
+
+   ArrayInitialize(aggStarts, 0);
+   ArrayInitialize(aggPassed, 0);
+   ArrayInitialize(aggBlown, 0);
+   ArrayInitialize(aggActive, 0);
+   ArrayInitialize(aggWins, 0);
+   ArrayInitialize(aggLosses, 0);
+   ArrayInitialize(aggTrades, 0);
+   ArrayInitialize(aggDaysToTarget, 0);
+   ArrayInitialize(aggWinRateSum, 0.0);
+   ArrayInitialize(aggWinRateCount, 0);
+   ArrayInitialize(aggNetSum, 0.0);
+   ArrayInitialize(aggBestNet, -DBL_MAX);
+   ArrayInitialize(aggWorstNet, DBL_MAX);
+   ArrayInitialize(aggGrossProfit, 0.0);
+   ArrayInitialize(aggGrossLoss, 0.0);
+   ArrayInitialize(aggDuration, 0.0);
+
+   datetime testEndTime = TimeCurrent();
+
+   for(int i = 0; i < totalRuns; i++)
+   {
+      int sid = propRuns[i].strategyId - 1;
+      if(sid < 0 || sid >= 100) continue;
+
+      aggStarts[sid]++;
+      if(propRuns[i].passed) aggPassed[sid]++;
+      else if(propRuns[i].breached) aggBlown[sid]++;
+      else aggActive[sid]++;
+
+      aggWins[sid] += propRuns[i].wins;
+      aggLosses[sid] += propRuns[i].losses;
+      aggTrades[sid] += propRuns[i].trades;
+      aggGrossProfit[sid] += propRuns[i].grossProfit;
+      aggGrossLoss[sid] += propRuns[i].grossLoss;
+
+      datetime runEnd = (propRuns[i].ended > 0) ? propRuns[i].ended : testEndTime;
+      double runDays = (double)(runEnd - propRuns[i].startDay) / 86400.0 + 1.0;
+      if(runDays < 1.0) runDays = 1.0;
+      aggDuration[sid] += runDays;
+
+      int closedTrades = propRuns[i].wins + propRuns[i].losses;
+      if(closedTrades > 0)
+      {
+         aggWinRateSum[sid] += (double)propRuns[i].wins / (double)closedTrades * 100.0;
+         aggWinRateCount[sid]++;
+      }
+
+      double net = propRuns[i].balance - propRuns[i].startingBalance;
+      aggNetSum[sid] += net;
+      if(net > aggBestNet[sid]) aggBestNet[sid] = net;
+      if(net < aggWorstNet[sid]) aggWorstNet[sid] = net;
+
+      if(propRuns[i].passed && propRuns[i].daysToTarget > 0)
+         aggDaysToTarget[sid] += propRuns[i].daysToTarget;
+
+      if(testStart == 0 || propRuns[i].startDay < testStart)
+         testStart = propRuns[i].startDay;
+   }
+
+   int sortOrder[100];
+   for(int i = 0; i < 100; i++) sortOrder[i] = i;
+   for(int i = 0; i < 99; i++)
+   {
+      for(int j = i + 1; j < 100; j++)
+      {
+         int a = sortOrder[i], b = sortOrder[j];
+         double rateA = (aggStarts[a] > 0) ? (double)aggPassed[a] / (double)aggStarts[a] : 0.0;
+         double rateB = (aggStarts[b] > 0) ? (double)aggPassed[b] / (double)aggStarts[b] : 0.0;
+         double netA = (aggStarts[a] > 0) ? aggNetSum[a] / (double)aggStarts[a] : 0.0;
+         double netB = (aggStarts[b] > 0) ? aggNetSum[b] / (double)aggStarts[b] : 0.0;
+         bool swap = false;
+         if(rateB > rateA + 0.0001) swap = true;
+         else if(MathAbs(rateB - rateA) <= 0.0001 && netB > netA) swap = true;
+         if(swap) { sortOrder[i] = b; sortOrder[j] = a; }
+      }
+   }
+
+   int totalPassed = 0, totalBlown = 0, totalActive = 0;
+   long grandTotalTrades = 0;
+   string bestStratName = "";
+   double bestStratRate = -1.0;
+   for(int i = 0; i < 100; i++)
+   {
+      totalPassed += aggPassed[i];
+      totalBlown += aggBlown[i];
+      totalActive += aggActive[i];
+      grandTotalTrades += aggTrades[i];
+      double rate = (aggStarts[i] > 0) ? (double)aggPassed[i] / (double)aggStarts[i] * 100.0 : 0.0;
+      if(rate > bestStratRate) { bestStratRate = rate; bestStratName = StrategyName(i + 1); }
+   }
+   double overallPassRate = (totalRuns > 0) ? (double)totalPassed / (double)totalRuns * 100.0 : 0.0;
+   datetime testEnd = TimeCurrent();
+
+   int handle = FileOpen(PropHtmlReportFileName, FILE_WRITE | FILE_TXT | FILE_COMMON);
+   if(handle == INVALID_HANDLE)
+   {
+      Print("Failed to export propfirm HTML report. error=", GetLastError());
+      return;
+   }
+
+   PropWriteHtmlHead(handle);
+   PropWriteHeader(handle, "Propfirm Rolling Backtest Report", testEnd);
+
+   FileWriteString(handle, "<div class=\"section\">\n<h2>Run Report - Settings Used For This Run</h2>\n<div class=\"settings-grid\">\n");
+   PropWriteCommonSettings(handle, testStart, testEnd);
+   FileWriteString(handle, PropKv("Rolling Start Mode", PropBoolStr(true)));
+   FileWriteString(handle, PropKv("Max Spawn Batches", IntegerToString(PropMaxStartDays) + " (0=unlimited)"));
+   FileWriteString(handle, PropKv("Total Strategies", IntegerToString(PROP_STRATEGY_COUNT)));
+   FileWriteString(handle, PropKv("Total Runs Simulated", IntegerToString(totalRuns)));
+   FileWriteString(handle, "</div>\n<div class=\"note\">Each strategy is re-started fresh " + PropSpawnIntervalLabel() + " during the active window (pause/close hours skipped). A strategy can have multiple runs active simultaneously. Best strategy: <b>" + bestStratName + "</b> (" + DoubleToString(bestStratRate, 1) + "% pass rate)</div>\n</div>\n");
+
+   FileWriteString(handle,
+      "<div class=\"section\">\n<h2>Summary Dashboard</h2>\n<div class=\"cards\">\n" +
+      "<div class=\"card pass\"><div class=\"label\">Passed Runs</div><div class=\"value\">" + IntegerToString(totalPassed) + "</div><div class=\"sub\">target hit</div></div>\n" +
+      "<div class=\"card blow\"><div class=\"label\">Blown Runs</div><div class=\"value\">" + IntegerToString(totalBlown) + "</div><div class=\"sub\">rule breach</div></div>\n" +
+      "<div class=\"card act\"><div class=\"label\">Active Runs</div><div class=\"value\">" + IntegerToString(totalActive) + "</div><div class=\"sub\">still running at end</div></div>\n" +
+      "<div class=\"card rate\"><div class=\"label\">Overall Pass Rate</div><div class=\"value\">" + DoubleToString(overallPassRate, 1) + "%</div><div class=\"sub\">passed / total runs</div></div>\n" +
+      "<div class=\"card avg\"><div class=\"label\">Total Trades</div><div class=\"value\">" + IntegerToString(grandTotalTrades) + "</div><div class=\"sub\">virtual positions</div></div>\n" +
+      "<div class=\"card tot\"><div class=\"label\">Total Runs</div><div class=\"value\">" + IntegerToString(totalRuns) + "</div><div class=\"sub\">strategy x start-days</div></div>\n" +
+      "</div>\n</div>\n");
+
+   FileWriteString(handle,
+      "<div class=\"section\">\n<h2>Strategy Ranking (by pass rate across start-days)</h2>\n" +
+      PropToolbarHtml("strat") +
+      "<div class=\"table-scroll\">\n<table id=\"strat\">\n<thead><tr>\n" +
+      "<th data-type=\"num\">Rank</th>\n<th data-type=\"str\">Strategy</th>\n<th data-type=\"num\">Starts</th>\n" +
+      "<th data-type=\"num\">Passed</th>\n<th data-type=\"num\">Blown</th>\n<th data-type=\"num\">Active</th>\n" +
+       "<th data-type=\"num\">Pass Rate</th>\n<th data-type=\"num\">Avg Win Rate</th>\n" +
+       "<th data-type=\"num\">PF</th>\n<th data-type=\"num\">Avg R:R</th>\n" +
+       "<th data-type=\"num\">Avg Net P/L</th>\n<th data-type=\"num\">Best Net</th>\n<th data-type=\"num\">Worst Net</th>\n" +
+       "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
+       "<th data-type=\"num\">Avg Days->Target</th>\n</tr></thead>\n<tbody>\n");
+
+   for(int rank = 0; rank < 100; rank++)
+   {
+      int sid = sortOrder[rank];
+      double passRate = (aggStarts[sid] > 0) ? (double)aggPassed[sid] / (double)aggStarts[sid] * 100.0 : 0.0;
+      double avgWinRate = (aggWinRateCount[sid] > 0) ? aggWinRateSum[sid] / (double)aggWinRateCount[sid] : 0.0;
+       double avgNet = (aggStarts[sid] > 0) ? aggNetSum[sid] / (double)aggStarts[sid] : 0.0;
+       double avgDays = (aggPassed[sid] > 0) ? (double)aggDaysToTarget[sid] / (double)aggPassed[sid] : 0.0;
+       double profitFactor = (aggGrossLoss[sid] < 0.0) ? aggGrossProfit[sid] / MathAbs(aggGrossLoss[sid]) : 0.0;
+       double avgWin = (aggWins[sid] > 0) ? aggGrossProfit[sid] / (double)aggWins[sid] : 0.0;
+       double avgLoss = (aggLosses[sid] > 0) ? MathAbs(aggGrossLoss[sid]) / (double)aggLosses[sid] : 0.0;
+       double realizedRR = (avgLoss > 0.0) ? avgWin / avgLoss : 0.0;
+       string netClass = (avgNet > 0.0) ? "pos" : ((avgNet < 0.0) ? "neg" : "zero");
+       string bestClass = (aggBestNet[sid] > 0.0) ? "pos" : "zero";
+       string worstClass = (aggWorstNet[sid] < 0.0) ? "neg" : "zero";
+       string pfClass = (profitFactor >= 1.0) ? "pos" : "neg";
+
+       string row = "";
+       row += StringFormat("<tr><td class=\"num\">%d</td>", rank + 1);
+       row += StringFormat("<td>%s</td>", StrategyName(sid + 1));
+       row += StringFormat("<td class=\"num\">%d</td>", aggStarts[sid]);
+       row += StringFormat("<td class=\"num pos\">%d</td>", aggPassed[sid]);
+       row += StringFormat("<td class=\"num neg\">%d</td>", aggBlown[sid]);
+       row += StringFormat("<td class=\"num\">%d</td>", aggActive[sid]);
+       if(aggStarts[sid] > 0)
+          row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill\" style=\"width:%.1f%%\"></div></div>%.1f%%</td>", passRate, passRate, passRate);
+       else
+          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+       if(aggWinRateCount[sid] > 0)
+          row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill\" style=\"width:%.1f%%\"></div></div>%.1f%%</td>", avgWinRate, avgWinRate, avgWinRate);
+       else
+          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+       if(aggGrossLoss[sid] < 0.0)
+          row += StringFormat("<td class=\"num %s\">%.2f</td>", pfClass, profitFactor);
+       else
+          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+       if(realizedRR > 0.0)
+          row += StringFormat("<td class=\"num\">%.2f</td>", realizedRR);
+       else
+          row += "<td class=\"num zero\">n/a</td>";
+       row += StringFormat("<td class=\"num %s\">%.2f</td>", netClass, avgNet);
+      row += StringFormat("<td class=\"num %s\">%.2f</td>", bestClass, aggBestNet[sid]);
+      row += StringFormat("<td class=\"num %s\">%.2f</td>", worstClass, aggWorstNet[sid]);
+       row += StringFormat("<td class=\"num\">%d</td>", aggTrades[sid]);
+       double avgTradesPerDay = (aggDuration[sid] > 0.0) ? (double)aggTrades[sid] / aggDuration[sid] : 0.0;
+       row += StringFormat("<td class=\"num\">%.1f</td>", avgTradesPerDay);
+       row += StringFormat("<td class=\"num pos\">%d</td>", aggWins[sid]);
+      row += StringFormat("<td class=\"num neg\">%d</td>", aggLosses[sid]);
+      row += StringFormat("<td class=\"num\">%.1f</td>", avgDays);
+      row += "</tr>\n";
+      FileWriteString(handle, row);
+   }
+   FileWriteString(handle, "</tbody>\n</table>\n</div>\n</div>\n");
+
+   FileWriteString(handle,
+      "<div class=\"section\">\n<h2>Per-Run Detail (all strategy x start-day runs)</h2>\n" +
+      PropToolbarHtml("runs") +
+      "<div class=\"table-scroll\">\n<table id=\"runs\">\n<thead><tr>\n" +
+      "<th data-type=\"num\">#</th>\n<th data-type=\"str\">Strategy</th>\n<th data-type=\"str\">Start Day</th>\n" +
+      "<th data-type=\"str\">Status</th>\n<th data-type=\"str\">Reason</th>\n" +
+      "<th data-type=\"num\">Start Bal</th>\n<th data-type=\"num\">End Bal</th>\n<th data-type=\"num\">Net P/L</th>\n" +
+      "<th data-type=\"num\">Win Rate</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
+       "<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">PF</th>\n<th data-type=\"num\">R:R</th>\n<th data-type=\"num\">Max Profit</th>\n" +
+      "<th data-type=\"num\">Max DD</th>\n<th data-type=\"num\">Days->Target</th>\n<th data-type=\"num\">Days->Breach</th>\n" +
+      "<th data-type=\"num\">Eq. Prot</th>\n<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody>\n");
+
+   for(int i = 0; i < totalRuns; i++)
+   {
+      string status = propRuns[i].passed ? "pass" : (propRuns[i].breached ? "blow" : "act");
+      string badge = propRuns[i].passed ? "PASSED" : (propRuns[i].breached ? "BLOWN" : "ACTIVE");
+      int closedTrades = propRuns[i].wins + propRuns[i].losses;
+      double winRate = (closedTrades > 0) ? (double)propRuns[i].wins / (double)closedTrades * 100.0 : 0.0;
+      double netProfit = propRuns[i].balance - propRuns[i].startingBalance;
+      string netClass = (netProfit > 0.0) ? "pos" : ((netProfit < 0.0) ? "neg" : "zero");
+      string netStr = DoubleToString(netProfit, 2);
+      if(netProfit > 0.0) netStr = "+" + netStr;
+      string reason = propRuns[i].breachReason;
+      if(reason == "") reason = propRuns[i].passed ? "Target hit" : "-";
+
+      string row = "";
+      row += StringFormat("<tr class=\"%s\" data-status=\"%s\">", status, status);
+      row += StringFormat("<td class=\"num\">%d</td>", i + 1);
+      row += StringFormat("<td>%s</td>", propRuns[i].strategyName);
+      row += StringFormat("<td>%s</td>", TimeToString(propRuns[i].startDay, TIME_DATE | TIME_MINUTES));
+      row += StringFormat("<td><span class=\"badge %s\">%s</span></td>", status, badge);
+      row += StringFormat("<td class=\"reason\">%s</td>", reason);
+      row += StringFormat("<td class=\"num\">%.2f</td>", propRuns[i].startingBalance);
+      row += StringFormat("<td class=\"num\">%.2f</td>", propRuns[i].balance);
+      row += StringFormat("<td class=\"num %s\">%s</td>", netClass, netStr);
+      if(closedTrades > 0)
+         row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill\" style=\"width:%.1f%%\"></div></div>%.1f%%</td>", winRate, winRate, winRate);
+      else
+         row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+      row += StringFormat("<td class=\"num pos\">%d</td>", propRuns[i].wins);
+      row += StringFormat("<td class=\"num neg\">%d</td>", propRuns[i].losses);
+      row += StringFormat("<td class=\"num\">%d</td>", propRuns[i].trades);
+       if(propRuns[i].grossLoss < 0.0)
+          row += StringFormat("<td class=\"num\">%.2f</td>", propRuns[i].grossProfit / MathAbs(propRuns[i].grossLoss));
+       else
+          row += "<td class=\"num zero\">n/a</td>";
+       double runAvgWin = (propRuns[i].wins > 0) ? propRuns[i].grossProfit / (double)propRuns[i].wins : 0.0;
+       double runAvgLoss = (propRuns[i].losses > 0) ? MathAbs(propRuns[i].grossLoss) / (double)propRuns[i].losses : 0.0;
+       if(runAvgLoss > 0.0)
+          row += StringFormat("<td class=\"num\">%.2f</td>", runAvgWin / runAvgLoss);
+       else
+          row += "<td class=\"num zero\">n/a</td>";
+       row += StringFormat("<td class=\"num pos\">%.2f</td>", propRuns[i].maxProfit);
+      row += StringFormat("<td class=\"num neg\">%.2f</td>", propRuns[i].maxDrawdown);
+      row += StringFormat("<td class=\"num\">%d</td>", propRuns[i].daysToTarget);
+      row += StringFormat("<td class=\"num\">%d</td>", propRuns[i].daysToBreach);
+      row += StringFormat("<td class=\"num\">%d</td>", propRuns[i].equityProtectionTriggers);
+      row += StringFormat("<td>%s</td>", propRuns[i].ended > 0 ? TimeToString(propRuns[i].ended, TIME_DATE | TIME_MINUTES) : "n/a");
+      row += "</tr>\n";
+      FileWriteString(handle, row);
+   }
+   FileWriteString(handle, "</tbody>\n</table>\n</div>\n</div>\n");
+
+   PropWriteFooter(handle, "strat");
+   PropWriteFooter(handle, "runs");
+   FileWriteString(handle, "</div>\n</body>\n</html>\n");
+   FileClose(handle);
+   Print("Propfirm rolling HTML report exported to Common Files: ", PropHtmlReportFileName, " (", IntegerToString(totalRuns), " runs)");
+}
+
+void PropWriteHtmlHead(const int handle)
+{
+   FileWriteString(handle,
+      "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n" +
+      "<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
+      "<title>Propfirm Backtest Report</title>\n<style>\n" +
+      "*{box-sizing:border-box;margin:0;padding:0}\n" +
+      "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f8fafc;color:#1e293b;line-height:1.5;padding:24px}\n" +
+      ".wrap{max-width:1500px;margin:0 auto}\n" +
+      ".header{background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 50%,#ec4899 100%);padding:28px 26px;border-radius:14px;box-shadow:0 6px 20px rgba(99,102,241,.3);margin-bottom:22px}\n" +
+      ".header h1{color:#fff;font-size:23px;font-weight:700;letter-spacing:.3px}\n" +
+      ".header .sub{color:rgba(255,255,255,.9);font-size:13px;margin-top:6px}\n" +
+      ".section{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px 22px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,.06)}\n" +
+      ".section h2{color:#4f46e5;font-size:13px;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:14px;font-weight:700;border-bottom:2px solid #e0e7ff;padding-bottom:10px}\n" +
+      ".settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:4px 28px}\n" +
+      ".kv{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px dashed #e2e8f0;font-size:13px}\n" +
+      ".kv .k{color:#64748b}\n" +
+      ".kv .v{color:#1e293b;font-weight:600;text-align:right;word-break:break-word}\n" +
+      ".cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px}\n" +
+      ".card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px 18px;position:relative;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.05)}\n" +
+      ".card::before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:4px;border-radius:10px 0 0 10px}\n" +
+      ".card.pass::before{background:#22c55e}\n.card.blow::before{background:#ef4444}\n.card.act::before{background:#3b82f6}\n" +
+      ".card.rate::before{background:#a855f7}\n.card.avg::before{background:#f59e0b}\n.card.tot::before{background:#14b8a6}\n" +
+      ".card .label{color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.8px}\n" +
+      ".card .value{color:#1e293b;font-size:22px;font-weight:700;margin-top:6px}\n" +
+      ".card .sub{color:#94a3b8;font-size:11px;margin-top:2px}\n" +
+      ".note{color:#64748b;font-size:12px;margin-top:12px}\n.note b{color:#1e293b}\n" +
+      ".toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}\n" +
+      ".toolbar input[type=text]{flex:1;min-width:220px;background:#f8fafc;border:1px solid #cbd5e1;color:#1e293b;padding:9px 12px;border-radius:8px;font-size:13px}\n" +
+      ".toolbar input:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.15)}\n" +
+      ".btn{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;padding:8px 14px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:600}\n" +
+      ".btn:hover{background:#e2e8f0;color:#1e293b}\n.btn.active{background:#6366f1;border-color:#818cf8;color:#fff}\n" +
+      ".table-scroll{overflow-x:auto;border:1px solid #e2e8f0;border-radius:10px}\n" +
+      "table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:1550px}\n" +
+      "thead th{background:#6366f1;color:#fff;padding:11px 10px;text-align:left;font-weight:600;position:sticky;top:0;cursor:pointer;user-select:none;white-space:nowrap;border-bottom:2px solid #4f46e5}\n" +
+      "thead th:hover{background:#5457e5}\n" +
+      "th[data-type]{position:relative}\n" +
+      "th[data-type]::after{content:\"\";position:absolute;right:8px;top:50%;transform:translateY(-50%);width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid rgba(255,255,255,.4);opacity:.7}\n" +
+      "th.sort-asc::after{border-top:0;border-bottom:5px solid #fbbf24;border-left:4px solid transparent;border-right:4px solid transparent;opacity:1}\n" +
+      "th.sort-desc::after{border-top:5px solid #fbbf24;opacity:1}\n" +
+      "tbody td{padding:9px 10px;border-bottom:1px solid #f1f5f9;white-space:nowrap}\n" +
+      "tbody tr:nth-child(even){background:#f8fafc}\n" +
+      "tbody tr:hover{background:#e0e7ff}\n" +
+      "tbody tr.pass{border-left:3px solid #22c55e}\n" +
+      "tbody tr.blow{border-left:3px solid #ef4444}\n" +
+      "tbody tr.act{border-left:3px solid #3b82f6}\n" +
+      ".badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.4px}\n" +
+      ".badge.pass{background:#dcfce7;color:#166534}\n.badge.blow{background:#fee2e2;color:#991b1b}\n.badge.act{background:#dbeafe;color:#1e40af}\n" +
+      ".num{text-align:right;font-variant-numeric:tabular-nums}\n" +
+      ".pos{color:#16a34a}\n.neg{color:#dc2626}\n.zero{color:#94a3b8}\n" +
+      ".reason{font-size:11px;color:#64748b}\n" +
+      ".barwrap{background:#e2e8f0;border-radius:4px;height:8px;width:64px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:6px}\n" +
+      ".barfill{height:100%;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e)}\n" +
+      ".footer{color:#94a3b8;font-size:12px;text-align:center;margin-top:22px;padding:14px}\n" +
+      ".footer code{background:#f1f5f9;padding:2px 8px;border-radius:4px;color:#64748b}\n" +
+      "</style>\n</head>\n<body>\n<div class=\"wrap\">\n");
+}
+
+void PropWriteHeader(const int handle, const string title, const datetime testEnd)
+{
+   FileWriteString(handle,
+      "<div class=\"header\">\n<h1>" + title + "</h1>\n" +
+      "<div class=\"sub\">Virtual simulation against propfirm rules &nbsp;|&nbsp; Generated: " + TimeToString(testEnd, TIME_DATE | TIME_SECONDS) + "</div>\n</div>\n");
+}
+
+void PropWriteCommonSettings(const int handle, const datetime testStart, const datetime testEnd)
+{
+   FileWriteString(handle, PropKv("Symbol", _Symbol));
+   FileWriteString(handle, PropKv("Period", EnumToString(_Period)));
+   FileWriteString(handle, PropKv("Magic Number", IntegerToString((long)MagicNumber)));
+   FileWriteString(handle, PropKv("Strategy Mode", EnumToString(StrategyMode)));
+   FileWriteString(handle, PropKv("Allowed Direction", EnumToString(AllowedDirection)));
+   FileWriteString(handle, PropKv("One Trade Per Bar", PropBoolStr(OneTradePerBar)));
+   FileWriteString(handle, PropKv("Reverse Signals", PropBoolStr(ReverseSignals)));
+   FileWriteString(handle, PropKv("Starting Balance", DoubleToString(PropStartingBalance, 2)));
+   FileWriteString(handle, PropKv("Profit Target", DoubleToString(PropProfitTargetPercent, 2) + "%"));
+   FileWriteString(handle, PropKv("Max Total Drawdown", DoubleToString(PropMaxTotalDrawdownPercent, 2) + "%"));
+   FileWriteString(handle, PropKv("Daily Drawdown", DoubleToString(PropDailyDrawdownPercent, 2) + "%"));
+   FileWriteString(handle, PropKv("Daily Protection Buffer", DoubleToString(PropDailyProtectionBufferPercent, 2) + "%"));
+   FileWriteString(handle, PropKv("Daily Reset (UTC)", StringFormat("%02d:%02d", PropDailyResetHourUTC, PropDailyResetMinuteUTC)));
+   FileWriteString(handle, PropKv("Pause Signals (UTC)", StringFormat("%02d:%02d", PropPauseSignalsHourUTC, PropPauseSignalsMinuteUTC)));
+   FileWriteString(handle, PropKv("Close All (UTC)", StringFormat("%02d:%02d", PropCloseAllHourUTC, PropCloseAllMinuteUTC)));
+   FileWriteString(handle, PropKv("Resume Signals (UTC)", StringFormat("%02d:%02d", PropResumeSignalsHourUTC, PropResumeSignalsMinuteUTC)));
+   FileWriteString(handle, PropKv("Spawn Interval", PropSpawnIntervalLabel()));
+   FileWriteString(handle, PropKv("Virtual Dollar Exit", PropBoolStr(EnableVirtualDollarExit)));
+   FileWriteString(handle, PropKv("Virtual Exit Lot", DoubleToString(VirtualExitLot, 2)));
+   FileWriteString(handle, PropKv("Virtual Take Profit", DoubleToString(VirtualTakeProfitMoney, 2)));
+   FileWriteString(handle, PropKv("Virtual Stop Loss", DoubleToString(VirtualStopLossMoney, 2)));
+   FileWriteString(handle, PropKv("Test Started", TimeToString(testStart, TIME_DATE | TIME_MINUTES)));
+   FileWriteString(handle, PropKv("Report Generated", TimeToString(testEnd, TIME_DATE | TIME_SECONDS)));
+}
+
+string PropToolbarHtml(const string tableId)
+{
+   return "<div class=\"toolbar\">\n" +
+          "<input type=\"text\" id=\"search_" + tableId + "\" placeholder=\"Search strategy name...\">\n" +
+          "<button class=\"btn active\" data-f=\"all\" data-tbl=\"" + tableId + "\">All</button>\n" +
+          "<button class=\"btn\" data-f=\"pass\" data-tbl=\"" + tableId + "\">Passed</button>\n" +
+          "<button class=\"btn\" data-f=\"blow\" data-tbl=\"" + tableId + "\">Blown</button>\n" +
+          "<button class=\"btn\" data-f=\"act\" data-tbl=\"" + tableId + "\">Active</button>\n" +
+          "</div>\n";
+}
+
+void PropWriteFooter(const int handle, const string tableId)
+{
+   FileWriteString(handle,
+      "<div class=\"footer\">Generated by <code>HundredStrategyEA</code> propfirm backtest mode. This is a virtual simulation - no real trades were placed.</div>\n" +
+      "<script>\n" +
+      "(function(){\n" +
+      "  var tableId='" + tableId + "';\n" +
+      "  var tbody=document.querySelector('#'+tableId+' tbody');\n" +
+      "  if(!tbody)return;\n" +
+      "  var search=document.getElementById('search_'+tableId);\n" +
+      "  var btns=document.querySelectorAll('.btn[data-tbl=\"'+tableId+'\"]');\n" +
+      "  var filter='all';\n" +
+      "  function apply(){var q=search.value.toLowerCase();var rows=tbody.querySelectorAll('tr');for(var i=0;i<rows.length;i++){var r=rows[i];var name=r.cells[1].textContent.toLowerCase();var status=r.getAttribute('data-status')||'';var mq=name.indexOf(q)>=0;var mf=(filter==='all'||status===filter);r.style.display=(mq&&mf)?'':'none';}}\n" +
+      "  if(search)search.addEventListener('input',apply);\n" +
+      "  for(var b=0;b<btns.length;b++){btns[b].addEventListener('click',function(){for(var k=0;k<btns.length;k++)btns[k].classList.remove('active');this.classList.add('active');filter=this.getAttribute('data-f');apply();});}\n" +
+      "  var heads=document.querySelectorAll('#'+tableId+' thead th[data-type]');\n" +
+      "  for(var h=0;h<heads.length;h++){heads[h].addEventListener('click',function(){var th=this;var idx=0;var ths=th.parentNode.children;for(var c=0;c<ths.length;c++){if(ths[c]===th){idx=c;break;}}var type=th.getAttribute('data-type')||'str';var asc=true;if(th.classList.contains('sort-asc'))asc=false;for(var j=0;j<heads.length;j++){heads[j].classList.remove('sort-asc');heads[j].classList.remove('sort-desc');}th.classList.add(asc?'sort-asc':'sort-desc');var rowsArr=[];var trs=tbody.querySelectorAll('tr');for(var i=0;i<trs.length;i++)rowsArr.push(trs[i]);rowsArr.sort(function(a,b){var aCell=a.cells[idx];var bCell=b.cells[idx];var av=aCell.getAttribute('data-sort');var bv=bCell.getAttribute('data-sort');if(av===null)av=aCell.textContent.trim();if(bv===null)bv=bCell.textContent.trim();if(type==='num'){av=parseFloat(av)||0;bv=parseFloat(bv)||0;return asc?av-bv:bv-av;}return asc?a.localeCompare(b):b.localeCompare(a);});for(var i=0;i<rowsArr.length;i++)tbody.appendChild(rowsArr[i]);});}\n" +
+      "})();\n" +
+      "</script>\n");
+}
+
+void PropSortResults()
+{
+   for(int i = 0; i < PROP_STRATEGY_COUNT - 1; i++)
+   {
+      for(int j = i + 1; j < PROP_STRATEGY_COUNT; j++)
+      {
+         if(PropScore(j) > PropScore(i))
+         {
+            PropStrategyResult temp = propResults[i];
+            propResults[i] = propResults[j];
+            propResults[j] = temp;
+         }
+      }
+   }
+}
+
+double PropScore(const int index)
+{
+   double score = propResults[index].balance + propResults[index].maxProfit - propResults[index].maxDrawdown;
+   if(propResults[index].passed)
+      score += 1000000.0;
+   if(propResults[index].breached)
+      score -= 100000.0;
+   return score;
+}
+
+void RecordSignalAudit(const string direction, const string reason, const bool executed, const string details)
+{
+   SignalAuditEntry entry;
+   entry.time = TimeCurrent();
+   entry.direction = direction;
+   entry.reason = reason;
+   entry.executed = executed;
+   entry.details = details;
+
+   if(signalHistoryCount < 5)
+      signalHistoryCount++;
+
+   for(int i = signalHistoryCount - 1; i > 0; i--)
+      signalHistory[i] = signalHistory[i - 1];
+
+   signalHistory[0] = entry;
+}
+
+string DirectionText(const int orderType)
+{
+   if(orderType == ORDER_TYPE_BUY)
+      return "BUY";
+   if(orderType == ORDER_TYPE_SELL)
+      return "SELL";
+   return "NONE";
+}
+
+#define H100_PREFIX "H100_"
+#define H100_LINE_COUNT 36
+
+color PanelColor()  { return C'16,18,24'; }
+color HeaderColor() { return C'28,32,42'; }
+color BorderColor() { return C'74,85,104'; }
+color TextColor()   { return C'236,239,244'; }
+color MutedColor()  { return C'158,166,180'; }
+color GoodColor()   { return C'125,211,252'; }
+color WarnColor()   { return C'245,180,85'; }
+color BadColor()    { return C'254,202,202'; }
+
+void EnsureBox(string name, int x, int y, int width, int height, color background, color border)
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, background);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, border);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, false);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 0);
+   ObjectSetString(0, name, OBJPROP_TEXT, "");
+}
+
+void EnsureLabel(string name, int x, int y, int font_size, color text_color, string font = "Consolas")
+{
+   if(ObjectFind(0, name) < 0)
+      ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, font_size);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, text_color);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, false);
+   ObjectSetInteger(0, name, OBJPROP_ZORDER, 10);
+   ObjectSetString(0, name, OBJPROP_FONT, font);
+}
+
+void SetLine(int index, string text, color text_color = clrNONE)
+{
+   if(index < 0 || index >= H100_LINE_COUNT)
+      return;
+
+   string name = H100_PREFIX + "LINE_" + (string)index;
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, (text_color == clrNONE ? TextColor() : text_color));
+}
+
+void CreateDashboard()
+{
+   if(dashboardCreated)
+      return;
+
+   int width = 640;
+   int line_step = 16;
+   int height = 88 + H100_LINE_COUNT * line_step;
+   EnsureBox(H100_PREFIX + "BG", 16, 18, width, height, PanelColor(), BorderColor());
+   EnsureBox(H100_PREFIX + "HEADER", 16, 18, width, 42, HeaderColor(), HeaderColor());
+   EnsureBox(H100_PREFIX + "ACCENT", 16, 18, 4, height, GoodColor(), GoodColor());
+   EnsureLabel(H100_PREFIX + "TITLE", 16 + 18, 18 + 12, 12, TextColor(), "Arial Bold");
+   for(int i = 0; i < H100_LINE_COUNT; i++)
+      EnsureLabel(H100_PREFIX + "LINE_" + (string)i, 16 + 18, 18 + 56 + i * line_step, 9, TextColor());
+
+   dashboardCreated = true;
+}
+
+void UpdateDashboard()
+{
+   CreateDashboard();
+
+   ObjectSetString(0, H100_PREFIX + "TITLE", OBJPROP_TEXT, "HundredStrategyEA  |  " + AccountInfoString(ACCOUNT_NAME));
+
+   int line = 0;
+   SetLine(line++, "STRATEGY", MutedColor());
+   SetLine(line++, "Mode          " + (StrategyMode == STRATEGY_SINGLE ? "SINGLE" : "ALL-100") + "    Min votes    " + IntegerToString(MinVotesToTrade));
+   if(StrategyMode == STRATEGY_SINGLE)
+      SetLine(line++, "Strategy      " + StrategyName((int)SelectedStrategy));
+   else
+      SetLine(line++, "Strategy      ALL 100 evaluated");
+   SetLine(line++, "Direction     " + EnumToString(AllowedDirection) + "    OneTradePerBar " + PropBoolStr(OneTradePerBar));
+   SetLine(line++, "Reverse       " + PropBoolStr(ReverseSignals), ReverseSignals ? WarnColor() : MutedColor());
+   SetLine(line++, " ");
+
+   SetLine(line++, "RISK MANAGEMENT", MutedColor());
+   SetLine(line++, "Lot mode      " + EnumToString(LotMode) + "    Risk %        " + DoubleToString(RiskPerTradePercent, 2));
+   SetLine(line++, "Start bal     " + DoubleToString(CustomStartingBalance, 2) + "    Fixed lot     " + DoubleToString(FixedLot, 2));
+   SetLine(line++, "Max lot       " + DoubleToString(MaxLot, 2) + "    SL / TP mode  " + EnumToString(StopLossMode) + " / " + EnumToString(TakeProfitMode));
+   SetLine(line++, "ATR mult      SL " + DoubleToString(SlAtrMultiplier, 2) + " / TP " + DoubleToString(TpAtrMultiplier, 2) + "    ATR period " + IntegerToString(AtrPeriod));
+   SetLine(line++, "Fixed pts     SL " + DoubleToString(FixedSlPoints, 0) + " / TP " + DoubleToString(FixedTpPoints, 0) + "    Money SL " + DoubleToString(SlMoney, 2) + " / TP " + DoubleToString(TpMoney, 2));
+   SetLine(line++, "Broker SL/TP  " + PropBoolStr(PlaceBrokerStopLossTakeProfit));
+   SetLine(line++, " ");
+
+   if(EnableVirtualDollarExit)
+   {
+      SetLine(line++, "VIRTUAL DOLLAR EXIT", GoodColor());
+      SetLine(line++, "Status        ON    Exit lot      " + DoubleToString(VirtualExitLot, 2));
+      SetLine(line++, "Take profit   " + DoubleToString(VirtualTakeProfitMoney, 2) + "    Stop loss     " + DoubleToString(VirtualStopLossMoney, 2));
+      SetLine(line++, "Broker stops  " + (DisableBrokerStopsWhenVirtualExitOn ? "DISABLED (virtual only)" : "ENABLED"));
+      SetLine(line++, " ");
+   }
+
+   SetLine(line++, "EA STOP PROTECTION", MutedColor());
+   SetLine(line++, "Enabled       " + PropBoolStr(EnableProtectionStops) + "    Close on hit  " + PropBoolStr(ClosePositionsWhenProtectionHit));
+   SetLine(line++, "Profit $      " + DoubleToString(StopProfitMoney, 2) + "    Loss $        " + DoubleToString(StopLossMoney, 2));
+   SetLine(line++, "Drawdown $    " + DoubleToString(StopDrawdownMoney, 2) + "    Profit %      " + DoubleToString(StopProfitPercentOfStart, 2));
+   SetLine(line++, "Loss %        " + DoubleToString(StopLossPercentOfStart, 2) + "    Drawdown %    " + DoubleToString(StopDrawdownPercentOfStart, 2));
+   SetLine(line++, " ");
+
+   if(EnablePropfirmBacktestMode)
+   {
+      SetLine(line++, "BACKTEST MODE", WarnColor());
+      SetLine(line++, "Virtual simulation running - no real trades placed");
+      SetLine(line++, " ");
+   }
+   else
+   {
+      SetLine(line++, "LIVE STATE", MutedColor());
+      SetLine(line++, "Balance       " + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + "    Equity        " + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2));
+      SetLine(line++, "Floating P/L  " + DoubleToString(EaFloatingProfit(), 2) + "    Open pos      " + IntegerToString(CountOpenPositions()));
+      if(eaStopped)
+         SetLine(line++, "EA STOPPED    " + stopReason, BadColor());
+      else
+         SetLine(line++, "Magic         " + IntegerToString((long)MagicNumber) + "    Status        ACTIVE", GoodColor());
+      SetLine(line++, " ");
+   }
+
+   SetLine(line++, "LAST 5 SIGNALS", MutedColor());
+   if(signalHistoryCount == 0)
+   {
+      SetLine(line++, "No signals yet", MutedColor());
+   }
+   else
+   {
+      for(int i = 0; i < signalHistoryCount && i < 5; i++)
+      {
+         string ts = TimeToString(signalHistory[i].time, TIME_DATE | TIME_MINUTES);
+         string status = signalHistory[i].executed ? "EXEC" : "SKIP";
+         string txt = IntegerToString(i + 1) + ". " + ts + " " + status + " " + signalHistory[i].direction + " - " + signalHistory[i].reason;
+         SetLine(line++, txt, signalHistory[i].executed ? GoodColor() : WarnColor());
+      }
+   }
+
+   for(; line < H100_LINE_COUNT; line++)
+      SetLine(line, " ");
+
+   ChartRedraw(0);
+}
+
+void DeleteDashboard()
+{
+   for(int i = ObjectsTotal(0, 0, -1) - 1; i >= 0; i--)
+   {
+      string name = ObjectName(0, i, 0, -1);
+      if(StringFind(name, H100_PREFIX) == 0)
+         ObjectDelete(0, name);
+   }
+   dashboardCreated = false;
+}
+
+void EnsureLogHeader()
+{
+   if(!EnableCsvLog)
+      return;
+
+   int handle = FileOpen(LogFileName, FILE_READ | FILE_WRITE | FILE_CSV | FILE_COMMON);
+   if(handle == INVALID_HANDLE)
+      return;
+
+   if(FileSize(handle) == 0)
+      FileWrite(handle, "time", "symbol", "period", "magic", "event", "balance", "equity", "message");
+   FileClose(handle);
+}
+
+void LogEvent(const string eventName, const string message)
+{
+   string line = TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS) + " " + eventName + " " + message;
+   if(PrintDetailedLog)
+      Print(line);
+
+   if(!EnableCsvLog)
+      return;
+
+   int handle = FileOpen(LogFileName, FILE_READ | FILE_WRITE | FILE_CSV | FILE_COMMON);
+   if(handle == INVALID_HANDLE)
+   {
+      Print("Failed to open log file: ", LogFileName, " error=", GetLastError());
+      return;
+   }
+
+   FileSeek(handle, 0, SEEK_END);
+   FileWrite(handle,
+             TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
+             _Symbol,
+             EnumToString(_Period),
+             IntegerToString((int)MagicNumber),
+             eventName,
+             DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2),
+             DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2),
+             message);
+   FileClose(handle);
+}
