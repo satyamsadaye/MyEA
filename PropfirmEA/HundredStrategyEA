@@ -29,7 +29,7 @@ enum ENUM_STOP_MODE
 
 enum ENUM_STRATEGY_MODE
 {
-   STRATEGY_ALL_100 = 0,
+   STRATEGY_ALL = 0,
    STRATEGY_SINGLE = 1
 };
 
@@ -134,14 +134,414 @@ enum ENUM_NAMED_STRATEGY
    STRAT_097_PRICE_ACTION_VOLATILE_BAR,
    STRAT_098_PRICE_ACTION_STRUCTURE_BAR,
    STRAT_099_PRICE_ACTION_POSITION_BAR,
-   STRAT_100_PRICE_ACTION_MAJOR_BAR
+   STRAT_100_PRICE_ACTION_MAJOR_BAR,
+   STRAT_101_EMA_SLOPE_MICRO,
+   STRAT_102_EMA_SLOPE_FAST,
+   STRAT_103_EMA_SLOPE_SHORT,
+   STRAT_104_EMA_SLOPE_INTRADAY,
+   STRAT_105_EMA_SLOPE_SWING,
+   STRAT_106_EMA_SLOPE_EXPANSION,
+   STRAT_107_EMA_SLOPE_CONTINUE,
+   STRAT_108_EMA_SLOPE_VOLATILE,
+   STRAT_109_EMA_SLOPE_POSITION,
+   STRAT_110_EMA_SLOPE_MAJOR,
+   STRAT_111_EMA_XFILT_MICRO,
+   STRAT_112_EMA_XFILT_FAST,
+   STRAT_113_EMA_XFILT_SHORT,
+   STRAT_114_EMA_XFILT_INTRADAY,
+   STRAT_115_EMA_XFILT_SWING,
+   STRAT_116_EMA_XFILT_EXPANSION,
+   STRAT_117_EMA_XFILT_CONTINUE,
+   STRAT_118_EMA_XFILT_VOLATILE,
+   STRAT_119_EMA_XFILT_POSITION,
+   STRAT_120_EMA_XFILT_MAJOR,
+   STRAT_121_EMA_RIBBON_MICRO,
+   STRAT_122_EMA_RIBBON_FAST,
+   STRAT_123_EMA_RIBBON_SHORT,
+   STRAT_124_EMA_RIBBON_INTRADAY,
+   STRAT_125_EMA_RIBBON_SWING,
+   STRAT_126_EMA_RIBBON_EXPANSION,
+   STRAT_127_EMA_RIBBON_CONTINUE,
+   STRAT_128_EMA_RIBBON_VOLATILE,
+   STRAT_129_EMA_RIBBON_POSITION,
+   STRAT_130_EMA_RIBBON_MAJOR,
+   STRAT_131_ENVELOPE_MICRO,
+   STRAT_132_ENVELOPE_FAST,
+   STRAT_133_ENVELOPE_SHORT,
+   STRAT_134_ENVELOPE_INTRADAY,
+   STRAT_135_ENVELOPE_SWING,
+   STRAT_136_ENVELOPE_EXPANSION,
+   STRAT_137_ENVELOPE_CONTINUE,
+   STRAT_138_ENVELOPE_VOLATILE,
+   STRAT_139_ENVELOPE_POSITION,
+   STRAT_140_ENVELOPE_MAJOR,
+   STRAT_141_ALLIGATOR_MICRO,
+   STRAT_142_ALLIGATOR_FAST,
+   STRAT_143_ALLIGATOR_SHORT,
+   STRAT_144_ALLIGATOR_INTRADAY,
+   STRAT_145_ALLIGATOR_SWING,
+   STRAT_146_ALLIGATOR_EXPANSION,
+   STRAT_147_ALLIGATOR_CONTINUE,
+   STRAT_148_ALLIGATOR_VOLATILE,
+   STRAT_149_ALLIGATOR_POSITION,
+   STRAT_150_ALLIGATOR_MAJOR,
+   STRAT_151_RSI_MID_MICRO,
+   STRAT_152_RSI_MID_FAST,
+   STRAT_153_RSI_MID_SHORT,
+   STRAT_154_RSI_MID_INTRADAY,
+   STRAT_155_RSI_MID_SWING,
+   STRAT_156_RSI_MID_EXPANSION,
+   STRAT_157_RSI_MID_CONTINUE,
+   STRAT_158_RSI_MID_VOLATILE,
+   STRAT_159_RSI_MID_POSITION,
+   STRAT_160_RSI_MID_MAJOR,
+   STRAT_161_RSI_EXTR_MICRO,
+   STRAT_162_RSI_EXTR_FAST,
+   STRAT_163_RSI_EXTR_SHORT,
+   STRAT_164_RSI_EXTR_INTRADAY,
+   STRAT_165_RSI_EXTR_SWING,
+   STRAT_166_RSI_EXTR_EXPANSION,
+   STRAT_167_RSI_EXTR_CONTINUE,
+   STRAT_168_RSI_EXTR_VOLATILE,
+   STRAT_169_RSI_EXTR_POSITION,
+   STRAT_170_RSI_EXTR_MAJOR,
+   STRAT_171_RSI_TRND_MICRO,
+   STRAT_172_RSI_TRND_FAST,
+   STRAT_173_RSI_TRND_SHORT,
+   STRAT_174_RSI_TRND_INTRADAY,
+   STRAT_175_RSI_TRND_SWING,
+   STRAT_176_RSI_TRND_EXPANSION,
+   STRAT_177_RSI_TRND_CONTINUE,
+   STRAT_178_RSI_TRND_VOLATILE,
+   STRAT_179_RSI_TRND_POSITION,
+   STRAT_180_RSI_TRND_MAJOR,
+   STRAT_181_RVI_MICRO,
+   STRAT_182_RVI_FAST,
+   STRAT_183_RVI_SHORT,
+   STRAT_184_RVI_INTRADAY,
+   STRAT_185_RVI_SWING,
+   STRAT_186_RVI_EXPANSION,
+   STRAT_187_RVI_CONTINUE,
+   STRAT_188_RVI_VOLATILE,
+   STRAT_189_RVI_POSITION,
+   STRAT_190_RVI_MAJOR,
+   STRAT_191_DEMARKER_MICRO,
+   STRAT_192_DEMARKER_FAST,
+   STRAT_193_DEMARKER_SHORT,
+   STRAT_194_DEMARKER_INTRADAY,
+   STRAT_195_DEMARKER_SWING,
+   STRAT_196_DEMARKER_EXPANSION,
+   STRAT_197_DEMARKER_CONTINUE,
+   STRAT_198_DEMARKER_VOLATILE,
+   STRAT_199_DEMARKER_POSITION,
+   STRAT_200_DEMARKER_MAJOR,
+   STRAT_201_MACD_ZERO_MICRO,
+   STRAT_202_MACD_ZERO_FAST,
+   STRAT_203_MACD_ZERO_SHORT,
+   STRAT_204_MACD_ZERO_INTRADAY,
+   STRAT_205_MACD_ZERO_SWING,
+   STRAT_206_MACD_ZERO_EXPANSION,
+   STRAT_207_MACD_ZERO_CONTINUE,
+   STRAT_208_MACD_ZERO_VOLATILE,
+   STRAT_209_MACD_ZERO_POSITION,
+   STRAT_210_MACD_ZERO_MAJOR,
+   STRAT_211_MACD_HIST_MICRO,
+   STRAT_212_MACD_HIST_FAST,
+   STRAT_213_MACD_HIST_SHORT,
+   STRAT_214_MACD_HIST_INTRADAY,
+   STRAT_215_MACD_HIST_SWING,
+   STRAT_216_MACD_HIST_EXPANSION,
+   STRAT_217_MACD_HIST_CONTINUE,
+   STRAT_218_MACD_HIST_VOLATILE,
+   STRAT_219_MACD_HIST_POSITION,
+   STRAT_220_MACD_HIST_MAJOR,
+   STRAT_221_OSMA_MICRO,
+   STRAT_222_OSMA_FAST,
+   STRAT_223_OSMA_SHORT,
+   STRAT_224_OSMA_INTRADAY,
+   STRAT_225_OSMA_SWING,
+   STRAT_226_OSMA_EXPANSION,
+   STRAT_227_OSMA_CONTINUE,
+   STRAT_228_OSMA_VOLATILE,
+   STRAT_229_OSMA_POSITION,
+   STRAT_230_OSMA_MAJOR,
+   STRAT_231_STOCH_RSI_MICRO,
+   STRAT_232_STOCH_RSI_FAST,
+   STRAT_233_STOCH_RSI_SHORT,
+   STRAT_234_STOCH_RSI_INTRADAY,
+   STRAT_235_STOCH_RSI_SWING,
+   STRAT_236_STOCH_RSI_EXPANSION,
+   STRAT_237_STOCH_RSI_CONTINUE,
+   STRAT_238_STOCH_RSI_VOLATILE,
+   STRAT_239_STOCH_RSI_POSITION,
+   STRAT_240_STOCH_RSI_MAJOR,
+   STRAT_241_WILLIAMS_MICRO,
+   STRAT_242_WILLIAMS_FAST,
+   STRAT_243_WILLIAMS_SHORT,
+   STRAT_244_WILLIAMS_INTRADAY,
+   STRAT_245_WILLIAMS_SWING,
+   STRAT_246_WILLIAMS_EXPANSION,
+   STRAT_247_WILLIAMS_CONTINUE,
+   STRAT_248_WILLIAMS_VOLATILE,
+   STRAT_249_WILLIAMS_POSITION,
+   STRAT_250_WILLIAMS_MAJOR,
+   STRAT_251_DONCHIAN_MICRO,
+   STRAT_252_DONCHIAN_FAST,
+   STRAT_253_DONCHIAN_SHORT,
+   STRAT_254_DONCHIAN_INTRADAY,
+   STRAT_255_DONCHIAN_SWING,
+   STRAT_256_DONCHIAN_EXPANSION,
+   STRAT_257_DONCHIAN_CONTINUE,
+   STRAT_258_DONCHIAN_VOLATILE,
+   STRAT_259_DONCHIAN_POSITION,
+   STRAT_260_DONCHIAN_MAJOR,
+   STRAT_261_BB_SQUEEZE_MICRO,
+   STRAT_262_BB_SQUEEZE_FAST,
+   STRAT_263_BB_SQUEEZE_SHORT,
+   STRAT_264_BB_SQUEEZE_INTRADAY,
+   STRAT_265_BB_SQUEEZE_SWING,
+   STRAT_266_BB_SQUEEZE_EXPANSION,
+   STRAT_267_BB_SQUEEZE_CONTINUE,
+   STRAT_268_BB_SQUEEZE_VOLATILE,
+   STRAT_269_BB_SQUEEZE_POSITION,
+   STRAT_270_BB_SQUEEZE_MAJOR,
+   STRAT_271_KELTNER_MICRO,
+   STRAT_272_KELTNER_FAST,
+   STRAT_273_KELTNER_SHORT,
+   STRAT_274_KELTNER_INTRADAY,
+   STRAT_275_KELTNER_SWING,
+   STRAT_276_KELTNER_EXPANSION,
+   STRAT_277_KELTNER_CONTINUE,
+   STRAT_278_KELTNER_VOLATILE,
+   STRAT_279_KELTNER_POSITION,
+   STRAT_280_KELTNER_MAJOR,
+   STRAT_281_BB_WALK_MICRO,
+   STRAT_282_BB_WALK_FAST,
+   STRAT_283_BB_WALK_SHORT,
+   STRAT_284_BB_WALK_INTRADAY,
+   STRAT_285_BB_WALK_SWING,
+   STRAT_286_BB_WALK_EXPANSION,
+   STRAT_287_BB_WALK_CONTINUE,
+   STRAT_288_BB_WALK_VOLATILE,
+   STRAT_289_BB_WALK_POSITION,
+   STRAT_290_BB_WALK_MAJOR,
+   STRAT_291_ENV_REVERT_MICRO,
+   STRAT_292_ENV_REVERT_FAST,
+   STRAT_293_ENV_REVERT_SHORT,
+   STRAT_294_ENV_REVERT_INTRADAY,
+   STRAT_295_ENV_REVERT_SWING,
+   STRAT_296_ENV_REVERT_EXPANSION,
+   STRAT_297_ENV_REVERT_CONTINUE,
+   STRAT_298_ENV_REVERT_VOLATILE,
+   STRAT_299_ENV_REVERT_POSITION,
+   STRAT_300_ENV_REVERT_MAJOR,
+   STRAT_301_ADX_TREND_MICRO,
+   STRAT_302_ADX_TREND_FAST,
+   STRAT_303_ADX_TREND_SHORT,
+   STRAT_304_ADX_TREND_INTRADAY,
+   STRAT_305_ADX_TREND_SWING,
+   STRAT_306_ADX_TREND_EXPANSION,
+   STRAT_307_ADX_TREND_CONTINUE,
+   STRAT_308_ADX_TREND_VOLATILE,
+   STRAT_309_ADX_TREND_POSITION,
+   STRAT_310_ADX_TREND_MAJOR,
+   STRAT_311_SAR_FLIP_MICRO,
+   STRAT_312_SAR_FLIP_FAST,
+   STRAT_313_SAR_FLIP_SHORT,
+   STRAT_314_SAR_FLIP_INTRADAY,
+   STRAT_315_SAR_FLIP_SWING,
+   STRAT_316_SAR_FLIP_EXPANSION,
+   STRAT_317_SAR_FLIP_CONTINUE,
+   STRAT_318_SAR_FLIP_VOLATILE,
+   STRAT_319_SAR_FLIP_POSITION,
+   STRAT_320_SAR_FLIP_MAJOR,
+   STRAT_321_SUPERTREND_MICRO,
+   STRAT_322_SUPERTREND_FAST,
+   STRAT_323_SUPERTREND_SHORT,
+   STRAT_324_SUPERTREND_INTRADAY,
+   STRAT_325_SUPERTREND_SWING,
+   STRAT_326_SUPERTREND_EXPANSION,
+   STRAT_327_SUPERTREND_CONTINUE,
+   STRAT_328_SUPERTREND_VOLATILE,
+   STRAT_329_SUPERTREND_POSITION,
+   STRAT_330_SUPERTREND_MAJOR,
+   STRAT_331_CCI_TRND_MICRO,
+   STRAT_332_CCI_TRND_FAST,
+   STRAT_333_CCI_TRND_SHORT,
+   STRAT_334_CCI_TRND_INTRADAY,
+   STRAT_335_CCI_TRND_SWING,
+   STRAT_336_CCI_TRND_EXPANSION,
+   STRAT_337_CCI_TRND_CONTINUE,
+   STRAT_338_CCI_TRND_VOLATILE,
+   STRAT_339_CCI_TRND_POSITION,
+   STRAT_340_CCI_TRND_MAJOR,
+   STRAT_341_CCI_EXTR_MICRO,
+   STRAT_342_CCI_EXTR_FAST,
+   STRAT_343_CCI_EXTR_SHORT,
+   STRAT_344_CCI_EXTR_INTRADAY,
+   STRAT_345_CCI_EXTR_SWING,
+   STRAT_346_CCI_EXTR_EXPANSION,
+   STRAT_347_CCI_EXTR_CONTINUE,
+   STRAT_348_CCI_EXTR_VOLATILE,
+   STRAT_349_CCI_EXTR_POSITION,
+   STRAT_350_CCI_EXTR_MAJOR,
+   STRAT_351_MFI_MICRO,
+   STRAT_352_MFI_FAST,
+   STRAT_353_MFI_SHORT,
+   STRAT_354_MFI_INTRADAY,
+   STRAT_355_MFI_SWING,
+   STRAT_356_MFI_EXPANSION,
+   STRAT_357_MFI_CONTINUE,
+   STRAT_358_MFI_VOLATILE,
+   STRAT_359_MFI_POSITION,
+   STRAT_360_MFI_MAJOR,
+   STRAT_361_OBV_TREND_MICRO,
+   STRAT_362_OBV_TREND_FAST,
+   STRAT_363_OBV_TREND_SHORT,
+   STRAT_364_OBV_TREND_INTRADAY,
+   STRAT_365_OBV_TREND_SWING,
+   STRAT_366_OBV_TREND_EXPANSION,
+   STRAT_367_OBV_TREND_CONTINUE,
+   STRAT_368_OBV_TREND_VOLATILE,
+   STRAT_369_OBV_TREND_POSITION,
+   STRAT_370_OBV_TREND_MAJOR,
+   STRAT_371_FORCE_MICRO,
+   STRAT_372_FORCE_FAST,
+   STRAT_373_FORCE_SHORT,
+   STRAT_374_FORCE_INTRADAY,
+   STRAT_375_FORCE_SWING,
+   STRAT_376_FORCE_EXPANSION,
+   STRAT_377_FORCE_CONTINUE,
+   STRAT_378_FORCE_VOLATILE,
+   STRAT_379_FORCE_POSITION,
+   STRAT_380_FORCE_MAJOR,
+   STRAT_381_VOL_BREAK_MICRO,
+   STRAT_382_VOL_BREAK_FAST,
+   STRAT_383_VOL_BREAK_SHORT,
+   STRAT_384_VOL_BREAK_INTRADAY,
+   STRAT_385_VOL_BREAK_SWING,
+   STRAT_386_VOL_BREAK_EXPANSION,
+   STRAT_387_VOL_BREAK_CONTINUE,
+   STRAT_388_VOL_BREAK_VOLATILE,
+   STRAT_389_VOL_BREAK_POSITION,
+   STRAT_390_VOL_BREAK_MAJOR,
+   STRAT_391_ACCELERATOR_MICRO,
+   STRAT_392_ACCELERATOR_FAST,
+   STRAT_393_ACCELERATOR_SHORT,
+   STRAT_394_ACCELERATOR_INTRADAY,
+   STRAT_395_ACCELERATOR_SWING,
+   STRAT_396_ACCELERATOR_EXPANSION,
+   STRAT_397_ACCELERATOR_CONTINUE,
+   STRAT_398_ACCELERATOR_VOLATILE,
+   STRAT_399_ACCELERATOR_POSITION,
+   STRAT_400_ACCELERATOR_MAJOR,
+   STRAT_401_ENGULFING_MICRO,
+   STRAT_402_ENGULFING_FAST,
+   STRAT_403_ENGULFING_SHORT,
+   STRAT_404_ENGULFING_INTRADAY,
+   STRAT_405_ENGULFING_SWING,
+   STRAT_406_ENGULFING_EXPANSION,
+   STRAT_407_ENGULFING_CONTINUE,
+   STRAT_408_ENGULFING_VOLATILE,
+   STRAT_409_ENGULFING_POSITION,
+   STRAT_410_ENGULFING_MAJOR,
+   STRAT_411_PIN_BAR_MICRO,
+   STRAT_412_PIN_BAR_FAST,
+   STRAT_413_PIN_BAR_SHORT,
+   STRAT_414_PIN_BAR_INTRADAY,
+   STRAT_415_PIN_BAR_SWING,
+   STRAT_416_PIN_BAR_EXPANSION,
+   STRAT_417_PIN_BAR_CONTINUE,
+   STRAT_418_PIN_BAR_VOLATILE,
+   STRAT_419_PIN_BAR_POSITION,
+   STRAT_420_PIN_BAR_MAJOR,
+   STRAT_421_INSIDE_BAR_MICRO,
+   STRAT_422_INSIDE_BAR_FAST,
+   STRAT_423_INSIDE_BAR_SHORT,
+   STRAT_424_INSIDE_BAR_INTRADAY,
+   STRAT_425_INSIDE_BAR_SWING,
+   STRAT_426_INSIDE_BAR_EXPANSION,
+   STRAT_427_INSIDE_BAR_CONTINUE,
+   STRAT_428_INSIDE_BAR_VOLATILE,
+   STRAT_429_INSIDE_BAR_POSITION,
+   STRAT_430_INSIDE_BAR_MAJOR,
+   STRAT_431_THREE_BAR_MICRO,
+   STRAT_432_THREE_BAR_FAST,
+   STRAT_433_THREE_BAR_SHORT,
+   STRAT_434_THREE_BAR_INTRADAY,
+   STRAT_435_THREE_BAR_SWING,
+   STRAT_436_THREE_BAR_EXPANSION,
+   STRAT_437_THREE_BAR_CONTINUE,
+   STRAT_438_THREE_BAR_VOLATILE,
+   STRAT_439_THREE_BAR_POSITION,
+   STRAT_440_THREE_BAR_MAJOR,
+   STRAT_441_KEY_LEVEL_MICRO,
+   STRAT_442_KEY_LEVEL_FAST,
+   STRAT_443_KEY_LEVEL_SHORT,
+   STRAT_444_KEY_LEVEL_INTRADAY,
+   STRAT_445_KEY_LEVEL_SWING,
+   STRAT_446_KEY_LEVEL_EXPANSION,
+   STRAT_447_KEY_LEVEL_CONTINUE,
+   STRAT_448_KEY_LEVEL_VOLATILE,
+   STRAT_449_KEY_LEVEL_POSITION,
+   STRAT_450_KEY_LEVEL_MAJOR,
+   STRAT_451_EMA_RSI_MICRO,
+   STRAT_452_EMA_RSI_FAST,
+   STRAT_453_EMA_RSI_SHORT,
+   STRAT_454_EMA_RSI_INTRADAY,
+   STRAT_455_EMA_RSI_SWING,
+   STRAT_456_EMA_RSI_EXPANSION,
+   STRAT_457_EMA_RSI_CONTINUE,
+   STRAT_458_EMA_RSI_VOLATILE,
+   STRAT_459_EMA_RSI_POSITION,
+   STRAT_460_EMA_RSI_MAJOR,
+   STRAT_461_MACD_BANDS_MICRO,
+   STRAT_462_MACD_BANDS_FAST,
+   STRAT_463_MACD_BANDS_SHORT,
+   STRAT_464_MACD_BANDS_INTRADAY,
+   STRAT_465_MACD_BANDS_SWING,
+   STRAT_466_MACD_BANDS_EXPANSION,
+   STRAT_467_MACD_BANDS_CONTINUE,
+   STRAT_468_MACD_BANDS_VOLATILE,
+   STRAT_469_MACD_BANDS_POSITION,
+   STRAT_470_MACD_BANDS_MAJOR,
+   STRAT_471_STOCH_ADX_MICRO,
+   STRAT_472_STOCH_ADX_FAST,
+   STRAT_473_STOCH_ADX_SHORT,
+   STRAT_474_STOCH_ADX_INTRADAY,
+   STRAT_475_STOCH_ADX_SWING,
+   STRAT_476_STOCH_ADX_EXPANSION,
+   STRAT_477_STOCH_ADX_CONTINUE,
+   STRAT_478_STOCH_ADX_VOLATILE,
+   STRAT_479_STOCH_ADX_POSITION,
+   STRAT_480_STOCH_ADX_MAJOR,
+   STRAT_481_ATR_BREAK_MICRO,
+   STRAT_482_ATR_BREAK_FAST,
+   STRAT_483_ATR_BREAK_SHORT,
+   STRAT_484_ATR_BREAK_INTRADAY,
+   STRAT_485_ATR_BREAK_SWING,
+   STRAT_486_ATR_BREAK_EXPANSION,
+   STRAT_487_ATR_BREAK_CONTINUE,
+   STRAT_488_ATR_BREAK_VOLATILE,
+   STRAT_489_ATR_BREAK_POSITION,
+   STRAT_490_ATR_BREAK_MAJOR,
+   STRAT_491_TREND_MOM_MICRO,
+   STRAT_492_TREND_MOM_FAST,
+   STRAT_493_TREND_MOM_SHORT,
+   STRAT_494_TREND_MOM_INTRADAY,
+   STRAT_495_TREND_MOM_SWING,
+   STRAT_496_TREND_MOM_EXPANSION,
+   STRAT_497_TREND_MOM_CONTINUE,
+   STRAT_498_TREND_MOM_VOLATILE,
+   STRAT_499_TREND_MOM_POSITION,
+   STRAT_500_TREND_MOM_MAJOR
 };
 
 input group "Strategy Selection"
-input ENUM_STRATEGY_MODE StrategyMode = STRATEGY_ALL_100;
+input ENUM_STRATEGY_MODE StrategyMode = STRATEGY_ALL;
 input ENUM_NAMED_STRATEGY SelectedStrategy = STRAT_001_EMA_SCALP_CROSS; // Used when StrategyMode = STRATEGY_SINGLE
 input ENUM_SIGNAL_DIRECTION AllowedDirection = SIGNAL_BOTH;
-input int MinVotesToTrade = 1;                      // For all-100 mode: number of matching strategy signals required
+input int MinVotesToTrade = 1;                      // For all-strategy mode: number of matching strategy signals required
 input bool OneTradePerBar = true;
 input bool ReverseSignals = false;                  // If true, BUY signals become SELL and vice versa; SL/TP distances swap so price levels mirror
 
@@ -209,7 +609,7 @@ enum ENUM_PROP_SPAWN_INTERVAL
 };
 
 input group "Propfirm All-Strategy Backtest"
-input bool EnablePropfirmBacktestMode = false;      // If true, no real trades are placed. It virtually tests all 100 strategies in this EA.
+input bool EnablePropfirmBacktestMode = false;      // If true, no real trades are placed. It virtually tests all 500 strategies in this EA.
 input double PropStartingBalance = 5000.0;
 input double PropMaxTotalDrawdownPercent = 6.0;
 input double PropProfitTargetPercent = 10.0;
@@ -224,7 +624,7 @@ input int PropCloseAllMinuteUTC = 30;
 input int PropResumeSignalsHourUTC = 1;
 input int PropResumeSignalsMinuteUTC = 30;
 input bool PropRollingStartMode = true;               // If true, spawns a fresh run per strategy (interval controlled below)
-input ENUM_PROP_SPAWN_INTERVAL PropSpawnInterval = SPAWN_DAILY_AT_RESUME; // How often to spawn a fresh batch of 100 runs (skips pause/close window)
+input ENUM_PROP_SPAWN_INTERVAL PropSpawnInterval = SPAWN_DAILY_AT_RESUME; // How often to spawn a fresh batch of 500 runs
 input int PropMaxStartDays = 0;                       // 0 = unlimited spawn batches per strategy
 input string PropHtmlReportFileName = "Propfirm_100_Strategy_Report.html";
 input double PropRecencyHalfLifeDays = 14.0;            // Half-life in days for recency weighting (0=disabled, ranks by raw pass rate)
@@ -234,7 +634,7 @@ input bool EnableCsvLog = true;
 input string LogFileName = "HundredStrategyEA_Log.csv";
 input bool PrintDetailedLog = true;
 
-#define PROP_STRATEGY_COUNT 100
+#define PROP_STRATEGY_COUNT 500
 
 struct PropVirtualPosition
 {
@@ -350,9 +750,9 @@ int OnInit()
    }
 
    int selectedStrategyId = (int)SelectedStrategy;
-   if(selectedStrategyId < 1 || selectedStrategyId > 100)
+   if(selectedStrategyId < 1 || selectedStrategyId > PROP_STRATEGY_COUNT)
    {
-      LogEvent("INIT_ERROR", "SelectedStrategy must be between 1 and 100");
+      LogEvent("INIT_ERROR", "SelectedStrategy must be between 1 and " + IntegerToString(PROP_STRATEGY_COUNT));
       return INIT_PARAMETERS_INCORRECT;
    }
 
@@ -368,7 +768,7 @@ int OnInit()
    EventSetMillisecondTimer(1000);
    CreateDashboard();
    UpdateDashboard();
-   LogEvent("INIT", "HundredStrategyEA started on " + _Symbol + " | mode=" + (StrategyMode == STRATEGY_SINGLE ? "SINGLE" : "ALL-100"));
+   LogEvent("INIT", "HundredStrategyEA started on " + _Symbol + " | mode=" + (StrategyMode == STRATEGY_SINGLE ? "SINGLE" : "ALL-" + IntegerToString(PROP_STRATEGY_COUNT)));
    return INIT_SUCCEEDED;
 }
 
@@ -479,7 +879,7 @@ void EvaluateStrategies(StrategySignal &signal)
       return;
    }
 
-   for(int id = 1; id <= 100; id++)
+   for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
       EvaluateStrategy(id, signal);
 }
 
@@ -505,6 +905,46 @@ void EvaluateStrategy(const int id, StrategySignal &signal)
       case 7: result = MomentumSignal(10 + variant, threshold); break;
       case 8: result = AtrChannelSignal(14 + variant, 1.0 + variant * 0.12); break;
       case 9: result = PriceActionSignal(lookback); break;
+      case 10: result = EmaSlopeSignal(5 + variant * 3); break;
+      case 11: result = EmaCrossFilteredSignal(5 + variant * 2, 20 + variant * 5, 50 + variant * 10); break;
+      case 12: result = EmaRibbonSignal(5 + variant * 2); break;
+      case 13: result = EnvelopeSignal(14 + variant, 0.1 + variant * 0.05); break;
+      case 14: result = AlligatorSignal(5 + variant); break;
+      case 15: result = RsiMidlineSignal(7 + variant * 2); break;
+      case 16: result = RsiExtremeSignal(7 + variant * 2, 65.0 + variant * 2.0); break;
+      case 17: result = RsiTrendSignal(7 + variant * 2, 55.0 + variant * 2.0); break;
+      case 18: result = RviSignal(7 + variant * 2); break;
+      case 19: result = DeMarkerSignal(7 + variant * 2, 0.3 + variant * 0.05); break;
+      case 20: result = MacdZeroSignal(8 + variant, 21 + variant * 2, 5 + variant); break;
+      case 21: result = MacdHistSignal(8 + variant, 21 + variant * 2, 5 + variant); break;
+      case 22: result = OsMaSignal(8 + variant, 21 + variant * 2, 5 + variant); break;
+      case 23: result = StochRsiSignal(7 + variant * 2, 14 + variant); break;
+      case 24: result = WilliamsPrSignal(7 + variant * 2, 20.0 + variant * 5.0); break;
+      case 25: result = DonchianSignal(10 + variant * 3); break;
+      case 26: result = BbSqueezeSignal(14 + variant, 1.5 + variant * 0.15); break;
+      case 27: result = KeltnerSignal(14 + variant, 1.0 + variant * 0.2); break;
+      case 28: result = BbWalkSignal(14 + variant, 1.5 + variant * 0.15); break;
+      case 29: result = EnvelopeRevertSignal(14 + variant, 0.1 + variant * 0.05); break;
+      case 30: result = AdxTrendSignal(14 + variant, 20.0 + variant * 3.0); break;
+      case 31: result = SarFlipSignal(0.01 + variant * 0.005, 0.2 + variant * 0.05); break;
+      case 32: result = SuperTrendSignal(10 + variant, 2.0 + variant * 0.3); break;
+      case 33: result = CciTrendSignal(14 + variant * 2); break;
+      case 34: result = CciExtremeReversalSignal(14 + variant * 2, 150 + variant * 20); break;
+      case 35: result = MfiSignal(14 + variant, 30.0 + variant, 70.0 - variant); break;
+      case 36: result = ObvTrendSignal(10 + variant * 3); break;
+      case 37: result = ForceSignal(10 + variant); break;
+      case 38: result = VolumeBreakoutSignal(10 + variant * 3); break;
+      case 39: result = AcSignal(); break;
+      case 40: result = EngulfingSignal(10 + variant * 3); break;
+      case 41: result = PinBarSignal(10 + variant * 3); break;
+      case 42: result = InsideBarSignal(10 + variant * 3); break;
+      case 43: result = ThreeBarReversalSignal(10 + variant * 3); break;
+      case 44: result = KeyLevelSignal(10 + variant * 3); break;
+      case 45: result = EmaRsiConfirmSignal(5 + variant * 2, 20 + variant * 5, 7 + variant * 2); break;
+      case 46: result = MacdBandsSignal(8 + variant, 21 + variant * 2, 5 + variant, 14 + variant); break;
+      case 47: result = StochAdxSignal(5 + variant, 3, 3, 14 + variant); break;
+      case 48: result = AtrBreakoutSignal(14 + variant, 1.5 + variant * 0.2); break;
+      case 49: result = TrendMomentumSignal(20 + variant * 5, 10 + variant); break;
    }
 
    if(result > 0)
@@ -623,6 +1063,406 @@ string StrategyName(const int id)
       case 98: return "098_PRICE_ACTION_STRUCTURE_BAR";
       case 99: return "099_PRICE_ACTION_POSITION_BAR";
       case 100: return "100_PRICE_ACTION_MAJOR_BAR";
+      case 101: return "101_EMA_SLOPE_MICRO";
+      case 102: return "102_EMA_SLOPE_FAST";
+      case 103: return "103_EMA_SLOPE_SHORT";
+      case 104: return "104_EMA_SLOPE_INTRADAY";
+      case 105: return "105_EMA_SLOPE_SWING";
+      case 106: return "106_EMA_SLOPE_EXPANSION";
+      case 107: return "107_EMA_SLOPE_CONTINUE";
+      case 108: return "108_EMA_SLOPE_VOLATILE";
+      case 109: return "109_EMA_SLOPE_POSITION";
+      case 110: return "110_EMA_SLOPE_MAJOR";
+      case 111: return "111_EMA_XFILT_MICRO";
+      case 112: return "112_EMA_XFILT_FAST";
+      case 113: return "113_EMA_XFILT_SHORT";
+      case 114: return "114_EMA_XFILT_INTRADAY";
+      case 115: return "115_EMA_XFILT_SWING";
+      case 116: return "116_EMA_XFILT_EXPANSION";
+      case 117: return "117_EMA_XFILT_CONTINUE";
+      case 118: return "118_EMA_XFILT_VOLATILE";
+      case 119: return "119_EMA_XFILT_POSITION";
+      case 120: return "120_EMA_XFILT_MAJOR";
+      case 121: return "121_EMA_RIBBON_MICRO";
+      case 122: return "122_EMA_RIBBON_FAST";
+      case 123: return "123_EMA_RIBBON_SHORT";
+      case 124: return "124_EMA_RIBBON_INTRADAY";
+      case 125: return "125_EMA_RIBBON_SWING";
+      case 126: return "126_EMA_RIBBON_EXPANSION";
+      case 127: return "127_EMA_RIBBON_CONTINUE";
+      case 128: return "128_EMA_RIBBON_VOLATILE";
+      case 129: return "129_EMA_RIBBON_POSITION";
+      case 130: return "130_EMA_RIBBON_MAJOR";
+      case 131: return "131_ENVELOPE_MICRO";
+      case 132: return "132_ENVELOPE_FAST";
+      case 133: return "133_ENVELOPE_SHORT";
+      case 134: return "134_ENVELOPE_INTRADAY";
+      case 135: return "135_ENVELOPE_SWING";
+      case 136: return "136_ENVELOPE_EXPANSION";
+      case 137: return "137_ENVELOPE_CONTINUE";
+      case 138: return "138_ENVELOPE_VOLATILE";
+      case 139: return "139_ENVELOPE_POSITION";
+      case 140: return "140_ENVELOPE_MAJOR";
+      case 141: return "141_ALLIGATOR_MICRO";
+      case 142: return "142_ALLIGATOR_FAST";
+      case 143: return "143_ALLIGATOR_SHORT";
+      case 144: return "144_ALLIGATOR_INTRADAY";
+      case 145: return "145_ALLIGATOR_SWING";
+      case 146: return "146_ALLIGATOR_EXPANSION";
+      case 147: return "147_ALLIGATOR_CONTINUE";
+      case 148: return "148_ALLIGATOR_VOLATILE";
+      case 149: return "149_ALLIGATOR_POSITION";
+      case 150: return "150_ALLIGATOR_MAJOR";
+      case 151: return "151_RSI_MID_MICRO";
+      case 152: return "152_RSI_MID_FAST";
+      case 153: return "153_RSI_MID_SHORT";
+      case 154: return "154_RSI_MID_INTRADAY";
+      case 155: return "155_RSI_MID_SWING";
+      case 156: return "156_RSI_MID_EXPANSION";
+      case 157: return "157_RSI_MID_CONTINUE";
+      case 158: return "158_RSI_MID_VOLATILE";
+      case 159: return "159_RSI_MID_POSITION";
+      case 160: return "160_RSI_MID_MAJOR";
+      case 161: return "161_RSI_EXTR_MICRO";
+      case 162: return "162_RSI_EXTR_FAST";
+      case 163: return "163_RSI_EXTR_SHORT";
+      case 164: return "164_RSI_EXTR_INTRADAY";
+      case 165: return "165_RSI_EXTR_SWING";
+      case 166: return "166_RSI_EXTR_EXPANSION";
+      case 167: return "167_RSI_EXTR_CONTINUE";
+      case 168: return "168_RSI_EXTR_VOLATILE";
+      case 169: return "169_RSI_EXTR_POSITION";
+      case 170: return "170_RSI_EXTR_MAJOR";
+      case 171: return "171_RSI_TRND_MICRO";
+      case 172: return "172_RSI_TRND_FAST";
+      case 173: return "173_RSI_TRND_SHORT";
+      case 174: return "174_RSI_TRND_INTRADAY";
+      case 175: return "175_RSI_TRND_SWING";
+      case 176: return "176_RSI_TRND_EXPANSION";
+      case 177: return "177_RSI_TRND_CONTINUE";
+      case 178: return "178_RSI_TRND_VOLATILE";
+      case 179: return "179_RSI_TRND_POSITION";
+      case 180: return "180_RSI_TRND_MAJOR";
+      case 181: return "181_RVI_MICRO";
+      case 182: return "182_RVI_FAST";
+      case 183: return "183_RVI_SHORT";
+      case 184: return "184_RVI_INTRADAY";
+      case 185: return "185_RVI_SWING";
+      case 186: return "186_RVI_EXPANSION";
+      case 187: return "187_RVI_CONTINUE";
+      case 188: return "188_RVI_VOLATILE";
+      case 189: return "189_RVI_POSITION";
+      case 190: return "190_RVI_MAJOR";
+      case 191: return "191_DEMARKER_MICRO";
+      case 192: return "192_DEMARKER_FAST";
+      case 193: return "193_DEMARKER_SHORT";
+      case 194: return "194_DEMARKER_INTRADAY";
+      case 195: return "195_DEMARKER_SWING";
+      case 196: return "196_DEMARKER_EXPANSION";
+      case 197: return "197_DEMARKER_CONTINUE";
+      case 198: return "198_DEMARKER_VOLATILE";
+      case 199: return "199_DEMARKER_POSITION";
+      case 200: return "200_DEMARKER_MAJOR";
+      case 201: return "201_MACD_ZERO_MICRO";
+      case 202: return "202_MACD_ZERO_FAST";
+      case 203: return "203_MACD_ZERO_SHORT";
+      case 204: return "204_MACD_ZERO_INTRADAY";
+      case 205: return "205_MACD_ZERO_SWING";
+      case 206: return "206_MACD_ZERO_EXPANSION";
+      case 207: return "207_MACD_ZERO_CONTINUE";
+      case 208: return "208_MACD_ZERO_VOLATILE";
+      case 209: return "209_MACD_ZERO_POSITION";
+      case 210: return "210_MACD_ZERO_MAJOR";
+      case 211: return "211_MACD_HIST_MICRO";
+      case 212: return "212_MACD_HIST_FAST";
+      case 213: return "213_MACD_HIST_SHORT";
+      case 214: return "214_MACD_HIST_INTRADAY";
+      case 215: return "215_MACD_HIST_SWING";
+      case 216: return "216_MACD_HIST_EXPANSION";
+      case 217: return "217_MACD_HIST_CONTINUE";
+      case 218: return "218_MACD_HIST_VOLATILE";
+      case 219: return "219_MACD_HIST_POSITION";
+      case 220: return "220_MACD_HIST_MAJOR";
+      case 221: return "221_OSMA_MICRO";
+      case 222: return "222_OSMA_FAST";
+      case 223: return "223_OSMA_SHORT";
+      case 224: return "224_OSMA_INTRADAY";
+      case 225: return "225_OSMA_SWING";
+      case 226: return "226_OSMA_EXPANSION";
+      case 227: return "227_OSMA_CONTINUE";
+      case 228: return "228_OSMA_VOLATILE";
+      case 229: return "229_OSMA_POSITION";
+      case 230: return "230_OSMA_MAJOR";
+      case 231: return "231_STOCH_RSI_MICRO";
+      case 232: return "232_STOCH_RSI_FAST";
+      case 233: return "233_STOCH_RSI_SHORT";
+      case 234: return "234_STOCH_RSI_INTRADAY";
+      case 235: return "235_STOCH_RSI_SWING";
+      case 236: return "236_STOCH_RSI_EXPANSION";
+      case 237: return "237_STOCH_RSI_CONTINUE";
+      case 238: return "238_STOCH_RSI_VOLATILE";
+      case 239: return "239_STOCH_RSI_POSITION";
+      case 240: return "240_STOCH_RSI_MAJOR";
+      case 241: return "241_WILLIAMS_MICRO";
+      case 242: return "242_WILLIAMS_FAST";
+      case 243: return "243_WILLIAMS_SHORT";
+      case 244: return "244_WILLIAMS_INTRADAY";
+      case 245: return "245_WILLIAMS_SWING";
+      case 246: return "246_WILLIAMS_EXPANSION";
+      case 247: return "247_WILLIAMS_CONTINUE";
+      case 248: return "248_WILLIAMS_VOLATILE";
+      case 249: return "249_WILLIAMS_POSITION";
+      case 250: return "250_WILLIAMS_MAJOR";
+      case 251: return "251_DONCHIAN_MICRO";
+      case 252: return "252_DONCHIAN_FAST";
+      case 253: return "253_DONCHIAN_SHORT";
+      case 254: return "254_DONCHIAN_INTRADAY";
+      case 255: return "255_DONCHIAN_SWING";
+      case 256: return "256_DONCHIAN_EXPANSION";
+      case 257: return "257_DONCHIAN_CONTINUE";
+      case 258: return "258_DONCHIAN_VOLATILE";
+      case 259: return "259_DONCHIAN_POSITION";
+      case 260: return "260_DONCHIAN_MAJOR";
+      case 261: return "261_BB_SQUEEZE_MICRO";
+      case 262: return "262_BB_SQUEEZE_FAST";
+      case 263: return "263_BB_SQUEEZE_SHORT";
+      case 264: return "264_BB_SQUEEZE_INTRADAY";
+      case 265: return "265_BB_SQUEEZE_SWING";
+      case 266: return "266_BB_SQUEEZE_EXPANSION";
+      case 267: return "267_BB_SQUEEZE_CONTINUE";
+      case 268: return "268_BB_SQUEEZE_VOLATILE";
+      case 269: return "269_BB_SQUEEZE_POSITION";
+      case 270: return "270_BB_SQUEEZE_MAJOR";
+      case 271: return "271_KELTNER_MICRO";
+      case 272: return "272_KELTNER_FAST";
+      case 273: return "273_KELTNER_SHORT";
+      case 274: return "274_KELTNER_INTRADAY";
+      case 275: return "275_KELTNER_SWING";
+      case 276: return "276_KELTNER_EXPANSION";
+      case 277: return "277_KELTNER_CONTINUE";
+      case 278: return "278_KELTNER_VOLATILE";
+      case 279: return "279_KELTNER_POSITION";
+      case 280: return "280_KELTNER_MAJOR";
+      case 281: return "281_BB_WALK_MICRO";
+      case 282: return "282_BB_WALK_FAST";
+      case 283: return "283_BB_WALK_SHORT";
+      case 284: return "284_BB_WALK_INTRADAY";
+      case 285: return "285_BB_WALK_SWING";
+      case 286: return "286_BB_WALK_EXPANSION";
+      case 287: return "287_BB_WALK_CONTINUE";
+      case 288: return "288_BB_WALK_VOLATILE";
+      case 289: return "289_BB_WALK_POSITION";
+      case 290: return "290_BB_WALK_MAJOR";
+      case 291: return "291_ENV_REVERT_MICRO";
+      case 292: return "292_ENV_REVERT_FAST";
+      case 293: return "293_ENV_REVERT_SHORT";
+      case 294: return "294_ENV_REVERT_INTRADAY";
+      case 295: return "295_ENV_REVERT_SWING";
+      case 296: return "296_ENV_REVERT_EXPANSION";
+      case 297: return "297_ENV_REVERT_CONTINUE";
+      case 298: return "298_ENV_REVERT_VOLATILE";
+      case 299: return "299_ENV_REVERT_POSITION";
+      case 300: return "300_ENV_REVERT_MAJOR";
+      case 301: return "301_ADX_TREND_MICRO";
+      case 302: return "302_ADX_TREND_FAST";
+      case 303: return "303_ADX_TREND_SHORT";
+      case 304: return "304_ADX_TREND_INTRADAY";
+      case 305: return "305_ADX_TREND_SWING";
+      case 306: return "306_ADX_TREND_EXPANSION";
+      case 307: return "307_ADX_TREND_CONTINUE";
+      case 308: return "308_ADX_TREND_VOLATILE";
+      case 309: return "309_ADX_TREND_POSITION";
+      case 310: return "310_ADX_TREND_MAJOR";
+      case 311: return "311_SAR_FLIP_MICRO";
+      case 312: return "312_SAR_FLIP_FAST";
+      case 313: return "313_SAR_FLIP_SHORT";
+      case 314: return "314_SAR_FLIP_INTRADAY";
+      case 315: return "315_SAR_FLIP_SWING";
+      case 316: return "316_SAR_FLIP_EXPANSION";
+      case 317: return "317_SAR_FLIP_CONTINUE";
+      case 318: return "318_SAR_FLIP_VOLATILE";
+      case 319: return "319_SAR_FLIP_POSITION";
+      case 320: return "320_SAR_FLIP_MAJOR";
+      case 321: return "321_SUPERTREND_MICRO";
+      case 322: return "322_SUPERTREND_FAST";
+      case 323: return "323_SUPERTREND_SHORT";
+      case 324: return "324_SUPERTREND_INTRADAY";
+      case 325: return "325_SUPERTREND_SWING";
+      case 326: return "326_SUPERTREND_EXPANSION";
+      case 327: return "327_SUPERTREND_CONTINUE";
+      case 328: return "328_SUPERTREND_VOLATILE";
+      case 329: return "329_SUPERTREND_POSITION";
+      case 330: return "330_SUPERTREND_MAJOR";
+      case 331: return "331_CCI_TRND_MICRO";
+      case 332: return "332_CCI_TRND_FAST";
+      case 333: return "333_CCI_TRND_SHORT";
+      case 334: return "334_CCI_TRND_INTRADAY";
+      case 335: return "335_CCI_TRND_SWING";
+      case 336: return "336_CCI_TRND_EXPANSION";
+      case 337: return "337_CCI_TRND_CONTINUE";
+      case 338: return "338_CCI_TRND_VOLATILE";
+      case 339: return "339_CCI_TRND_POSITION";
+      case 340: return "340_CCI_TRND_MAJOR";
+      case 341: return "341_CCI_EXTR_MICRO";
+      case 342: return "342_CCI_EXTR_FAST";
+      case 343: return "343_CCI_EXTR_SHORT";
+      case 344: return "344_CCI_EXTR_INTRADAY";
+      case 345: return "345_CCI_EXTR_SWING";
+      case 346: return "346_CCI_EXTR_EXPANSION";
+      case 347: return "347_CCI_EXTR_CONTINUE";
+      case 348: return "348_CCI_EXTR_VOLATILE";
+      case 349: return "349_CCI_EXTR_POSITION";
+      case 350: return "350_CCI_EXTR_MAJOR";
+      case 351: return "351_MFI_MICRO";
+      case 352: return "352_MFI_FAST";
+      case 353: return "353_MFI_SHORT";
+      case 354: return "354_MFI_INTRADAY";
+      case 355: return "355_MFI_SWING";
+      case 356: return "356_MFI_EXPANSION";
+      case 357: return "357_MFI_CONTINUE";
+      case 358: return "358_MFI_VOLATILE";
+      case 359: return "359_MFI_POSITION";
+      case 360: return "360_MFI_MAJOR";
+      case 361: return "361_OBV_TREND_MICRO";
+      case 362: return "362_OBV_TREND_FAST";
+      case 363: return "363_OBV_TREND_SHORT";
+      case 364: return "364_OBV_TREND_INTRADAY";
+      case 365: return "365_OBV_TREND_SWING";
+      case 366: return "366_OBV_TREND_EXPANSION";
+      case 367: return "367_OBV_TREND_CONTINUE";
+      case 368: return "368_OBV_TREND_VOLATILE";
+      case 369: return "369_OBV_TREND_POSITION";
+      case 370: return "370_OBV_TREND_MAJOR";
+      case 371: return "371_FORCE_MICRO";
+      case 372: return "372_FORCE_FAST";
+      case 373: return "373_FORCE_SHORT";
+      case 374: return "374_FORCE_INTRADAY";
+      case 375: return "375_FORCE_SWING";
+      case 376: return "376_FORCE_EXPANSION";
+      case 377: return "377_FORCE_CONTINUE";
+      case 378: return "378_FORCE_VOLATILE";
+      case 379: return "379_FORCE_POSITION";
+      case 380: return "380_FORCE_MAJOR";
+      case 381: return "381_VOL_BREAK_MICRO";
+      case 382: return "382_VOL_BREAK_FAST";
+      case 383: return "383_VOL_BREAK_SHORT";
+      case 384: return "384_VOL_BREAK_INTRADAY";
+      case 385: return "385_VOL_BREAK_SWING";
+      case 386: return "386_VOL_BREAK_EXPANSION";
+      case 387: return "387_VOL_BREAK_CONTINUE";
+      case 388: return "388_VOL_BREAK_VOLATILE";
+      case 389: return "389_VOL_BREAK_POSITION";
+      case 390: return "390_VOL_BREAK_MAJOR";
+      case 391: return "391_ACCELERATOR_MICRO";
+      case 392: return "392_ACCELERATOR_FAST";
+      case 393: return "393_ACCELERATOR_SHORT";
+      case 394: return "394_ACCELERATOR_INTRADAY";
+      case 395: return "395_ACCELERATOR_SWING";
+      case 396: return "396_ACCELERATOR_EXPANSION";
+      case 397: return "397_ACCELERATOR_CONTINUE";
+      case 398: return "398_ACCELERATOR_VOLATILE";
+      case 399: return "399_ACCELERATOR_POSITION";
+      case 400: return "400_ACCELERATOR_MAJOR";
+      case 401: return "401_ENGULFING_MICRO";
+      case 402: return "402_ENGULFING_FAST";
+      case 403: return "403_ENGULFING_SHORT";
+      case 404: return "404_ENGULFING_INTRADAY";
+      case 405: return "405_ENGULFING_SWING";
+      case 406: return "406_ENGULFING_EXPANSION";
+      case 407: return "407_ENGULFING_CONTINUE";
+      case 408: return "408_ENGULFING_VOLATILE";
+      case 409: return "409_ENGULFING_POSITION";
+      case 410: return "410_ENGULFING_MAJOR";
+      case 411: return "411_PIN_BAR_MICRO";
+      case 412: return "412_PIN_BAR_FAST";
+      case 413: return "413_PIN_BAR_SHORT";
+      case 414: return "414_PIN_BAR_INTRADAY";
+      case 415: return "415_PIN_BAR_SWING";
+      case 416: return "416_PIN_BAR_EXPANSION";
+      case 417: return "417_PIN_BAR_CONTINUE";
+      case 418: return "418_PIN_BAR_VOLATILE";
+      case 419: return "419_PIN_BAR_POSITION";
+      case 420: return "420_PIN_BAR_MAJOR";
+      case 421: return "421_INSIDE_BAR_MICRO";
+      case 422: return "422_INSIDE_BAR_FAST";
+      case 423: return "423_INSIDE_BAR_SHORT";
+      case 424: return "424_INSIDE_BAR_INTRADAY";
+      case 425: return "425_INSIDE_BAR_SWING";
+      case 426: return "426_INSIDE_BAR_EXPANSION";
+      case 427: return "427_INSIDE_BAR_CONTINUE";
+      case 428: return "428_INSIDE_BAR_VOLATILE";
+      case 429: return "429_INSIDE_BAR_POSITION";
+      case 430: return "430_INSIDE_BAR_MAJOR";
+      case 431: return "431_THREE_BAR_MICRO";
+      case 432: return "432_THREE_BAR_FAST";
+      case 433: return "433_THREE_BAR_SHORT";
+      case 434: return "434_THREE_BAR_INTRADAY";
+      case 435: return "435_THREE_BAR_SWING";
+      case 436: return "436_THREE_BAR_EXPANSION";
+      case 437: return "437_THREE_BAR_CONTINUE";
+      case 438: return "438_THREE_BAR_VOLATILE";
+      case 439: return "439_THREE_BAR_POSITION";
+      case 440: return "440_THREE_BAR_MAJOR";
+      case 441: return "441_KEY_LEVEL_MICRO";
+      case 442: return "442_KEY_LEVEL_FAST";
+      case 443: return "443_KEY_LEVEL_SHORT";
+      case 444: return "444_KEY_LEVEL_INTRADAY";
+      case 445: return "445_KEY_LEVEL_SWING";
+      case 446: return "446_KEY_LEVEL_EXPANSION";
+      case 447: return "447_KEY_LEVEL_CONTINUE";
+      case 448: return "448_KEY_LEVEL_VOLATILE";
+      case 449: return "449_KEY_LEVEL_POSITION";
+      case 450: return "450_KEY_LEVEL_MAJOR";
+      case 451: return "451_EMA_RSI_MICRO";
+      case 452: return "452_EMA_RSI_FAST";
+      case 453: return "453_EMA_RSI_SHORT";
+      case 454: return "454_EMA_RSI_INTRADAY";
+      case 455: return "455_EMA_RSI_SWING";
+      case 456: return "456_EMA_RSI_EXPANSION";
+      case 457: return "457_EMA_RSI_CONTINUE";
+      case 458: return "458_EMA_RSI_VOLATILE";
+      case 459: return "459_EMA_RSI_POSITION";
+      case 460: return "460_EMA_RSI_MAJOR";
+      case 461: return "461_MACD_BANDS_MICRO";
+      case 462: return "462_MACD_BANDS_FAST";
+      case 463: return "463_MACD_BANDS_SHORT";
+      case 464: return "464_MACD_BANDS_INTRADAY";
+      case 465: return "465_MACD_BANDS_SWING";
+      case 466: return "466_MACD_BANDS_EXPANSION";
+      case 467: return "467_MACD_BANDS_CONTINUE";
+      case 468: return "468_MACD_BANDS_VOLATILE";
+      case 469: return "469_MACD_BANDS_POSITION";
+      case 470: return "470_MACD_BANDS_MAJOR";
+      case 471: return "471_STOCH_ADX_MICRO";
+      case 472: return "472_STOCH_ADX_FAST";
+      case 473: return "473_STOCH_ADX_SHORT";
+      case 474: return "474_STOCH_ADX_INTRADAY";
+      case 475: return "475_STOCH_ADX_SWING";
+      case 476: return "476_STOCH_ADX_EXPANSION";
+      case 477: return "477_STOCH_ADX_CONTINUE";
+      case 478: return "478_STOCH_ADX_VOLATILE";
+      case 479: return "479_STOCH_ADX_POSITION";
+      case 480: return "480_STOCH_ADX_MAJOR";
+      case 481: return "481_ATR_BREAK_MICRO";
+      case 482: return "482_ATR_BREAK_FAST";
+      case 483: return "483_ATR_BREAK_SHORT";
+      case 484: return "484_ATR_BREAK_INTRADAY";
+      case 485: return "485_ATR_BREAK_SWING";
+      case 486: return "486_ATR_BREAK_EXPANSION";
+      case 487: return "487_ATR_BREAK_CONTINUE";
+      case 488: return "488_ATR_BREAK_VOLATILE";
+      case 489: return "489_ATR_BREAK_POSITION";
+      case 490: return "490_ATR_BREAK_MAJOR";
+      case 491: return "491_TREND_MOM_MICRO";
+      case 492: return "492_TREND_MOM_FAST";
+      case 493: return "493_TREND_MOM_SHORT";
+      case 494: return "494_TREND_MOM_INTRADAY";
+      case 495: return "495_TREND_MOM_SWING";
+      case 496: return "496_TREND_MOM_EXPANSION";
+      case 497: return "497_TREND_MOM_CONTINUE";
+      case 498: return "498_TREND_MOM_VOLATILE";
+      case 499: return "499_TREND_MOM_POSITION";
+      case 500: return "500_TREND_MOM_MAJOR";
    }
    return "UNKNOWN_STRATEGY";
 }
@@ -731,6 +1571,492 @@ int PriceActionSignal(const int lookback)
    double rangeAvg = AverageRange(lookback);
    if(close1 > open1 && close1 > high2 && (close1 - open1) > rangeAvg * 0.35) return 1;
    if(close1 < open1 && close1 < low2 && (open1 - close1) > rangeAvg * 0.35) return -1;
+   return 0;
+}
+
+int EmaSlopeSignal(const int period)
+{
+   double m1 = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double m3 = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_EMA, PRICE_CLOSE), 3);
+   double close1 = iClose(_Symbol, _Period, 1);
+   if(m1 > m3 && close1 > m1) return 1;
+   if(m1 < m3 && close1 < m1) return -1;
+   return 0;
+}
+
+int EmaCrossFilteredSignal(const int fast, const int slow, const int filterPeriod)
+{
+   double f1 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double f2 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 2);
+   double s1 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double s2 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 2);
+   double filt = IndicatorValue(iMA(_Symbol, _Period, filterPeriod, 0, MODE_SMA, PRICE_CLOSE), 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   if(f2 <= s2 && f1 > s1 && close1 > filt) return 1;
+   if(f2 >= s2 && f1 < s1 && close1 < filt) return -1;
+   return 0;
+}
+
+int EmaRibbonSignal(const int period)
+{
+   double e1 = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double e2 = IndicatorValue(iMA(_Symbol, _Period, period + 5, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double e3 = IndicatorValue(iMA(_Symbol, _Period, period + 10, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   if(close1 > e1 && e1 > e2 && e2 > e3) return 1;
+   if(close1 < e1 && e1 < e2 && e2 < e3) return -1;
+   return 0;
+}
+
+int EnvelopeSignal(const int period, const double deviation)
+{
+   int handle = iEnvelopes(_Symbol, _Period, period, 0, MODE_SMA, PRICE_CLOSE, deviation);
+   double upper = BufferValue(handle, 0, 1);
+   double lower = BufferValue(handle, 1, 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   if(close2 <= upper && close1 > upper) return 1;
+   if(close2 >= lower && close1 < lower) return -1;
+   return 0;
+}
+
+int AlligatorSignal(const int lipsPeriod)
+{
+   int jawsPeriod = lipsPeriod + 8;
+   int teethPeriod = lipsPeriod + 5;
+   int handle = iAlligator(_Symbol, _Period, jawsPeriod, 8, teethPeriod, 5, lipsPeriod, 3, MODE_SMMA, PRICE_MEDIAN);
+   double jaws = BufferValue(handle, 0, 1);
+   double teeth = BufferValue(handle, 1, 1);
+   double lips = BufferValue(handle, 2, 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   if(close1 > lips && lips > teeth && teeth > jaws) return 1;
+   if(close1 < lips && lips < teeth && teeth < jaws) return -1;
+   return 0;
+}
+
+int RsiMidlineSignal(const int period)
+{
+   double r1 = IndicatorValue(iRSI(_Symbol, _Period, period, PRICE_CLOSE), 1);
+   double r2 = IndicatorValue(iRSI(_Symbol, _Period, period, PRICE_CLOSE), 2);
+   if(r2 < 50.0 && r1 >= 50.0) return 1;
+   if(r2 > 50.0 && r1 <= 50.0) return -1;
+   return 0;
+}
+
+int RsiExtremeSignal(const int period, const double level)
+{
+   double r1 = IndicatorValue(iRSI(_Symbol, _Period, period, PRICE_CLOSE), 1);
+   double r2 = IndicatorValue(iRSI(_Symbol, _Period, period, PRICE_CLOSE), 2);
+   if(r2 < level && r1 >= level) return 1;
+   if(r2 > 100.0 - level && r1 <= 100.0 - level) return -1;
+   return 0;
+}
+
+int RsiTrendSignal(const int period, const double level)
+{
+   double r1 = IndicatorValue(iRSI(_Symbol, _Period, period, PRICE_CLOSE), 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   if(r1 > level && close1 > close2) return 1;
+   if(r1 < 100.0 - level && close1 < close2) return -1;
+   return 0;
+}
+
+int RviSignal(const int period)
+{
+   int handle = iRVI(_Symbol, _Period, period);
+   double m1 = BufferValue(handle, 0, 1);
+   double s1 = BufferValue(handle, 1, 1);
+   double m2 = BufferValue(handle, 0, 2);
+   double s2 = BufferValue(handle, 1, 2);
+   if(m2 <= s2 && m1 > s1) return 1;
+   if(m2 >= s2 && m1 < s1) return -1;
+   return 0;
+}
+
+int DeMarkerSignal(const int period, const double level)
+{
+   double d1 = IndicatorValue(iDeMarker(_Symbol, _Period, period), 1);
+   double d2 = IndicatorValue(iDeMarker(_Symbol, _Period, period), 2);
+   if(d2 < level && d1 >= level) return 1;
+   if(d2 > 1.0 - level && d1 <= 1.0 - level) return -1;
+   return 0;
+}
+
+int MacdZeroSignal(const int fast, const int slow, const int signalPeriod)
+{
+   int handle = iMACD(_Symbol, _Period, fast, slow, signalPeriod, PRICE_CLOSE);
+   double main1 = BufferValue(handle, 0, 1);
+   double main2 = BufferValue(handle, 0, 2);
+   if(main2 <= 0.0 && main1 > 0.0) return 1;
+   if(main2 >= 0.0 && main1 < 0.0) return -1;
+   return 0;
+}
+
+int MacdHistSignal(const int fast, const int slow, const int signalPeriod)
+{
+   int handle = iMACD(_Symbol, _Period, fast, slow, signalPeriod, PRICE_CLOSE);
+   double main1 = BufferValue(handle, 0, 1);
+   double sig1 = BufferValue(handle, 1, 1);
+   double main2 = BufferValue(handle, 0, 2);
+   double sig2 = BufferValue(handle, 1, 2);
+   double hist1 = main1 - sig1;
+   double hist2 = main2 - sig2;
+   if(hist2 <= 0.0 && hist1 > 0.0) return 1;
+   if(hist2 >= 0.0 && hist1 < 0.0) return -1;
+   return 0;
+}
+
+int OsMaSignal(const int fast, const int slow, const int signalPeriod)
+{
+   int handle = iOsMA(_Symbol, _Period, fast, slow, signalPeriod, PRICE_CLOSE);
+   double v1 = BufferValue(handle, 0, 1);
+   double v2 = BufferValue(handle, 0, 2);
+   if(v2 <= 0.0 && v1 > 0.0) return 1;
+   if(v2 >= 0.0 && v1 < 0.0) return -1;
+   return 0;
+}
+
+int StochRsiSignal(const int rsiPeriod, const int period)
+{
+   double r1 = IndicatorValue(iRSI(_Symbol, _Period, rsiPeriod, PRICE_CLOSE), 1);
+   double r2 = IndicatorValue(iRSI(_Symbol, _Period, rsiPeriod, PRICE_CLOSE), 2);
+   double r3 = IndicatorValue(iRSI(_Symbol, _Period, rsiPeriod, PRICE_CLOSE), 3);
+   double highest = r1;
+   if(r2 > highest) highest = r2;
+   if(r3 > highest) highest = r3;
+   double lowest = r1;
+   if(r2 < lowest) lowest = r2;
+   if(r3 < lowest) lowest = r3;
+   double range = highest - lowest;
+   if(range > 0.0)
+   {
+      double stochRsi = (r1 - lowest) / range;
+      double stochRsi2 = (r2 - lowest) / range;
+      double threshold = 0.2 + (period - 14) * 0.02;
+      if(stochRsi2 < threshold && stochRsi >= threshold) return 1;
+      if(stochRsi2 > 1.0 - threshold && stochRsi <= 1.0 - threshold) return -1;
+   }
+   return 0;
+}
+
+int WilliamsPrSignal(const int period, const double level)
+{
+   double w1 = IndicatorValue(iWPR(_Symbol, _Period, period), 1);
+   double w2 = IndicatorValue(iWPR(_Symbol, _Period, period), 2);
+   if(w2 < -100.0 + level && w1 >= -100.0 + level) return 1;
+   if(w2 > -level && w1 <= -level) return -1;
+   return 0;
+}
+
+int DonchianSignal(const int lookback)
+{
+   int hi = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 1);
+   int lo = iLowest(_Symbol, _Period, MODE_LOW, lookback, 1);
+   if(hi < 0 || lo < 0) return 0;
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   if(close2 <= iHigh(_Symbol, _Period, hi) && close1 > iHigh(_Symbol, _Period, hi)) return 1;
+   if(close2 >= iLow(_Symbol, _Period, lo) && close1 < iLow(_Symbol, _Period, lo)) return -1;
+   return 0;
+}
+
+int BbSqueezeSignal(const int period, const double deviation)
+{
+   int handle = iBands(_Symbol, _Period, period, 0, deviation, PRICE_CLOSE);
+   double upper1 = BufferValue(handle, 1, 1);
+   double lower1 = BufferValue(handle, 2, 1);
+   double middle1 = BufferValue(handle, 0, 1);
+   double upper2 = BufferValue(handle, 1, 2);
+   double lower2 = BufferValue(handle, 2, 2);
+   double bw1 = upper1 - lower1;
+   double bw2 = upper2 - lower2;
+   double close1 = iClose(_Symbol, _Period, 1);
+   if(bw2 < bw1 && close1 > middle1) return 1;
+   if(bw2 < bw1 && close1 < middle1) return -1;
+   return 0;
+}
+
+int KeltnerSignal(const int period, const double multiplier)
+{
+   double atr = IndicatorValue(iATR(_Symbol, _Period, period), 1);
+   double ma = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   if(close2 <= ma + multiplier * atr && close1 > ma + multiplier * atr) return 1;
+   if(close2 >= ma - multiplier * atr && close1 < ma - multiplier * atr) return -1;
+   return 0;
+}
+
+int BbWalkSignal(const int period, const double deviation)
+{
+   int handle = iBands(_Symbol, _Period, period, 0, deviation, PRICE_CLOSE);
+   double upper1 = BufferValue(handle, 1, 1);
+   double lower1 = BufferValue(handle, 2, 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   if(close2 > upper1 && close1 > upper1) return 1;
+   if(close2 < lower1 && close1 < lower1) return -1;
+   return 0;
+}
+
+int EnvelopeRevertSignal(const int period, const double deviation)
+{
+   int handle = iEnvelopes(_Symbol, _Period, period, 0, MODE_SMA, PRICE_CLOSE, deviation);
+   double upper = BufferValue(handle, 0, 1);
+   double lower = BufferValue(handle, 1, 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   if(close2 < lower && close1 > lower) return 1;
+   if(close2 > upper && close1 < upper) return -1;
+   return 0;
+}
+
+int AdxTrendSignal(const int period, const double level)
+{
+   int handle = iADX(_Symbol, _Period, period);
+   double adx = BufferValue(handle, 0, 1);
+   double plusDI = BufferValue(handle, 1, 1);
+   double minusDI = BufferValue(handle, 2, 1);
+   double plusDI2 = BufferValue(handle, 1, 2);
+   double minusDI2 = BufferValue(handle, 2, 2);
+   if(adx > level && plusDI > minusDI && plusDI2 <= minusDI2) return 1;
+   if(adx > level && plusDI < minusDI && plusDI2 >= minusDI2) return -1;
+   return 0;
+}
+
+int SarFlipSignal(const double step, const double maximum)
+{
+   int handle = iSAR(_Symbol, _Period, step, maximum);
+   double sar1 = BufferValue(handle, 0, 1);
+   double sar2 = BufferValue(handle, 0, 2);
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   if(close2 < sar2 && close1 > sar1) return 1;
+   if(close2 > sar2 && close1 < sar1) return -1;
+   return 0;
+}
+
+int SuperTrendSignal(const int period, const double multiplier)
+{
+   double atr = IndicatorValue(iATR(_Symbol, _Period, period), 1);
+   double hl2 = (iHigh(_Symbol, _Period, 1) + iLow(_Symbol, _Period, 1)) / 2.0;
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   double upperBand = hl2 + multiplier * atr;
+   double lowerBand = hl2 - multiplier * atr;
+   if(close2 <= upperBand && close1 > upperBand) return 1;
+   if(close2 >= lowerBand && close1 < lowerBand) return -1;
+   return 0;
+}
+
+int CciTrendSignal(const int period)
+{
+   double c1 = IndicatorValue(iCCI(_Symbol, _Period, period, PRICE_TYPICAL), 1);
+   double c2 = IndicatorValue(iCCI(_Symbol, _Period, period, PRICE_TYPICAL), 2);
+   if(c2 <= 0.0 && c1 > 0.0) return 1;
+   if(c2 >= 0.0 && c1 < 0.0) return -1;
+   return 0;
+}
+
+int CciExtremeReversalSignal(const int period, const double level)
+{
+   double c1 = IndicatorValue(iCCI(_Symbol, _Period, period, PRICE_TYPICAL), 1);
+   double c2 = IndicatorValue(iCCI(_Symbol, _Period, period, PRICE_TYPICAL), 2);
+   if(c2 < -level && c1 >= -level) return 1;
+   if(c2 > level && c1 <= level) return -1;
+   return 0;
+}
+
+int MfiSignal(const int period, const double lowLevel, const double highLevel)
+{
+   int handle = iMFI(_Symbol, _Period, period, VOLUME_TICK);
+   double m1 = BufferValue(handle, 0, 1);
+   double m2 = BufferValue(handle, 0, 2);
+   if(m2 < lowLevel && m1 >= lowLevel) return 1;
+   if(m2 > highLevel && m1 <= highLevel) return -1;
+   return 0;
+}
+
+int ObvTrendSignal(const int lookback)
+{
+   int handle = iOBV(_Symbol, _Period, VOLUME_TICK);
+   double obv1 = BufferValue(handle, 0, 1);
+   double obv2 = BufferValue(handle, 0, lookback + 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   if(obv1 > obv2 && close1 > close2) return 1;
+   if(obv1 < obv2 && close1 < close2) return -1;
+   return 0;
+}
+
+int ForceSignal(const int period)
+{
+   int handle = iForce(_Symbol, _Period, period, MODE_SMA, VOLUME_TICK);
+   double f1 = BufferValue(handle, 0, 1);
+   double f2 = BufferValue(handle, 0, 2);
+   if(f2 <= 0.0 && f1 > 0.0) return 1;
+   if(f2 >= 0.0 && f1 < 0.0) return -1;
+   return 0;
+}
+
+int VolumeBreakoutSignal(const int lookback)
+{
+   int hi = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
+   int lo = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
+   if(hi < 0 || lo < 0) return 0;
+   double close1 = iClose(_Symbol, _Period, 1);
+   double vol1 = (double)iVolume(_Symbol, _Period, 1);
+   double avgVol = 0.0;
+   for(int i = 2; i <= lookback + 1; i++)
+      avgVol += (double)iVolume(_Symbol, _Period, i);
+   avgVol /= lookback;
+   if(close1 > iHigh(_Symbol, _Period, hi) && vol1 > avgVol) return 1;
+   if(close1 < iLow(_Symbol, _Period, lo) && vol1 > avgVol) return -1;
+   return 0;
+}
+
+int AcSignal()
+{
+   int handle = iAC(_Symbol, _Period);
+   double a1 = BufferValue(handle, 0, 1);
+   double a2 = BufferValue(handle, 0, 2);
+   if(a2 <= 0.0 && a1 > 0.0) return 1;
+   if(a2 >= 0.0 && a1 < 0.0) return -1;
+   return 0;
+}
+
+int EngulfingSignal(const int lookback)
+{
+   double open1 = iOpen(_Symbol, _Period, 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   double open2 = iOpen(_Symbol, _Period, 2);
+   double close2 = iClose(_Symbol, _Period, 2);
+   double rangeAvg = AverageRange(lookback);
+   if(close2 < open2 && close1 > open2 && close1 > open1 && (close1 - open1) > rangeAvg * 0.3) return 1;
+   if(close2 > open2 && close1 < open2 && close1 < open1 && (open1 - close1) > rangeAvg * 0.3) return -1;
+   return 0;
+}
+
+int PinBarSignal(const int lookback)
+{
+   double open1 = iOpen(_Symbol, _Period, 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   double high1 = iHigh(_Symbol, _Period, 1);
+   double low1 = iLow(_Symbol, _Period, 1);
+   double range = high1 - low1;
+   double rangeAvg = AverageRange(lookback);
+   if(range < rangeAvg * 0.5) return 0;
+   double upperWick = high1 - MathMax(open1, close1);
+   double lowerWick = MathMin(open1, close1) - low1;
+   double body = MathAbs(close1 - open1);
+   if(body < 0.0001) return 0;
+   if(lowerWick > body * 2.0 && upperWick < body * 0.5 && close1 > open1) return 1;
+   if(upperWick > body * 2.0 && lowerWick < body * 0.5 && close1 < open1) return -1;
+   return 0;
+}
+
+int InsideBarSignal(const int lookback)
+{
+   double high1 = iHigh(_Symbol, _Period, 1);
+   double low1 = iLow(_Symbol, _Period, 1);
+   double high2 = iHigh(_Symbol, _Period, 2);
+   double low2 = iLow(_Symbol, _Period, 2);
+   double close1 = iClose(_Symbol, _Period, 1);
+   if(high1 < high2 && low1 > low2)
+   {
+      double rangeAvg = AverageRange(lookback);
+      if(close1 > high2 && (close1 - low1) > rangeAvg * 0.3) return 1;
+      if(close1 < low2 && (high1 - close1) > rangeAvg * 0.3) return -1;
+   }
+   return 0;
+}
+
+int ThreeBarReversalSignal(const int lookback)
+{
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close3 = iClose(_Symbol, _Period, 3);
+   double high3 = iHigh(_Symbol, _Period, 3);
+   double low3 = iLow(_Symbol, _Period, 3);
+   double rangeAvg = AverageRange(lookback);
+   if(close3 < low3 && close1 > high3 && (close1 - close3) > rangeAvg * 0.3) return 1;
+   if(close3 > high3 && close1 < low3 && (close3 - close1) > rangeAvg * 0.3) return -1;
+   return 0;
+}
+
+int KeyLevelSignal(const int lookback)
+{
+   int hi = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
+   int lo = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
+   if(hi < 0 || lo < 0) return 0;
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   double resLevel = iHigh(_Symbol, _Period, hi);
+   double supLevel = iLow(_Symbol, _Period, lo);
+   if(close2 < resLevel && close1 > resLevel) return 1;
+   if(close2 > supLevel && close1 < supLevel) return -1;
+   return 0;
+}
+
+int EmaRsiConfirmSignal(const int fast, const int slow, const int rsiPeriod)
+{
+   double f1 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double f2 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 2);
+   double s1 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double s2 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 2);
+   double rsi = IndicatorValue(iRSI(_Symbol, _Period, rsiPeriod, PRICE_CLOSE), 1);
+   if(f2 <= s2 && f1 > s1 && rsi > 50.0) return 1;
+   if(f2 >= s2 && f1 < s1 && rsi < 50.0) return -1;
+   return 0;
+}
+
+int MacdBandsSignal(const int fast, const int slow, const int signalPeriod, const int bbPeriod)
+{
+   int macdHandle = iMACD(_Symbol, _Period, fast, slow, signalPeriod, PRICE_CLOSE);
+   double main1 = BufferValue(macdHandle, 0, 1);
+   double main2 = BufferValue(macdHandle, 0, 2);
+   int bbHandle = iBands(_Symbol, _Period, bbPeriod, 0, 2.0, PRICE_CLOSE);
+   double upper = BufferValue(bbHandle, 1, 1);
+   double lower = BufferValue(bbHandle, 2, 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   if(main2 <= 0.0 && main1 > 0.0 && close1 < upper) return 1;
+   if(main2 >= 0.0 && main1 < 0.0 && close1 > lower) return -1;
+   return 0;
+}
+
+int StochAdxSignal(const int k, const int d, const int slowing, const int adxPeriod)
+{
+   int stochHandle = iStochastic(_Symbol, _Period, k, d, slowing, MODE_SMA, STO_LOWHIGH);
+   double k1 = BufferValue(stochHandle, 0, 1);
+   double d1 = BufferValue(stochHandle, 1, 1);
+   double k2 = BufferValue(stochHandle, 0, 2);
+   double d2 = BufferValue(stochHandle, 1, 2);
+   int adxHandle = iADX(_Symbol, _Period, adxPeriod);
+   double adx = BufferValue(adxHandle, 0, 1);
+   if(adx > 20.0 && k2 <= d2 && k1 > d1 && k1 < 30.0) return 1;
+   if(adx > 20.0 && k2 >= d2 && k1 < d1 && k1 > 70.0) return -1;
+   return 0;
+}
+
+int AtrBreakoutSignal(const int period, const double multiplier)
+{
+   double atr = IndicatorValue(iATR(_Symbol, _Period, period), 1);
+   double close1 = iClose(_Symbol, _Period, 1);
+   double close2 = iClose(_Symbol, _Period, 2);
+   double open1 = iOpen(_Symbol, _Period, 1);
+   if(close2 < open1 && close1 > open1 + multiplier * atr) return 1;
+   if(close2 > open1 && close1 < open1 - multiplier * atr) return -1;
+   return 0;
+}
+
+int TrendMomentumSignal(const int maPeriod, const int momPeriod)
+{
+   double ma = IndicatorValue(iMA(_Symbol, _Period, maPeriod, 0, MODE_EMA, PRICE_CLOSE), 1);
+   double mom1 = IndicatorValue(iMomentum(_Symbol, _Period, momPeriod, PRICE_CLOSE), 1);
+   double mom2 = IndicatorValue(iMomentum(_Symbol, _Period, momPeriod, PRICE_CLOSE), 2);
+   double close1 = iClose(_Symbol, _Period, 1);
+   if(close1 > ma && mom2 <= 100.0 && mom1 > 100.0) return 1;
+   if(close1 < ma && mom2 >= 100.0 && mom1 < 100.0) return -1;
    return 0;
 }
 
@@ -1073,7 +2399,7 @@ void InitPropfirmBacktest()
       propResults[i].breachReason = "";
       propResults[i].pos.open = false;
    }
-   LogEvent("PROP_INIT", "Single-run mode enabled. Real orders disabled; testing all 100 strategies virtually.");
+   LogEvent("PROP_INIT", "Single-run mode enabled. Real orders disabled; testing all " + IntegerToString(PROP_STRATEGY_COUNT) + " strategies virtually.");
 }
 
 void RunPropfirmBacktestTick()
@@ -1871,13 +3197,13 @@ void ExportPropfirmSingleReport()
 void ExportPropfirmRollingReport()
 {
    int totalRuns = ArraySize(propRuns);
-    int aggStarts[100], aggPassed[100], aggBlown[100], aggActive[100];
-    int aggWins[100], aggLosses[100], aggTrades[100], aggDaysToTarget[100];
-    double aggNetSum[100], aggBestNet[100], aggWorstNet[100], aggWinRateSum[100];
-    double aggGrossProfit[100], aggGrossLoss[100];
-    double aggDuration[100];
-    int aggWinRateCount[100];
-    double aggRecencyWeightSum[100], aggRecencyPassedWeight[100];
+    int aggStarts[500], aggPassed[500], aggBlown[500], aggActive[500];
+    int aggWins[500], aggLosses[500], aggTrades[500], aggDaysToTarget[500];
+    double aggNetSum[500], aggBestNet[500], aggWorstNet[500], aggWinRateSum[500];
+    double aggGrossProfit[500], aggGrossLoss[500];
+    double aggDuration[500];
+    int aggWinRateCount[500];
+    double aggRecencyWeightSum[500], aggRecencyPassedWeight[500];
     datetime testStart = 0;
 
    ArrayInitialize(aggStarts, 0);
@@ -1904,7 +3230,7 @@ void ExportPropfirmRollingReport()
    for(int i = 0; i < totalRuns; i++)
    {
       int sid = propRuns[i].strategyId - 1;
-      if(sid < 0 || sid >= 100) continue;
+      if(sid < 0 || sid >= 500) continue;
 
       aggStarts[sid]++;
       if(propRuns[i].passed) aggPassed[sid]++;
@@ -1951,95 +3277,85 @@ void ExportPropfirmRollingReport()
        }
     }
 
-    int sortOrder[100];
-    for(int i = 0; i < 100; i++) sortOrder[i] = i;
+    int sortOrder[500];
+    for(int i = 0; i < 500; i++) sortOrder[i] = i;
     bool useRecency = (PropRecencyHalfLifeDays > 0.0);
-    double testSpanDays = (testStart > 0) ? (double)(testEndTime - testStart) / 86400.0 : 0.0;
-    bool recencyIneffective = useRecency && testSpanDays > 0.0 && PropRecencyHalfLifeDays > testSpanDays * 3.0;
+     double testSpanDays = (testStart > 0) ? (double)(testEndTime - testStart) / 86400.0 : 0.0;
+     bool recencyIneffective = useRecency && testSpanDays > 0.0 && PropRecencyHalfLifeDays > testSpanDays * 3.0;
 
-    int recentDays = (int)MathCeil(0.30 * testSpanDays);
-    if(recentDays < 1) recentDays = 1;
-    if(recentDays > 14) recentDays = 14;
-    datetime windowStart = testEndTime - (datetime)(recentDays * 86400);
+     datetime trendDayList[];
+     ArrayResize(trendDayList, 0);
+     for(int i = 0; i < totalRuns; i++)
+     {
+        long raw = (long)propRuns[i].startDay;
+        datetime bucket = (datetime)(raw - (raw % 86400));
+        bool found = false;
+        for(int d = 0; d < ArraySize(trendDayList); d++)
+        {
+           if(trendDayList[d] == bucket) { found = true; break; }
+        }
+        if(!found)
+        {
+           int sz = ArraySize(trendDayList);
+           ArrayResize(trendDayList, sz + 1);
+           trendDayList[sz] = bucket;
+        }
+     }
+     int trendDayCount = ArraySize(trendDayList);
+     for(int d = 0; d < trendDayCount - 1; d++)
+     {
+        for(int e = d + 1; e < trendDayCount; e++)
+        {
+           if(trendDayList[e] < trendDayList[d])
+           {
+              datetime tmp = trendDayList[d];
+              trendDayList[d] = trendDayList[e];
+              trendDayList[e] = tmp;
+           }
+        }
+     }
+     if(trendDayCount > 90) trendDayCount = 90;
 
-    datetime dayList[];
-    ArrayResize(dayList, 0);
-    for(int i = 0; i < totalRuns; i++)
-    {
-       if(propRuns[i].startDay < windowStart)
-          continue;
-       long raw = (long)propRuns[i].startDay;
-       datetime bucket = (datetime)(raw - (raw % 86400));
-       bool found = false;
-       for(int d = 0; d < ArraySize(dayList); d++)
-       {
-          if(dayList[d] == bucket) { found = true; break; }
-       }
-       if(!found)
-       {
-          int sz = ArraySize(dayList);
-          ArrayResize(dayList, sz + 1);
-          dayList[sz] = bucket;
-       }
-    }
-    int dayCount = ArraySize(dayList);
-    for(int d = 0; d < dayCount - 1; d++)
-    {
-       for(int e = d + 1; e < dayCount; e++)
-       {
-          if(dayList[e] < dayList[d])
-          {
-             datetime tmp = dayList[d];
-             dayList[d] = dayList[e];
-             dayList[e] = tmp;
-          }
-       }
-    }
+     int trendPass[500][90];
+     int trendTotal[500][90];
+     double trendLatestRate[500];
+     for(int s = 0; s < 500; s++)
+     {
+        for(int d = 0; d < 90; d++)
+        {
+           trendPass[s][d] = 0;
+           trendTotal[s][d] = 0;
+        }
+        trendLatestRate[s] = 0.0;
+     }
+     for(int i = 0; i < totalRuns; i++)
+     {
+        int sid = propRuns[i].strategyId - 1;
+        if(sid < 0 || sid >= 500) continue;
+        long raw = (long)propRuns[i].startDay;
+        datetime bucket = (datetime)(raw - (raw % 86400));
+        int dayIdx = -1;
+        for(int d = 0; d < trendDayCount; d++)
+        {
+           if(trendDayList[d] == bucket) { dayIdx = d; break; }
+        }
+        if(dayIdx < 0 || dayIdx >= trendDayCount) continue;
+        trendTotal[sid][dayIdx]++;
+        if(propRuns[i].passed)
+           trendPass[sid][dayIdx]++;
+     }
+     for(int s = 0; s < 500; s++)
+     {
+        for(int d = 0; d < trendDayCount; d++)
+        {
+           if(trendTotal[s][d] > 0)
+              trendLatestRate[s] = (double)trendPass[s][d] / (double)trendTotal[s][d] * 100.0;
+        }
+     }
 
-    int histPass[100][14];
-    int histBlow[100][14];
-    int histNet[100];
-    ArrayInitialize(histNet, 0);
-    for(int s = 0; s < 100; s++)
+     for(int i = 0; i < 499; i++)
     {
-       for(int d = 0; d < 14; d++)
-       {
-          histPass[s][d] = 0;
-          histBlow[s][d] = 0;
-       }
-    }
-    int histMaxPass = 1, histMaxBlow = 1;
-    for(int i = 0; i < totalRuns; i++)
-    {
-       if(propRuns[i].startDay < windowStart)
-          continue;
-       int sid = propRuns[i].strategyId - 1;
-       if(sid < 0 || sid >= 100) continue;
-       long raw = (long)propRuns[i].startDay;
-       datetime bucket = (datetime)(raw - (raw % 86400));
-       int dayIdx = -1;
-       for(int d = 0; d < dayCount; d++)
-       {
-          if(dayList[d] == bucket) { dayIdx = d; break; }
-       }
-       if(dayIdx < 0 || dayIdx >= 14) continue;
-       if(propRuns[i].passed)
-       {
-          histPass[sid][dayIdx]++;
-          histNet[sid]++;
-          if(histPass[sid][dayIdx] > histMaxPass) histMaxPass = histPass[sid][dayIdx];
-       }
-       else if(propRuns[i].breached)
-       {
-          histBlow[sid][dayIdx]++;
-          histNet[sid]--;
-          if(histBlow[sid][dayIdx] > histMaxBlow) histMaxBlow = histBlow[sid][dayIdx];
-       }
-    }
-
-    for(int i = 0; i < 99; i++)
-    {
-       for(int j = i + 1; j < 100; j++)
+       for(int j = i + 1; j < 500; j++)
        {
           int a = sortOrder[i], b = sortOrder[j];
           double rateA = (aggStarts[a] > 0) ? (double)aggPassed[a] / (double)aggStarts[a] : 0.0;
@@ -2075,7 +3391,7 @@ void ExportPropfirmRollingReport()
     string bestRecentStratName = "";
     double bestRecentStratScore = -1.0;
     double bestRecentAllTimeRate = 0.0;
-    for(int i = 0; i < 100; i++)
+    for(int i = 0; i < 500; i++)
     {
        totalPassed += aggPassed[i];
        totalBlown += aggBlown[i];
@@ -2134,13 +3450,13 @@ void ExportPropfirmRollingReport()
        "<th data-type=\"num\">Passed</th>\n<th data-type=\"num\">Blown</th>\n<th data-type=\"num\">Active</th>\n" +
         (useRecency ? "<th data-type=\"num\">Recency Score</th>\n" : "") +
         "<th data-type=\"num\">All-Time Pass Rate</th>\n<th data-type=\"num\">Avg Win Rate</th>\n" +
-        "<th data-type=\"num\">Recent Trend<br><span style=\"font-weight:400;font-size:10px\">latest " + IntegerToString(recentDays) + "d (30%) &middot; green&#8593;pass red&#8595;blow</span></th>\n" +
+         "<th data-type=\"num\">Trend<br><span style=\"font-weight:400;font-size:10px\">full span &middot; daily pass rate</span></th>\n" +
         "<th data-type=\"num\">PF</th>\n<th data-type=\"num\">Avg R:R</th>\n" +
         "<th data-type=\"num\">Avg Net P/L</th>\n<th data-type=\"num\">Best Net</th>\n<th data-type=\"num\">Worst Net</th>\n" +
          "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
         "<th data-type=\"num\">Avg Days->Target</th>\n</tr></thead>\n<tbody>\n");
 
-   for(int rank = 0; rank < 100; rank++)
+   for(int rank = 0; rank < 500; rank++)
    {
       int sid = sortOrder[rank];
       double passRate = (aggStarts[sid] > 0) ? (double)aggPassed[sid] / (double)aggStarts[sid] * 100.0 : 0.0;
@@ -2156,30 +3472,11 @@ void ExportPropfirmRollingReport()
       string bestClass = (aggBestNet[sid] > 0.0) ? "pos" : "zero";
       string worstClass = (aggWorstNet[sid] < 0.0) ? "neg" : "zero";
        string pfClass = (profitFactor >= 1.0) ? "pos" : "neg";
-       string histCell = "<td class=\"hist\" data-sort=\"" + IntegerToString(histNet[sid]) + "\">";
-       if(dayCount == 0)
-          histCell += "<span class=\"zero\">n/a</span>";
-       else
-       {
-          histCell += "<div class=\"hist\">";
-          for(int hd = 0; hd < dayCount; hd++)
-          {
-             int hp = histPass[sid][hd];
-             int hb = histBlow[sid][hd];
-             int upH = (int)MathRound((double)hp / (double)histMaxPass * 20.0);
-             int dnH = (int)MathRound((double)hb / (double)histMaxBlow * 20.0);
-             MqlDateTime hdt;
-             TimeToStruct(dayList[hd], hdt);
-             string dayLabel = StringFormat("%02d-%02d", hdt.mon, hdt.day);
-             histCell += StringFormat("<div class=\"dcell\" title=\"%s: %d pass / %d blow\"><div class=\"bar-up\" style=\"height:%dpx\"></div><div class=\"bar-down\" style=\"height:%dpx\"></div></div>", dayLabel, hp, hb, upH, dnH);
-          }
-          histCell += "</div>";
-       }
-       histCell += "</td>";
+       string stratName = StrategyName(sid + 1);
 
-      string row = "";
-      row += StringFormat("<tr><td class=\"num\">%d</td>", rank + 1);
-      row += StringFormat("<td>%s</td>", StrategyName(sid + 1));
+       string row = "";
+       row += StringFormat("<tr><td class=\"num\">%d</td>", rank + 1);
+       row += "<td><a href=\"javascript:void(0)\" onclick=\"filterRuns('" + stratName + "')\" class=\"strat-link\">" + stratName + "</a></td>";
       row += StringFormat("<td class=\"num\">%d</td>", aggStarts[sid]);
       row += StringFormat("<td class=\"num pos\">%d</td>", aggPassed[sid]);
       row += StringFormat("<td class=\"num neg\">%d</td>", aggBlown[sid]);
@@ -2199,7 +3496,7 @@ void ExportPropfirmRollingReport()
           row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", avgWinRate, (int)MathRound(avgWinRate), avgWinRate);
        else
           row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
-       row += histCell;
+       row += StringFormat("<td class=\"spark\" data-sort=\"%.4f\" id=\"spark_%d\"></td>", trendLatestRate[sid], sid);
       if(aggGrossLoss[sid] < 0.0)
          row += StringFormat("<td class=\"num %s\">%.2f</td>", pfClass, profitFactor);
       else
@@ -2299,9 +3596,102 @@ void ExportPropfirmRollingReport()
        if(i > 0) json = "," + json;
        FileWriteString(handle, json);
     }
-    FileWriteString(handle, "];</script>\n");
+     FileWriteString(handle, "];</script>\n");
 
-    PropWriteFooter(handle, "strat");
+     FileWriteString(handle, "<script>var trendDates=[");
+     for(int d = 0; d < trendDayCount; d++)
+     {
+        MqlDateTime tdt;
+        TimeToStruct(trendDayList[d], tdt);
+        string dlbl = StringFormat("\"%02d-%02d\"", tdt.mon, tdt.day);
+        if(d > 0) dlbl = "," + dlbl;
+        FileWriteString(handle, dlbl);
+     }
+     FileWriteString(handle, "];</script>\n");
+
+     FileWriteString(handle, "<script>var trendData=[");
+     for(int s = 0; s < 500; s++)
+     {
+        string arr = "[";
+        for(int d = 0; d < trendDayCount; d++)
+        {
+           string point;
+           if(trendTotal[s][d] > 0)
+           {
+              double rate = (double)trendPass[s][d] / (double)trendTotal[s][d] * 100.0;
+              point = StringFormat("[%.1f,%d,%d]", rate, trendPass[s][d], trendTotal[s][d]);
+           }
+           else
+              point = "null";
+           if(d > 0) point = "," + point;
+           arr += point;
+        }
+        arr += "]";
+        if(s > 0) arr = "," + arr;
+        FileWriteString(handle, arr);
+     }
+     FileWriteString(handle, "];</script>\n");
+
+     FileWriteString(handle, "<script>\n");
+     FileWriteString(handle, "function filterRuns(stratName){\n");
+     FileWriteString(handle, "  var b=document.getElementById('runs_body');\n");
+     FileWriteString(handle, "  var h=document.getElementById('runs_collapse_h');\n");
+     FileWriteString(handle, "  if(b.style.display==='none'){b.style.display='block';h.classList.add('open');}\n");
+     FileWriteString(handle, "  var s=document.getElementById('search_runs');\n");
+     FileWriteString(handle, "  if(s){s.value=stratName;}\n");
+     FileWriteString(handle, "  if(typeof window.__runsDoFilter==='function'){window.__runsDoFilter();}\n");
+     FileWriteString(handle, "  var runs=document.getElementById('runs');\n");
+     FileWriteString(handle, "  if(runs){runs.scrollIntoView({behavior:'smooth',block:'start'});}\n");
+     FileWriteString(handle, "}\n");
+     FileWriteString(handle, "function renderSparklines(){\n");
+     FileWriteString(handle, "  var td=window.trendData||[];\n");
+     FileWriteString(handle, "  var dates=window.trendDates||[];\n");
+     FileWriteString(handle, "  var n=td.length;\n");
+     FileWriteString(handle, "  for(var s=0;s<n;s++){\n");
+     FileWriteString(handle, "    var el=document.getElementById('spark_'+s);\n");
+     FileWriteString(handle, "    if(!el)continue;\n");
+     FileWriteString(handle, "    var data=td[s];\n");
+     FileWriteString(handle, "    var hasData=false;\n");
+     FileWriteString(handle, "    for(var i=0;i<data.length;i++){if(data[i]!==null){hasData=true;break;}}\n");
+     FileWriteString(handle, "    if(!hasData){el.innerHTML='<span class=\"zero\">n/a</span>';continue;}\n");
+     FileWriteString(handle, "    var pts=[];\n");
+     FileWriteString(handle, "    var tooltips=[];\n");
+     FileWriteString(handle, "    var lastRate=null;\n");
+     FileWriteString(handle, "    var firstRate=null;\n");
+     FileWriteString(handle, "    var dn=data.length;\n");
+     FileWriteString(handle, "    for(var i=0;i<dn;i++){\n");
+     FileWriteString(handle, "      var x=(i/Math.max(1,dn-1))*130+5;\n");
+     FileWriteString(handle, "      var rate=null;\n");
+     FileWriteString(handle, "      if(data[i]!==null){rate=data[i][0];lastRate=rate;if(firstRate===null)firstRate=rate;}\n");
+     FileWriteString(handle, "      else{rate=lastRate;}\n");
+     FileWriteString(handle, "      if(rate===null)rate=0;\n");
+     FileWriteString(handle, "      var y=28-(rate/100)*24+2;\n");
+     FileWriteString(handle, "      pts.push(x.toFixed(1)+','+y.toFixed(1));\n");
+     FileWriteString(handle, "      var tip=dates[i]||'';\n");
+     FileWriteString(handle, "      if(data[i]!==null){tip=dates[i]+': '+data[i][0].toFixed(0)+'% ('+data[i][1]+' pass / '+data[i][2]+' total)';}\n");
+     FileWriteString(handle, "      else{tip=dates[i]+': no data';}\n");
+     FileWriteString(handle, "      tooltips.push(tip);\n");
+     FileWriteString(handle, "    }\n");
+     FileWriteString(handle, "    var color='#64748b';\n");
+     FileWriteString(handle, "    if(firstRate!==null&&lastRate!==null){\n");
+     FileWriteString(handle, "      if(lastRate>firstRate+1)color='#16a34a';\n");
+     FileWriteString(handle, "      else if(lastRate<firstRate-1)color='#dc2626';\n");
+     FileWriteString(handle, "    }\n");
+     FileWriteString(handle, "    var svg='<svg width=\"140\" height=\"32\" style=\"vertical-align:middle\">';\n");
+     FileWriteString(handle, "    svg+='<line x1=\"5\" y1=\"16\" x2=\"135\" y2=\"16\" stroke=\"#e2e8f0\" stroke-width=\"1\" stroke-dasharray=\"2,2\"/>';\n");
+     FileWriteString(handle, "    svg+='<polyline points=\"'+pts.join(' ')+'\" fill=\"none\" stroke=\"'+color+'\" stroke-width=\"1.5\"/>';\n");
+     FileWriteString(handle, "    var lastPt=pts[pts.length-1].split(',');\n");
+     FileWriteString(handle, "    svg+='<circle cx=\"'+lastPt[0]+'\" cy=\"'+lastPt[1]+'\" r=\"2\" fill=\"'+color+'\"/>';\n");
+     FileWriteString(handle, "    var lastTip=tooltips[tooltips.length-1];\n");
+     FileWriteString(handle, "    svg+='<title>'+lastTip+'</title>';\n");
+     FileWriteString(handle, "    svg+='</svg>';\n");
+     FileWriteString(handle, "    el.innerHTML=svg;\n");
+     FileWriteString(handle, "  }\n");
+     FileWriteString(handle, "}\n");
+     FileWriteString(handle, "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',function(){renderSparklines();});}else{renderSparklines();}\n");
+     FileWriteString(handle, "</script>\n");
+
+     PropWriteFooter(handle, "strat");
     PropWriteRunsFooter(handle, useRecency);
     FileWriteString(handle, "</div>\n</body>\n</html>\n");
     FileClose(handle);
@@ -2376,10 +3766,9 @@ void PropWriteHtmlHead(const int handle)
       ".reason{font-size:11px;color:#64748b}\n" +
        ".barwrap{background:#e2e8f0;border-radius:4px;height:8px;width:64px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:6px}\n" +
        ".barfill{height:100%;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e)}\n" +
-       ".hist{display:inline-flex;align-items:center;height:40px;gap:1px;vertical-align:middle}\n" +
-       ".dcell{width:7px;height:40px;position:relative;display:inline-block}\n" +
-       ".bar-up{position:absolute;bottom:50%;left:0;width:100%;background:#22c55e;border-radius:1px 1px 0 0}\n" +
-       ".bar-down{position:absolute;top:50%;left:0;width:100%;background:#ef4444;border-radius:0 0 1px 1px}\n" +
+       ".spark{padding:4px 2px!important}\n" +
+       ".strat-link{color:#4f46e5;text-decoration:none;cursor:pointer;font-weight:600}\n" +
+       ".strat-link:hover{color:#6366f1;text-decoration:underline}\n" +
        ".collapse-header{cursor:pointer;padding:12px 16px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;font-weight:600;font-size:13px;color:#475569;user-select:none;transition:background .15s}\n" +
        ".collapse-header:hover{background:#e2e8f0}\n" +
        ".collapse-header.open{background:#e0e7ff;border-color:#6366f1;color:#4f46e5}\n" +
@@ -2528,7 +3917,8 @@ void PropWriteRunsFooter(const int handle, const bool hasWeightCol)
       "    h+='<button class=\"btn'+(page>=totalPages?' disabled':'')+'\" onclick=\"window.__runsPage('+(page+1)+')\">Next &#9654;</button>';\n" +
       "    pg.innerHTML=h;\n" +
       "  }\n" +
-      "  window.__runsPage=function(p){page=p;render();};\n" +
+       "  window.__runsPage=function(p){page=p;render();};\n" +
+       "  window.__runsDoFilter=function(){clearTimeout(dtimer);dtimer=setTimeout(doFilter,200);};\n" +
       "  if(search)search.addEventListener('input',function(){clearTimeout(dtimer);dtimer=setTimeout(doFilter,200);});\n" +
       "  for(var b=0;b<btns.length;b++){btns[b].addEventListener('click',function(){for(var k=0;k<btns.length;k++)btns[k].classList.remove('active');this.classList.add('active');filter=this.getAttribute('data-f');clearTimeout(dtimer);dtimer=setTimeout(doFilter,200);});}\n" +
       "  var heads=document.querySelectorAll('#runs thead th[data-type]');\n" +
@@ -2676,11 +4066,11 @@ void UpdateDashboard()
    SetLine(line++, "Server time   " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS), GoodColor());
    SetLine(line++, " ", MutedColor());
    SetLine(line++, "STRATEGY", MutedColor());
-   SetLine(line++, "Mode          " + (StrategyMode == STRATEGY_SINGLE ? "SINGLE" : "ALL-100") + "    Min votes    " + IntegerToString(MinVotesToTrade));
+   SetLine(line++, "Mode          " + (StrategyMode == STRATEGY_SINGLE ? "SINGLE" : "ALL-" + IntegerToString(PROP_STRATEGY_COUNT)) + "    Min votes    " + IntegerToString(MinVotesToTrade));
    if(StrategyMode == STRATEGY_SINGLE)
       SetLine(line++, "Strategy      " + StrategyName((int)SelectedStrategy));
    else
-      SetLine(line++, "Strategy      ALL 100 evaluated");
+      SetLine(line++, "Strategy      ALL " + IntegerToString(PROP_STRATEGY_COUNT) + " evaluated");
    SetLine(line++, "Direction     " + EnumToString(AllowedDirection) + "    OneTradePerBar " + PropBoolStr(OneTradePerBar));
    SetLine(line++, "Reverse       " + PropBoolStr(ReverseSignals), ReverseSignals ? WarnColor() : MutedColor());
    SetLine(line++, " ");
