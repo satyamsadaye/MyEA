@@ -3316,42 +3316,53 @@ void ExportPropfirmRollingReport()
      }
      if(trendDayCount > 90) trendDayCount = 90;
 
-     int trendPass[500][90];
-     int trendTotal[500][90];
-     double trendLatestRate[500];
-     for(int s = 0; s < 500; s++)
-     {
-        for(int d = 0; d < 90; d++)
-        {
-           trendPass[s][d] = 0;
-           trendTotal[s][d] = 0;
-        }
-        trendLatestRate[s] = 0.0;
-     }
-     for(int i = 0; i < totalRuns; i++)
-     {
-        int sid = propRuns[i].strategyId - 1;
-        if(sid < 0 || sid >= 500) continue;
-        long raw = (long)propRuns[i].startDay;
-        datetime bucket = (datetime)(raw - (raw % 86400));
-        int dayIdx = -1;
-        for(int d = 0; d < trendDayCount; d++)
-        {
-           if(trendDayList[d] == bucket) { dayIdx = d; break; }
-        }
-        if(dayIdx < 0 || dayIdx >= trendDayCount) continue;
-        trendTotal[sid][dayIdx]++;
-        if(propRuns[i].passed)
-           trendPass[sid][dayIdx]++;
-     }
-     for(int s = 0; s < 500; s++)
-     {
-        for(int d = 0; d < trendDayCount; d++)
-        {
-           if(trendTotal[s][d] > 0)
-              trendLatestRate[s] = (double)trendPass[s][d] / (double)trendTotal[s][d] * 100.0;
-        }
-     }
+      int trendPass[500][90];
+      int trendBreach[500][90];
+      int trendHasData[500][90];
+      double trendCumulative[500][90];
+      double trendLatestCumulative[500];
+      for(int s = 0; s < 500; s++)
+      {
+         for(int d = 0; d < 90; d++)
+         {
+            trendPass[s][d] = 0;
+            trendBreach[s][d] = 0;
+            trendHasData[s][d] = 0;
+            trendCumulative[s][d] = 0.0;
+         }
+         trendLatestCumulative[s] = 0.0;
+      }
+      for(int i = 0; i < totalRuns; i++)
+      {
+         int sid = propRuns[i].strategyId - 1;
+         if(sid < 0 || sid >= 500) continue;
+         long raw = (long)propRuns[i].startDay;
+         datetime bucket = (datetime)(raw - (raw % 86400));
+         int dayIdx = -1;
+         for(int d = 0; d < trendDayCount; d++)
+         {
+            if(trendDayList[d] == bucket) { dayIdx = d; break; }
+         }
+         if(dayIdx < 0 || dayIdx >= trendDayCount) continue;
+         if(!propRuns[i].passed && !propRuns[i].breached) continue;
+         trendHasData[sid][dayIdx] = 1;
+         if(propRuns[i].passed)
+            trendPass[sid][dayIdx]++;
+         else
+            trendBreach[sid][dayIdx]++;
+      }
+      for(int s = 0; s < 500; s++)
+      {
+         double cumulative = 0.0;
+         for(int d = 0; d < trendDayCount; d++)
+         {
+            int net = trendPass[s][d] - trendBreach[s][d];
+            cumulative += net;
+            trendCumulative[s][d] = cumulative;
+            if(trendHasData[s][d])
+               trendLatestCumulative[s] = cumulative;
+         }
+      }
 
      for(int i = 0; i < 499; i++)
     {
@@ -3450,7 +3461,7 @@ void ExportPropfirmRollingReport()
        "<th data-type=\"num\">Passed</th>\n<th data-type=\"num\">Blown</th>\n<th data-type=\"num\">Active</th>\n" +
         (useRecency ? "<th data-type=\"num\">Recency Score</th>\n" : "") +
         "<th data-type=\"num\">All-Time Pass Rate</th>\n<th data-type=\"num\">Avg Win Rate</th>\n" +
-         "<th data-type=\"num\">Trend<br><span style=\"font-weight:400;font-size:10px\">full span &middot; daily pass rate</span></th>\n" +
+         "<th data-type=\"num\">Trend<br><span style=\"font-weight:400;font-size:10px\">equity curve &middot; pass +1 / blow -1</span></th>\n" +
         "<th data-type=\"num\">PF</th>\n<th data-type=\"num\">Avg R:R</th>\n" +
         "<th data-type=\"num\">Avg Net P/L</th>\n<th data-type=\"num\">Best Net</th>\n<th data-type=\"num\">Worst Net</th>\n" +
          "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
@@ -3496,7 +3507,7 @@ void ExportPropfirmRollingReport()
           row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", avgWinRate, (int)MathRound(avgWinRate), avgWinRate);
        else
           row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
-       row += StringFormat("<td class=\"spark\" data-sort=\"%.4f\" id=\"spark_%d\"></td>", trendLatestRate[sid], sid);
+       row += StringFormat("<td class=\"spark\" data-sort=\"%.4f\" id=\"spark_%d\"></td>", trendLatestCumulative[sid], sid);
       if(aggGrossLoss[sid] < 0.0)
          row += StringFormat("<td class=\"num %s\">%.2f</td>", pfClass, profitFactor);
       else
@@ -3609,28 +3620,28 @@ void ExportPropfirmRollingReport()
      }
      FileWriteString(handle, "];</script>\n");
 
-     FileWriteString(handle, "<script>var trendData=[");
-     for(int s = 0; s < 500; s++)
-     {
-        string arr = "[";
-        for(int d = 0; d < trendDayCount; d++)
-        {
-           string point;
-           if(trendTotal[s][d] > 0)
-           {
-              double rate = (double)trendPass[s][d] / (double)trendTotal[s][d] * 100.0;
-              point = StringFormat("[%.1f,%d,%d]", rate, trendPass[s][d], trendTotal[s][d]);
-           }
-           else
-              point = "null";
-           if(d > 0) point = "," + point;
-           arr += point;
-        }
-        arr += "]";
-        if(s > 0) arr = "," + arr;
-        FileWriteString(handle, arr);
-     }
-     FileWriteString(handle, "];</script>\n");
+      FileWriteString(handle, "<script>var trendData=[");
+      for(int s = 0; s < 500; s++)
+      {
+         string arr = "[";
+         for(int d = 0; d < trendDayCount; d++)
+         {
+            string point;
+            if(trendHasData[s][d])
+            {
+               int ended = trendPass[s][d] + trendBreach[s][d];
+               point = StringFormat("[%.0f,%d,%d,%d]", trendCumulative[s][d], trendPass[s][d], trendBreach[s][d], ended);
+            }
+            else
+               point = "null";
+            if(d > 0) point = "," + point;
+            arr += point;
+         }
+         arr += "]";
+         if(s > 0) arr = "," + arr;
+         FileWriteString(handle, arr);
+      }
+      FileWriteString(handle, "];</script>\n");
 
      FileWriteString(handle, "<script>\n");
      FileWriteString(handle, "function filterRuns(stratName){\n");
@@ -3643,51 +3654,60 @@ void ExportPropfirmRollingReport()
      FileWriteString(handle, "  var runs=document.getElementById('runs');\n");
      FileWriteString(handle, "  if(runs){runs.scrollIntoView({behavior:'smooth',block:'start'});}\n");
      FileWriteString(handle, "}\n");
-     FileWriteString(handle, "function renderSparklines(){\n");
-     FileWriteString(handle, "  var td=window.trendData||[];\n");
-     FileWriteString(handle, "  var dates=window.trendDates||[];\n");
-     FileWriteString(handle, "  var n=td.length;\n");
-     FileWriteString(handle, "  for(var s=0;s<n;s++){\n");
-     FileWriteString(handle, "    var el=document.getElementById('spark_'+s);\n");
-     FileWriteString(handle, "    if(!el)continue;\n");
-     FileWriteString(handle, "    var data=td[s];\n");
-     FileWriteString(handle, "    var hasData=false;\n");
-     FileWriteString(handle, "    for(var i=0;i<data.length;i++){if(data[i]!==null){hasData=true;break;}}\n");
-     FileWriteString(handle, "    if(!hasData){el.innerHTML='<span class=\"zero\">n/a</span>';continue;}\n");
-     FileWriteString(handle, "    var pts=[];\n");
-     FileWriteString(handle, "    var tooltips=[];\n");
-     FileWriteString(handle, "    var lastRate=null;\n");
-     FileWriteString(handle, "    var firstRate=null;\n");
-     FileWriteString(handle, "    var dn=data.length;\n");
-     FileWriteString(handle, "    for(var i=0;i<dn;i++){\n");
-     FileWriteString(handle, "      var x=(i/Math.max(1,dn-1))*130+5;\n");
-     FileWriteString(handle, "      var rate=null;\n");
-     FileWriteString(handle, "      if(data[i]!==null){rate=data[i][0];lastRate=rate;if(firstRate===null)firstRate=rate;}\n");
-     FileWriteString(handle, "      else{rate=lastRate;}\n");
-     FileWriteString(handle, "      if(rate===null)rate=0;\n");
-     FileWriteString(handle, "      var y=28-(rate/100)*24+2;\n");
-     FileWriteString(handle, "      pts.push(x.toFixed(1)+','+y.toFixed(1));\n");
-     FileWriteString(handle, "      var tip=dates[i]||'';\n");
-     FileWriteString(handle, "      if(data[i]!==null){tip=dates[i]+': '+data[i][0].toFixed(0)+'% ('+data[i][1]+' pass / '+data[i][2]+' total)';}\n");
-     FileWriteString(handle, "      else{tip=dates[i]+': no data';}\n");
-     FileWriteString(handle, "      tooltips.push(tip);\n");
-     FileWriteString(handle, "    }\n");
-     FileWriteString(handle, "    var color='#64748b';\n");
-     FileWriteString(handle, "    if(firstRate!==null&&lastRate!==null){\n");
-     FileWriteString(handle, "      if(lastRate>firstRate+1)color='#16a34a';\n");
-     FileWriteString(handle, "      else if(lastRate<firstRate-1)color='#dc2626';\n");
-     FileWriteString(handle, "    }\n");
-     FileWriteString(handle, "    var svg='<svg width=\"140\" height=\"32\" style=\"vertical-align:middle\">';\n");
-     FileWriteString(handle, "    svg+='<line x1=\"5\" y1=\"16\" x2=\"135\" y2=\"16\" stroke=\"#e2e8f0\" stroke-width=\"1\" stroke-dasharray=\"2,2\"/>';\n");
-     FileWriteString(handle, "    svg+='<polyline points=\"'+pts.join(' ')+'\" fill=\"none\" stroke=\"'+color+'\" stroke-width=\"1.5\"/>';\n");
-     FileWriteString(handle, "    var lastPt=pts[pts.length-1].split(',');\n");
-     FileWriteString(handle, "    svg+='<circle cx=\"'+lastPt[0]+'\" cy=\"'+lastPt[1]+'\" r=\"2\" fill=\"'+color+'\"/>';\n");
-     FileWriteString(handle, "    var lastTip=tooltips[tooltips.length-1];\n");
-     FileWriteString(handle, "    svg+='<title>'+lastTip+'</title>';\n");
-     FileWriteString(handle, "    svg+='</svg>';\n");
-     FileWriteString(handle, "    el.innerHTML=svg;\n");
-     FileWriteString(handle, "  }\n");
-     FileWriteString(handle, "}\n");
+      FileWriteString(handle, "function renderSparklines(){\n");
+      FileWriteString(handle, "  var td=window.trendData||[];\n");
+      FileWriteString(handle, "  var dates=window.trendDates||[];\n");
+      FileWriteString(handle, "  var n=td.length;\n");
+      FileWriteString(handle, "  for(var s=0;s<n;s++){\n");
+      FileWriteString(handle, "    var el=document.getElementById('spark_'+s);\n");
+      FileWriteString(handle, "    if(!el)continue;\n");
+      FileWriteString(handle, "    var data=td[s];\n");
+      FileWriteString(handle, "    var hasData=false;\n");
+      FileWriteString(handle, "    for(var i=0;i<data.length;i++){if(data[i]!==null){hasData=true;break;}}\n");
+      FileWriteString(handle, "    if(!hasData){el.innerHTML='<span class=\"zero\">n/a</span>';continue;}\n");
+      FileWriteString(handle, "    var dn=data.length;\n");
+      FileWriteString(handle, "    var cumVals=[];\n");
+      FileWriteString(handle, "    var minV=0,maxV=0;\n");
+      FileWriteString(handle, "    var runningCum=0;\n");
+      FileWriteString(handle, "    for(var i=0;i<dn;i++){\n");
+      FileWriteString(handle, "      if(data[i]!==null){runningCum=data[i][0];}\n");
+      FileWriteString(handle, "      cumVals.push(runningCum);\n");
+      FileWriteString(handle, "      if(runningCum<minV)minV=runningCum;\n");
+      FileWriteString(handle, "      if(runningCum>maxV)maxV=runningCum;\n");
+      FileWriteString(handle, "    }\n");
+      FileWriteString(handle, "    var lastCum=cumVals[cumVals.length-1];\n");
+      FileWriteString(handle, "    var range=maxV-minV;\n");
+      FileWriteString(handle, "    if(range<1)range=1;\n");
+      FileWriteString(handle, "    var topY=3,botY=29,chartH=botY-topY;\n");
+      FileWriteString(handle, "    var zeroY=topY+((maxV-0)/range)*chartH;\n");
+      FileWriteString(handle, "    if(maxV<=0)zeroY=botY;\n");
+      FileWriteString(handle, "    if(minV>=0)zeroY=topY;\n");
+      FileWriteString(handle, "    var pts=[];\n");
+      FileWriteString(handle, "    var tooltips=[];\n");
+      FileWriteString(handle, "    for(var i=0;i<dn;i++){\n");
+      FileWriteString(handle, "      var x=(i/Math.max(1,dn-1))*130+5;\n");
+      FileWriteString(handle, "      var cv=cumVals[i];\n");
+      FileWriteString(handle, "      var y=topY+((maxV-cv)/range)*chartH;\n");
+      FileWriteString(handle, "      pts.push(x.toFixed(1)+','+y.toFixed(1));\n");
+      FileWriteString(handle, "      var tip=dates[i]||'';\n");
+      FileWriteString(handle, "      if(data[i]!==null){tip=dates[i]+': cum '+data[i][0].toFixed(0)+' ('+data[i][1]+'P / '+data[i][2]+'B / '+data[i][3]+'end)';}\n");
+      FileWriteString(handle, "      else{tip=dates[i]+': idle (cum '+cv.toFixed(0)+')';}\n");
+      FileWriteString(handle, "      tooltips.push(tip);\n");
+      FileWriteString(handle, "    }\n");
+      FileWriteString(handle, "    var color='#64748b';\n");
+      FileWriteString(handle, "    if(lastCum>0)color='#16a34a';\n");
+      FileWriteString(handle, "    else if(lastCum<0)color='#dc2626';\n");
+      FileWriteString(handle, "    var svg='<svg width=\"140\" height=\"32\" style=\"vertical-align:middle\">';\n");
+      FileWriteString(handle, "    svg+='<line x1=\"5\" y1=\"'+zeroY.toFixed(1)+'\" x2=\"135\" y2=\"'+zeroY.toFixed(1)+'\" stroke=\"#e2e8f0\" stroke-width=\"1\" stroke-dasharray=\"2,2\"/>';\n");
+      FileWriteString(handle, "    svg+='<polyline points=\"'+pts.join(' ')+'\" fill=\"none\" stroke=\"'+color+'\" stroke-width=\"1.5\"/>';\n");
+      FileWriteString(handle, "    var lastPt=pts[pts.length-1].split(',');\n");
+      FileWriteString(handle, "    svg+='<circle cx=\"'+lastPt[0]+'\" cy=\"'+lastPt[1]+'\" r=\"2\" fill=\"'+color+'\"/>';\n");
+      FileWriteString(handle, "    var lastTip=tooltips[tooltips.length-1];\n");
+      FileWriteString(handle, "    svg+='<title>'+lastTip+'</title>';\n");
+      FileWriteString(handle, "    svg+='</svg>';\n");
+      FileWriteString(handle, "    el.innerHTML=svg;\n");
+      FileWriteString(handle, "  }\n");
+      FileWriteString(handle, "}\n");
      FileWriteString(handle, "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',function(){renderSparklines();});}else{renderSparklines();}\n");
      FileWriteString(handle, "</script>\n");
 
