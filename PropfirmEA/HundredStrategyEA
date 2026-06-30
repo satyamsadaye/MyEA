@@ -1712,9 +1712,10 @@ string PropSpawnIntervalLabel()
 string PropTimestampedReportFileName()
 {
    MqlDateTime dt;
-   TimeToStruct(TimeCurrent(), dt);
-   string stamp = StringFormat("%04d%02d%02d_%02d%02d%02d",
-                               dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec);
+   TimeToStruct(TimeLocal(), dt);
+   string stamp = StringFormat("%04d%02d%02d_%02d%02d%02d_%03d",
+                               dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec,
+                               GetTickCount() % 1000);
    string base = PropHtmlReportFileName;
    int dot = StringFind(base, ".", 0);
    if(dot <= 0)
