@@ -218,6 +218,7 @@ input bool PropRollingStartMode = true;               // If true, spawns a fresh
 input ENUM_PROP_SPAWN_INTERVAL PropSpawnInterval = SPAWN_DAILY_AT_RESUME; // How often to spawn a fresh batch of 100 runs (skips pause/close window)
 input int PropMaxStartDays = 0;                       // 0 = unlimited spawn batches per strategy
 input string PropHtmlReportFileName = "Propfirm_100_Strategy_Report.html";
+input double PropRecencyHalfLifeDays = 14.0;            // Half-life in days for recency weighting (0=disabled, ranks by raw pass rate)
 
 input group "Logging"
 input bool EnableCsvLog = true;
@@ -1666,7 +1667,7 @@ void ExportPropfirmSingleReport()
       row += StringFormat("<td class=\"num\">%.2f</td>", propResults[i].balance);
       row += StringFormat("<td class=\"num %s\">%s</td>", netClass, netStr);
       if(closedTrades > 0)
-         row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill\" style=\"width:%.1f%%\"></div></div>%.1f%%</td>", winRate, winRate, winRate);
+         row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", winRate, (int)MathRound(winRate), winRate);
       else
          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
       row += StringFormat("<td class=\"num pos\">%d</td>", propResults[i].wins);
@@ -1697,13 +1698,14 @@ void ExportPropfirmSingleReport()
 void ExportPropfirmRollingReport()
 {
    int totalRuns = ArraySize(propRuns);
-   int aggStarts[100], aggPassed[100], aggBlown[100], aggActive[100];
-   int aggWins[100], aggLosses[100], aggTrades[100], aggDaysToTarget[100];
-   double aggNetSum[100], aggBestNet[100], aggWorstNet[100], aggWinRateSum[100];
-   double aggGrossProfit[100], aggGrossLoss[100];
-   double aggDuration[100];
-   int aggWinRateCount[100];
-   datetime testStart = 0;
+    int aggStarts[100], aggPassed[100], aggBlown[100], aggActive[100];
+    int aggWins[100], aggLosses[100], aggTrades[100], aggDaysToTarget[100];
+    double aggNetSum[100], aggBestNet[100], aggWorstNet[100], aggWinRateSum[100];
+    double aggGrossProfit[100], aggGrossLoss[100];
+    double aggDuration[100];
+    int aggWinRateCount[100];
+    double aggRecencyWeightSum[100], aggRecencyPassedWeight[100];
+    datetime testStart = 0;
 
    ArrayInitialize(aggStarts, 0);
    ArrayInitialize(aggPassed, 0);
@@ -1718,9 +1720,11 @@ void ExportPropfirmRollingReport()
    ArrayInitialize(aggNetSum, 0.0);
    ArrayInitialize(aggBestNet, -DBL_MAX);
    ArrayInitialize(aggWorstNet, DBL_MAX);
-   ArrayInitialize(aggGrossProfit, 0.0);
-   ArrayInitialize(aggGrossLoss, 0.0);
-   ArrayInitialize(aggDuration, 0.0);
+    ArrayInitialize(aggGrossProfit, 0.0);
+    ArrayInitialize(aggGrossLoss, 0.0);
+    ArrayInitialize(aggDuration, 0.0);
+    ArrayInitialize(aggRecencyWeightSum, 0.0);
+    ArrayInitialize(aggRecencyPassedWeight, 0.0);
 
    datetime testEndTime = TimeCurrent();
 
@@ -1760,41 +1764,76 @@ void ExportPropfirmRollingReport()
       if(propRuns[i].passed && propRuns[i].daysToTarget > 0)
          aggDaysToTarget[sid] += propRuns[i].daysToTarget;
 
-      if(testStart == 0 || propRuns[i].startDay < testStart)
-         testStart = propRuns[i].startDay;
-   }
+       if(testStart == 0 || propRuns[i].startDay < testStart)
+          testStart = propRuns[i].startDay;
 
-   int sortOrder[100];
-   for(int i = 0; i < 100; i++) sortOrder[i] = i;
-   for(int i = 0; i < 99; i++)
-   {
-      for(int j = i + 1; j < 100; j++)
-      {
-         int a = sortOrder[i], b = sortOrder[j];
-         double rateA = (aggStarts[a] > 0) ? (double)aggPassed[a] / (double)aggStarts[a] : 0.0;
-         double rateB = (aggStarts[b] > 0) ? (double)aggPassed[b] / (double)aggStarts[b] : 0.0;
-         double netA = (aggStarts[a] > 0) ? aggNetSum[a] / (double)aggStarts[a] : 0.0;
-         double netB = (aggStarts[b] > 0) ? aggNetSum[b] / (double)aggStarts[b] : 0.0;
-         bool swap = false;
-         if(rateB > rateA + 0.0001) swap = true;
-         else if(MathAbs(rateB - rateA) <= 0.0001 && netB > netA) swap = true;
-         if(swap) { sortOrder[i] = b; sortOrder[j] = a; }
-      }
-   }
+       if(PropRecencyHalfLifeDays > 0.0)
+       {
+          double lambda = MathLog(2.0) / PropRecencyHalfLifeDays;
+          double ageInDays = (double)(testEndTime - propRuns[i].startDay) / 86400.0;
+          double weight = MathExp(-lambda * ageInDays);
+          aggRecencyWeightSum[sid] += weight;
+          if(propRuns[i].passed)
+             aggRecencyPassedWeight[sid] += weight;
+       }
+    }
 
-   int totalPassed = 0, totalBlown = 0, totalActive = 0;
-   long grandTotalTrades = 0;
-   string bestStratName = "";
-   double bestStratRate = -1.0;
-   for(int i = 0; i < 100; i++)
-   {
-      totalPassed += aggPassed[i];
-      totalBlown += aggBlown[i];
-      totalActive += aggActive[i];
-      grandTotalTrades += aggTrades[i];
-      double rate = (aggStarts[i] > 0) ? (double)aggPassed[i] / (double)aggStarts[i] * 100.0 : 0.0;
-      if(rate > bestStratRate) { bestStratRate = rate; bestStratName = StrategyName(i + 1); }
-   }
+    int sortOrder[100];
+    for(int i = 0; i < 100; i++) sortOrder[i] = i;
+    bool useRecency = (PropRecencyHalfLifeDays > 0.0);
+    double testSpanDays = (testStart > 0) ? (double)(testEndTime - testStart) / 86400.0 : 0.0;
+    bool recencyIneffective = useRecency && testSpanDays > 0.0 && PropRecencyHalfLifeDays > testSpanDays * 3.0;
+    for(int i = 0; i < 99; i++)
+    {
+       for(int j = i + 1; j < 100; j++)
+       {
+          int a = sortOrder[i], b = sortOrder[j];
+          double rateA = (aggStarts[a] > 0) ? (double)aggPassed[a] / (double)aggStarts[a] : 0.0;
+          double rateB = (aggStarts[b] > 0) ? (double)aggPassed[b] / (double)aggStarts[b] : 0.0;
+          double netA = (aggStarts[a] > 0) ? aggNetSum[a] / (double)aggStarts[a] : 0.0;
+          double netB = (aggStarts[b] > 0) ? aggNetSum[b] / (double)aggStarts[b] : 0.0;
+          double recA = (aggRecencyWeightSum[a] > 0.0) ? aggRecencyPassedWeight[a] / aggRecencyWeightSum[a] : 0.0;
+          double recB = (aggRecencyWeightSum[b] > 0.0) ? aggRecencyPassedWeight[b] / aggRecencyWeightSum[b] : 0.0;
+          bool swap = false;
+          if(useRecency)
+          {
+             if(recB > recA + 0.0001) swap = true;
+             else if(MathAbs(recB - recA) <= 0.0001)
+             {
+                if(rateB > rateA + 0.0001) swap = true;
+                else if(MathAbs(rateB - rateA) <= 0.0001 && netB > netA) swap = true;
+             }
+          }
+          else
+          {
+             if(rateB > rateA + 0.0001) swap = true;
+             else if(MathAbs(rateB - rateA) <= 0.0001 && netB > netA) swap = true;
+          }
+          if(swap) { sortOrder[i] = b; sortOrder[j] = a; }
+       }
+    }
+
+    int totalPassed = 0, totalBlown = 0, totalActive = 0;
+    long grandTotalTrades = 0;
+    string bestStratName = "";
+    double bestStratRate = -1.0;
+    string bestRecentStratName = "";
+    double bestRecentStratScore = -1.0;
+    double bestRecentAllTimeRate = 0.0;
+    for(int i = 0; i < 100; i++)
+    {
+       totalPassed += aggPassed[i];
+       totalBlown += aggBlown[i];
+       totalActive += aggActive[i];
+       grandTotalTrades += aggTrades[i];
+       double rate = (aggStarts[i] > 0) ? (double)aggPassed[i] / (double)aggStarts[i] * 100.0 : 0.0;
+       if(rate > bestStratRate) { bestStratRate = rate; bestStratName = StrategyName(i + 1); }
+       if(useRecency)
+       {
+          double recScore = (aggRecencyWeightSum[i] > 0.0) ? aggRecencyPassedWeight[i] / aggRecencyWeightSum[i] * 100.0 : 0.0;
+          if(recScore > bestRecentStratScore) { bestRecentStratScore = recScore; bestRecentStratName = StrategyName(i + 1); bestRecentAllTimeRate = rate; }
+       }
+    }
    double overallPassRate = (totalRuns > 0) ? (double)totalPassed / (double)totalRuns * 100.0 : 0.0;
    datetime testEnd = TimeCurrent();
 
@@ -1814,76 +1853,99 @@ void ExportPropfirmRollingReport()
    FileWriteString(handle, PropKv("Max Spawn Batches", IntegerToString(PropMaxStartDays) + " (0=unlimited)"));
    FileWriteString(handle, PropKv("Total Strategies", IntegerToString(PROP_STRATEGY_COUNT)));
    FileWriteString(handle, PropKv("Total Runs Simulated", IntegerToString(totalRuns)));
-   FileWriteString(handle, "</div>\n<div class=\"note\">Each strategy is re-started fresh " + PropSpawnIntervalLabel() + " during the active window (pause/close hours skipped). A strategy can have multiple runs active simultaneously. Best strategy: <b>" + bestStratName + "</b> (" + DoubleToString(bestStratRate, 1) + "% pass rate)</div>\n</div>\n");
+    FileWriteString(handle, "</div>\n<div class=\"note\">Each strategy is re-started fresh " + PropSpawnIntervalLabel() + " during the active window (pause/close hours skipped). A strategy can have multiple runs active simultaneously. Best strategy: <b>" + bestStratName + "</b> (" + DoubleToString(bestStratRate, 1) + "% pass rate)" + (recencyIneffective ? "<br><b style=\"color:#dc2626\">&#9888; Recency warning:</b> Half-life (" + DoubleToString(PropRecencyHalfLifeDays, 1) + "d) is much longer than test span (" + DoubleToString(testSpanDays, 1) + "d). All runs get near-equal weight, so recency score &asymp; raw pass rate. For meaningful recency differentiation, use a half-life &le; " + DoubleToString(testSpanDays, 1) + "d or run a longer backtest." : "") + "</div>\n</div>\n");
 
-   FileWriteString(handle,
-      "<div class=\"section\">\n<h2>Summary Dashboard</h2>\n<div class=\"cards\">\n" +
-      "<div class=\"card pass\"><div class=\"label\">Passed Runs</div><div class=\"value\">" + IntegerToString(totalPassed) + "</div><div class=\"sub\">target hit</div></div>\n" +
-      "<div class=\"card blow\"><div class=\"label\">Blown Runs</div><div class=\"value\">" + IntegerToString(totalBlown) + "</div><div class=\"sub\">rule breach</div></div>\n" +
-      "<div class=\"card act\"><div class=\"label\">Active Runs</div><div class=\"value\">" + IntegerToString(totalActive) + "</div><div class=\"sub\">still running at end</div></div>\n" +
-      "<div class=\"card rate\"><div class=\"label\">Overall Pass Rate</div><div class=\"value\">" + DoubleToString(overallPassRate, 1) + "%</div><div class=\"sub\">passed / total runs</div></div>\n" +
-      "<div class=\"card avg\"><div class=\"label\">Total Trades</div><div class=\"value\">" + IntegerToString(grandTotalTrades) + "</div><div class=\"sub\">virtual positions</div></div>\n" +
-      "<div class=\"card tot\"><div class=\"label\">Total Runs</div><div class=\"value\">" + IntegerToString(totalRuns) + "</div><div class=\"sub\">strategy x start-days</div></div>\n" +
-      "</div>\n</div>\n");
+    FileWriteString(handle,
+       "<div class=\"section\">\n<h2>Summary Dashboard</h2>\n<div class=\"cards\">\n" +
+       "<div class=\"card pass\"><div class=\"label\">Passed Runs</div><div class=\"value\">" + IntegerToString(totalPassed) + "</div><div class=\"sub\">target hit</div></div>\n" +
+       "<div class=\"card blow\"><div class=\"label\">Blown Runs</div><div class=\"value\">" + IntegerToString(totalBlown) + "</div><div class=\"sub\">rule breach</div></div>\n" +
+       "<div class=\"card act\"><div class=\"label\">Active Runs</div><div class=\"value\">" + IntegerToString(totalActive) + "</div><div class=\"sub\">still running at end</div></div>\n" +
+       "<div class=\"card rate\"><div class=\"label\">Overall Pass Rate</div><div class=\"value\">" + DoubleToString(overallPassRate, 1) + "%</div><div class=\"sub\">passed / total runs</div></div>\n" +
+       "<div class=\"card avg\"><div class=\"label\">Total Trades</div><div class=\"value\">" + IntegerToString(grandTotalTrades) + "</div><div class=\"sub\">virtual positions</div></div>\n" +
+       "<div class=\"card tot\"><div class=\"label\">Total Runs</div><div class=\"value\">" + IntegerToString(totalRuns) + "</div><div class=\"sub\">strategy x start-days</div></div>\n" +
+       (useRecency ?
+          "<div class=\"card rec\"><div class=\"label\">Top Strategy (Recent)</div><div class=\"value\" style=\"font-size:13px;line-height:1.3\">" + bestRecentStratName + "</div><div class=\"sub\">Recency: " + DoubleToString(bestRecentStratScore, 1) + "% &nbsp;|&nbsp; All-time: " + DoubleToString(bestRecentAllTimeRate, 1) + "%</div></div>\n" :
+          "") +
+       "</div>\n</div>\n");
 
-   FileWriteString(handle,
-      "<div class=\"section\">\n<h2>Strategy Ranking (by pass rate across start-days)</h2>\n" +
-      PropToolbarHtml("strat") +
-      "<div class=\"table-scroll\">\n<table id=\"strat\">\n<thead><tr>\n" +
-      "<th data-type=\"num\">Rank</th>\n<th data-type=\"str\">Strategy</th>\n<th data-type=\"num\">Starts</th>\n" +
-      "<th data-type=\"num\">Passed</th>\n<th data-type=\"num\">Blown</th>\n<th data-type=\"num\">Active</th>\n" +
-       "<th data-type=\"num\">Pass Rate</th>\n<th data-type=\"num\">Avg Win Rate</th>\n" +
-       "<th data-type=\"num\">PF</th>\n<th data-type=\"num\">Avg R:R</th>\n" +
-       "<th data-type=\"num\">Avg Net P/L</th>\n<th data-type=\"num\">Best Net</th>\n<th data-type=\"num\">Worst Net</th>\n" +
-       "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
-       "<th data-type=\"num\">Avg Days->Target</th>\n</tr></thead>\n<tbody>\n");
+    FileWriteString(handle,
+       "<div class=\"section\">\n<h2>Strategy Ranking (" + (useRecency ? "by recency score" : "by pass rate across start-days") + ")</h2>\n" +
+       PropToolbarHtml("strat") +
+       "<div class=\"table-scroll\">\n<table id=\"strat\">\n<thead><tr>\n" +
+       "<th data-type=\"num\">Rank</th>\n<th data-type=\"str\">Strategy</th>\n<th data-type=\"num\">Starts</th>\n" +
+       "<th data-type=\"num\">Passed</th>\n<th data-type=\"num\">Blown</th>\n<th data-type=\"num\">Active</th>\n" +
+        (useRecency ? "<th data-type=\"num\">Recency Score</th>\n" : "") +
+        "<th data-type=\"num\">All-Time Pass Rate</th>\n<th data-type=\"num\">Avg Win Rate</th>\n" +
+        (useRecency ? "<th data-type=\"str\">Trend</th>\n" : "") +
+        "<th data-type=\"num\">PF</th>\n<th data-type=\"num\">Avg R:R</th>\n" +
+        "<th data-type=\"num\">Avg Net P/L</th>\n<th data-type=\"num\">Best Net</th>\n<th data-type=\"num\">Worst Net</th>\n" +
+        "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
+        "<th data-type=\"num\">Avg Days->Target</th>\n</tr></thead>\n<tbody>\n");
 
    for(int rank = 0; rank < 100; rank++)
    {
       int sid = sortOrder[rank];
       double passRate = (aggStarts[sid] > 0) ? (double)aggPassed[sid] / (double)aggStarts[sid] * 100.0 : 0.0;
+      double recencyScore = (aggRecencyWeightSum[sid] > 0.0) ? aggRecencyPassedWeight[sid] / aggRecencyWeightSum[sid] * 100.0 : 0.0;
       double avgWinRate = (aggWinRateCount[sid] > 0) ? aggWinRateSum[sid] / (double)aggWinRateCount[sid] : 0.0;
-       double avgNet = (aggStarts[sid] > 0) ? aggNetSum[sid] / (double)aggStarts[sid] : 0.0;
-       double avgDays = (aggPassed[sid] > 0) ? (double)aggDaysToTarget[sid] / (double)aggPassed[sid] : 0.0;
-       double profitFactor = (aggGrossLoss[sid] < 0.0) ? aggGrossProfit[sid] / MathAbs(aggGrossLoss[sid]) : 0.0;
-       double avgWin = (aggWins[sid] > 0) ? aggGrossProfit[sid] / (double)aggWins[sid] : 0.0;
-       double avgLoss = (aggLosses[sid] > 0) ? MathAbs(aggGrossLoss[sid]) / (double)aggLosses[sid] : 0.0;
-       double realizedRR = (avgLoss > 0.0) ? avgWin / avgLoss : 0.0;
-       string netClass = (avgNet > 0.0) ? "pos" : ((avgNet < 0.0) ? "neg" : "zero");
-       string bestClass = (aggBestNet[sid] > 0.0) ? "pos" : "zero";
-       string worstClass = (aggWorstNet[sid] < 0.0) ? "neg" : "zero";
-       string pfClass = (profitFactor >= 1.0) ? "pos" : "neg";
+      double avgNet = (aggStarts[sid] > 0) ? aggNetSum[sid] / (double)aggStarts[sid] : 0.0;
+      double avgDays = (aggPassed[sid] > 0) ? (double)aggDaysToTarget[sid] / (double)aggPassed[sid] : 0.0;
+      double profitFactor = (aggGrossLoss[sid] < 0.0) ? aggGrossProfit[sid] / MathAbs(aggGrossLoss[sid]) : 0.0;
+      double avgWin = (aggWins[sid] > 0) ? aggGrossProfit[sid] / (double)aggWins[sid] : 0.0;
+      double avgLoss = (aggLosses[sid] > 0) ? MathAbs(aggGrossLoss[sid]) / (double)aggLosses[sid] : 0.0;
+      double realizedRR = (avgLoss > 0.0) ? avgWin / avgLoss : 0.0;
+      string netClass = (avgNet > 0.0) ? "pos" : ((avgNet < 0.0) ? "neg" : "zero");
+      string bestClass = (aggBestNet[sid] > 0.0) ? "pos" : "zero";
+      string worstClass = (aggWorstNet[sid] < 0.0) ? "neg" : "zero";
+      string pfClass = (profitFactor >= 1.0) ? "pos" : "neg";
+      string trendSymbol = "&#9472;";
+      string trendClass = "zero";
+      if(useRecency && aggStarts[sid] > 0)
+      {
+         double diff = recencyScore - passRate;
+         if(diff > 1.0) { trendSymbol = "&#9650;"; trendClass = "pos"; }
+         else if(diff < -1.0) { trendSymbol = "&#9660;"; trendClass = "neg"; }
+      }
 
-       string row = "";
-       row += StringFormat("<tr><td class=\"num\">%d</td>", rank + 1);
-       row += StringFormat("<td>%s</td>", StrategyName(sid + 1));
-       row += StringFormat("<td class=\"num\">%d</td>", aggStarts[sid]);
-       row += StringFormat("<td class=\"num pos\">%d</td>", aggPassed[sid]);
-       row += StringFormat("<td class=\"num neg\">%d</td>", aggBlown[sid]);
-       row += StringFormat("<td class=\"num\">%d</td>", aggActive[sid]);
-       if(aggStarts[sid] > 0)
-          row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill\" style=\"width:%.1f%%\"></div></div>%.1f%%</td>", passRate, passRate, passRate);
-       else
-          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
-       if(aggWinRateCount[sid] > 0)
-          row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill\" style=\"width:%.1f%%\"></div></div>%.1f%%</td>", avgWinRate, avgWinRate, avgWinRate);
-       else
-          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
-       if(aggGrossLoss[sid] < 0.0)
-          row += StringFormat("<td class=\"num %s\">%.2f</td>", pfClass, profitFactor);
-       else
-          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
-       if(realizedRR > 0.0)
-          row += StringFormat("<td class=\"num\">%.2f</td>", realizedRR);
-       else
-          row += "<td class=\"num zero\">n/a</td>";
-       row += StringFormat("<td class=\"num %s\">%.2f</td>", netClass, avgNet);
+      string row = "";
+      row += StringFormat("<tr><td class=\"num\">%d</td>", rank + 1);
+      row += StringFormat("<td>%s</td>", StrategyName(sid + 1));
+      row += StringFormat("<td class=\"num\">%d</td>", aggStarts[sid]);
+      row += StringFormat("<td class=\"num pos\">%d</td>", aggPassed[sid]);
+      row += StringFormat("<td class=\"num neg\">%d</td>", aggBlown[sid]);
+      row += StringFormat("<td class=\"num\">%d</td>", aggActive[sid]);
+      if(useRecency)
+      {
+         if(aggRecencyWeightSum[sid] > 0.0)
+            row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", recencyScore, (int)MathRound(recencyScore), recencyScore);
+         else
+            row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+      }
+      if(aggStarts[sid] > 0)
+         row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", passRate, (int)MathRound(passRate), passRate);
+      else
+         row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+      if(aggWinRateCount[sid] > 0)
+         row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", avgWinRate, (int)MathRound(avgWinRate), avgWinRate);
+      else
+         row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+      if(useRecency)
+         row += StringFormat("<td class=\"num %s\" data-sort=\"%.4f\">%s</td>", trendClass, recencyScore - passRate, trendSymbol);
+      if(aggGrossLoss[sid] < 0.0)
+         row += StringFormat("<td class=\"num %s\">%.2f</td>", pfClass, profitFactor);
+      else
+         row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+      if(realizedRR > 0.0)
+         row += StringFormat("<td class=\"num\">%.2f</td>", realizedRR);
+      else
+         row += "<td class=\"num zero\">n/a</td>";
+      row += StringFormat("<td class=\"num %s\">%.2f</td>", netClass, avgNet);
       row += StringFormat("<td class=\"num %s\">%.2f</td>", bestClass, aggBestNet[sid]);
       row += StringFormat("<td class=\"num %s\">%.2f</td>", worstClass, aggWorstNet[sid]);
-       row += StringFormat("<td class=\"num\">%d</td>", aggTrades[sid]);
-       double avgTradesPerDay = (aggDuration[sid] > 0.0) ? (double)aggTrades[sid] / aggDuration[sid] : 0.0;
-       row += StringFormat("<td class=\"num\">%.1f</td>", avgTradesPerDay);
-       row += StringFormat("<td class=\"num pos\">%d</td>", aggWins[sid]);
+      row += StringFormat("<td class=\"num\">%d</td>", aggTrades[sid]);
+      double avgTradesPerDay = (aggDuration[sid] > 0.0) ? (double)aggTrades[sid] / aggDuration[sid] : 0.0;
+      row += StringFormat("<td class=\"num\">%.1f</td>", avgTradesPerDay);
+      row += StringFormat("<td class=\"num pos\">%d</td>", aggWins[sid]);
       row += StringFormat("<td class=\"num neg\">%d</td>", aggLosses[sid]);
       row += StringFormat("<td class=\"num\">%.1f</td>", avgDays);
       row += "</tr>\n";
@@ -1891,74 +1953,102 @@ void ExportPropfirmRollingReport()
    }
    FileWriteString(handle, "</tbody>\n</table>\n</div>\n</div>\n");
 
-   FileWriteString(handle,
-      "<div class=\"section\">\n<h2>Per-Run Detail (all strategy x start-day runs)</h2>\n" +
-      PropToolbarHtml("runs") +
-      "<div class=\"table-scroll\">\n<table id=\"runs\">\n<thead><tr>\n" +
-      "<th data-type=\"num\">#</th>\n<th data-type=\"str\">Strategy</th>\n<th data-type=\"str\">Start Day</th>\n" +
-      "<th data-type=\"str\">Status</th>\n<th data-type=\"str\">Reason</th>\n" +
-      "<th data-type=\"num\">Start Bal</th>\n<th data-type=\"num\">End Bal</th>\n<th data-type=\"num\">Net P/L</th>\n" +
-      "<th data-type=\"num\">Win Rate</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
-       "<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">PF</th>\n<th data-type=\"num\">R:R</th>\n<th data-type=\"num\">Max Profit</th>\n" +
-      "<th data-type=\"num\">Max DD</th>\n<th data-type=\"num\">Days->Target</th>\n<th data-type=\"num\">Days->Breach</th>\n" +
-      "<th data-type=\"num\">Eq. Prot</th>\n<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody>\n");
+    FileWriteString(handle,
+       "<div class=\"section\">\n<h2>Per-Run Detail (all strategy x start-day runs)</h2>\n" +
+       "<div class=\"collapse-header\" id=\"runs_collapse_h\" onclick=\"var b=document.getElementById('runs_body');var h=document.getElementById('runs_collapse_h');if(b.style.display==='none'){b.style.display='block';h.classList.add('open');}else{b.style.display='none';h.classList.remove('open');}\">" +
+       "<span class=\"collapse-arrow\">&#9654;</span> Click to expand per-run detail (" + IntegerToString(totalRuns) + " runs)</div>\n" +
+       "<div id=\"runs_body\" style=\"display:none\">\n" +
+       PropToolbarHtml("runs") +
+       "<div class=\"table-scroll\">\n<table id=\"runs\">\n<thead><tr>\n" +
+       "<th data-type=\"num\">#</th>\n<th data-type=\"str\">Strategy</th>\n<th data-type=\"str\">Start Day</th>\n" +
+       "<th data-type=\"str\">Status</th>\n<th data-type=\"str\">Reason</th>\n" +
+       "<th data-type=\"num\">Start Bal</th>\n<th data-type=\"num\">End Bal</th>\n<th data-type=\"num\">Net P/L</th>\n" +
+       "<th data-type=\"num\">Win Rate</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
+        "<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">PF</th>\n<th data-type=\"num\">R:R</th>\n<th data-type=\"num\">Max Profit</th>\n" +
+       "<th data-type=\"num\">Max DD</th>\n<th data-type=\"num\">Days->Target</th>\n<th data-type=\"num\">Days->Breach</th>\n" +
+       "<th data-type=\"num\">Eq. Prot</th>\n" + (useRecency ? "<th data-type=\"num\">Weight</th>\n" : "") + "<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody></tbody>\n</table>\n" +
+       "<div class=\"pagination\" id=\"runs_pagination\"></div>\n" +
+       "</div>\n</div>\n</div>\n");
 
-   for(int i = 0; i < totalRuns; i++)
-   {
-      string status = propRuns[i].passed ? "pass" : (propRuns[i].breached ? "blow" : "act");
-      string badge = propRuns[i].passed ? "PASSED" : (propRuns[i].breached ? "BLOWN" : "ACTIVE");
-      int closedTrades = propRuns[i].wins + propRuns[i].losses;
-      double winRate = (closedTrades > 0) ? (double)propRuns[i].wins / (double)closedTrades * 100.0 : 0.0;
-      double netProfit = propRuns[i].balance - propRuns[i].startingBalance;
-      string netClass = (netProfit > 0.0) ? "pos" : ((netProfit < 0.0) ? "neg" : "zero");
-      string netStr = DoubleToString(netProfit, 2);
-      if(netProfit > 0.0) netStr = "+" + netStr;
-      string reason = propRuns[i].breachReason;
-      if(reason == "") reason = propRuns[i].passed ? "Target hit" : "-";
-
-      string row = "";
-      row += StringFormat("<tr class=\"%s\" data-status=\"%s\">", status, status);
-      row += StringFormat("<td class=\"num\">%d</td>", i + 1);
-      row += StringFormat("<td>%s</td>", propRuns[i].strategyName);
-      row += StringFormat("<td>%s</td>", TimeToString(propRuns[i].startDay, TIME_DATE | TIME_MINUTES));
-      row += StringFormat("<td><span class=\"badge %s\">%s</span></td>", status, badge);
-      row += StringFormat("<td class=\"reason\">%s</td>", reason);
-      row += StringFormat("<td class=\"num\">%.2f</td>", propRuns[i].startingBalance);
-      row += StringFormat("<td class=\"num\">%.2f</td>", propRuns[i].balance);
-      row += StringFormat("<td class=\"num %s\">%s</td>", netClass, netStr);
-      if(closedTrades > 0)
-         row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill\" style=\"width:%.1f%%\"></div></div>%.1f%%</td>", winRate, winRate, winRate);
-      else
-         row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
-      row += StringFormat("<td class=\"num pos\">%d</td>", propRuns[i].wins);
-      row += StringFormat("<td class=\"num neg\">%d</td>", propRuns[i].losses);
-      row += StringFormat("<td class=\"num\">%d</td>", propRuns[i].trades);
-       if(propRuns[i].grossLoss < 0.0)
-          row += StringFormat("<td class=\"num\">%.2f</td>", propRuns[i].grossProfit / MathAbs(propRuns[i].grossLoss));
-       else
-          row += "<td class=\"num zero\">n/a</td>";
+    FileWriteString(handle, "<script>var runData=[");
+    for(int i = 0; i < totalRuns; i++)
+    {
+       string status = propRuns[i].passed ? "pass" : (propRuns[i].breached ? "blow" : "act");
+       int closedTrades = propRuns[i].wins + propRuns[i].losses;
+       double winRate = (closedTrades > 0) ? (double)propRuns[i].wins / (double)closedTrades * 100.0 : 0.0;
+       double netProfit = propRuns[i].balance - propRuns[i].startingBalance;
+       string reason = propRuns[i].breachReason;
+       if(reason == "") reason = propRuns[i].passed ? "Target hit" : "-";
+       double profitFactor = (propRuns[i].grossLoss < 0.0) ? propRuns[i].grossProfit / MathAbs(propRuns[i].grossLoss) : 0.0;
        double runAvgWin = (propRuns[i].wins > 0) ? propRuns[i].grossProfit / (double)propRuns[i].wins : 0.0;
        double runAvgLoss = (propRuns[i].losses > 0) ? MathAbs(propRuns[i].grossLoss) / (double)propRuns[i].losses : 0.0;
-       if(runAvgLoss > 0.0)
-          row += StringFormat("<td class=\"num\">%.2f</td>", runAvgWin / runAvgLoss);
-       else
-          row += "<td class=\"num zero\">n/a</td>";
-       row += StringFormat("<td class=\"num pos\">%.2f</td>", propRuns[i].maxProfit);
-      row += StringFormat("<td class=\"num neg\">%.2f</td>", propRuns[i].maxDrawdown);
-      row += StringFormat("<td class=\"num\">%d</td>", propRuns[i].daysToTarget);
-      row += StringFormat("<td class=\"num\">%d</td>", propRuns[i].daysToBreach);
-      row += StringFormat("<td class=\"num\">%d</td>", propRuns[i].equityProtectionTriggers);
-      row += StringFormat("<td>%s</td>", propRuns[i].ended > 0 ? TimeToString(propRuns[i].ended, TIME_DATE | TIME_MINUTES) : "n/a");
-      row += "</tr>\n";
-      FileWriteString(handle, row);
-   }
-   FileWriteString(handle, "</tbody>\n</table>\n</div>\n</div>\n");
+       double realizedRR = (runAvgLoss > 0.0) ? runAvgWin / runAvgLoss : 0.0;
+       string netStr = DoubleToString(netProfit, 2);
+       if(netProfit > 0.0) netStr = "+" + netStr;
+       string endedStr = propRuns[i].ended > 0 ? TimeToString(propRuns[i].ended, TIME_DATE | TIME_MINUTES) : "n/a";
 
-   PropWriteFooter(handle, "strat");
-   PropWriteFooter(handle, "runs");
-   FileWriteString(handle, "</div>\n</body>\n</html>\n");
-   FileClose(handle);
-   Print("Propfirm rolling HTML report exported to Common Files: ", PropHtmlReportFileName, " (", IntegerToString(totalRuns), " runs)");
+       double weight = 0.0;
+       if(useRecency)
+       {
+          double lambda = MathLog(2.0) / PropRecencyHalfLifeDays;
+          double ageInDays = (double)(testEndTime - propRuns[i].startDay) / 86400.0;
+          weight = MathExp(-lambda * ageInDays);
+       }
+
+       string json = "{";
+       json += StringFormat("\"n\":%d,", i + 1);
+       json += "\"strat\":\"" + PropJsonEscape(propRuns[i].strategyName) + "\",";
+       json += "\"startDay\":\"" + TimeToString(propRuns[i].startDay, TIME_DATE | TIME_MINUTES) + "\",";
+       json += "\"status\":\"" + status + "\",";
+       json += "\"reason\":\"" + PropJsonEscape(reason) + "\",";
+       json += StringFormat("\"startBal\":%.2f,", propRuns[i].startingBalance);
+       json += StringFormat("\"endBal\":%.2f,", propRuns[i].balance);
+       json += StringFormat("\"net\":%.2f,", netProfit);
+       json += StringFormat("\"netStr\":\"%s\",", netStr);
+       json += StringFormat("\"netPos\":%s,", netProfit > 0.0 ? "true" : "false");
+       json += StringFormat("\"netZero\":%s,", MathAbs(netProfit) < 0.005 ? "true" : "false");
+       json += StringFormat("\"winRate\":%.1f,", winRate);
+       json += StringFormat("\"hasWinRate\":%s,", closedTrades > 0 ? "true" : "false");
+       json += StringFormat("\"wins\":%d,", propRuns[i].wins);
+       json += StringFormat("\"losses\":%d,", propRuns[i].losses);
+       json += StringFormat("\"trades\":%d,", propRuns[i].trades);
+       json += StringFormat("\"pf\":%.2f,", profitFactor);
+       json += StringFormat("\"hasPF\":%s,", propRuns[i].grossLoss < 0.0 ? "true" : "false");
+       json += StringFormat("\"rr\":%.2f,", realizedRR);
+       json += StringFormat("\"hasRR\":%s,", runAvgLoss > 0.0 ? "true" : "false");
+       json += StringFormat("\"maxProfit\":%.2f,", propRuns[i].maxProfit);
+       json += StringFormat("\"maxDD\":%.2f,", propRuns[i].maxDrawdown);
+       json += StringFormat("\"daysTgt\":%d,", propRuns[i].daysToTarget);
+       json += StringFormat("\"daysBrk\":%d,", propRuns[i].daysToBreach);
+       json += StringFormat("\"eqProt\":%d,", propRuns[i].equityProtectionTriggers);
+       json += StringFormat("\"weight\":%.4f,", weight);
+       json += "\"ended\":\"" + endedStr + "\"";
+       json += "}";
+       if(i > 0) json = "," + json;
+       FileWriteString(handle, json);
+    }
+    FileWriteString(handle, "];</script>\n");
+
+    PropWriteFooter(handle, "strat");
+    PropWriteRunsFooter(handle, useRecency);
+    FileWriteString(handle, "</div>\n</body>\n</html>\n");
+    FileClose(handle);
+    Print("Propfirm rolling HTML report exported to Common Files: ", PropHtmlReportFileName, " (", IntegerToString(totalRuns), " runs)");
+}
+
+string PropJsonEscape(const string s)
+{
+   string result = "";
+   for(int i = 0; i < StringLen(s); i++)
+   {
+       ushort ch = StringGetCharacter(s, i);
+      if(ch == '"') result += "\\\"";
+      else if(ch == '\\') result += "\\\\";
+      else if(ch == '\n') result += "\\n";
+      else if(ch == '\r') result += "\\r";
+      else result += ShortToString(ch);
+   }
+   return result;
 }
 
 void PropWriteHtmlHead(const int handle)
@@ -2012,11 +2102,20 @@ void PropWriteHtmlHead(const int handle)
       ".num{text-align:right;font-variant-numeric:tabular-nums}\n" +
       ".pos{color:#16a34a}\n.neg{color:#dc2626}\n.zero{color:#94a3b8}\n" +
       ".reason{font-size:11px;color:#64748b}\n" +
-      ".barwrap{background:#e2e8f0;border-radius:4px;height:8px;width:64px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:6px}\n" +
-      ".barfill{height:100%;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e)}\n" +
+       ".barwrap{background:#e2e8f0;border-radius:4px;height:8px;width:64px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:6px}\n" +
+       ".barfill{height:100%;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e)}\n" +
+       ".collapse-header{cursor:pointer;padding:12px 16px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;font-weight:600;font-size:13px;color:#475569;user-select:none;transition:background .15s}\n" +
+       ".collapse-header:hover{background:#e2e8f0}\n" +
+       ".collapse-header.open{background:#e0e7ff;border-color:#6366f1;color:#4f46e5}\n" +
+       ".collapse-arrow{display:inline-block;margin-right:8px;transition:transform .2s;font-size:11px}\n" +
+       ".collapse-header.open .collapse-arrow{transform:rotate(90deg)}\n" +
+       ".pagination{display:flex;align-items:center;gap:12px;justify-content:center;padding:14px 0 4px}\n" +
+       ".pagination .page-info{font-size:12px;color:#64748b;font-weight:600}\n" +
+       ".pagination .btn.disabled{opacity:.4;cursor:default}\n" +
+       ".card.rec::before{background:#6366f1}\n" +
       ".footer{color:#94a3b8;font-size:12px;text-align:center;margin-top:22px;padding:14px}\n" +
-      ".footer code{background:#f1f5f9;padding:2px 8px;border-radius:4px;color:#64748b}\n" +
-      "</style>\n</head>\n<body>\n<div class=\"wrap\">\n");
+       ".footer code{background:#f1f5f9;padding:2px 8px;border-radius:4px;color:#64748b}\n" +
+       "</style>\n<script>(function(){var s=document.createElement('style');var c='';for(var i=0;i<=100;i++){c+='.b'+i+'{width:'+i+'%}';}s.textContent=c;document.head.appendChild(s);})();</script>\n</head>\n<body>\n<div class=\"wrap\">\n");
 }
 
 void PropWriteHeader(const int handle, const string title, const datetime testEnd)
@@ -2044,8 +2143,9 @@ void PropWriteCommonSettings(const int handle, const datetime testStart, const d
    FileWriteString(handle, PropKv("Pause Signals (UTC)", StringFormat("%02d:%02d", PropPauseSignalsHourUTC, PropPauseSignalsMinuteUTC)));
    FileWriteString(handle, PropKv("Close All (UTC)", StringFormat("%02d:%02d", PropCloseAllHourUTC, PropCloseAllMinuteUTC)));
    FileWriteString(handle, PropKv("Resume Signals (UTC)", StringFormat("%02d:%02d", PropResumeSignalsHourUTC, PropResumeSignalsMinuteUTC)));
-   FileWriteString(handle, PropKv("Spawn Interval", PropSpawnIntervalLabel()));
-   FileWriteString(handle, PropKv("Virtual Dollar Exit", PropBoolStr(EnableVirtualDollarExit)));
+    FileWriteString(handle, PropKv("Spawn Interval", PropSpawnIntervalLabel()));
+    FileWriteString(handle, PropKv("Recency Half-Life (days)", DoubleToString(PropRecencyHalfLifeDays, 1) + (PropRecencyHalfLifeDays > 0.0 ? "" : " (disabled)")));
+    FileWriteString(handle, PropKv("Virtual Dollar Exit", PropBoolStr(EnableVirtualDollarExit)));
    FileWriteString(handle, PropKv("Virtual Exit Lot", DoubleToString(VirtualExitLot, 2)));
    FileWriteString(handle, PropKv("Virtual Take Profit", DoubleToString(VirtualTakeProfitMoney, 2)));
    FileWriteString(handle, PropKv("Virtual Stop Loss", DoubleToString(VirtualStopLossMoney, 2)));
@@ -2076,11 +2176,88 @@ void PropWriteFooter(const int handle, const string tableId)
       "  var search=document.getElementById('search_'+tableId);\n" +
       "  var btns=document.querySelectorAll('.btn[data-tbl=\"'+tableId+'\"]');\n" +
       "  var filter='all';\n" +
+      "  var dtimer=null;\n" +
       "  function apply(){var q=search.value.toLowerCase();var rows=tbody.querySelectorAll('tr');for(var i=0;i<rows.length;i++){var r=rows[i];var name=r.cells[1].textContent.toLowerCase();var status=r.getAttribute('data-status')||'';var mq=name.indexOf(q)>=0;var mf=(filter==='all'||status===filter);r.style.display=(mq&&mf)?'':'none';}}\n" +
-      "  if(search)search.addEventListener('input',apply);\n" +
-      "  for(var b=0;b<btns.length;b++){btns[b].addEventListener('click',function(){for(var k=0;k<btns.length;k++)btns[k].classList.remove('active');this.classList.add('active');filter=this.getAttribute('data-f');apply();});}\n" +
+      "  if(search)search.addEventListener('input',function(){clearTimeout(dtimer);dtimer=setTimeout(apply,200);});\n" +
+      "  for(var b=0;b<btns.length;b++){btns[b].addEventListener('click',function(){for(var k=0;k<btns.length;k++)btns[k].classList.remove('active');this.classList.add('active');filter=this.getAttribute('data-f');clearTimeout(dtimer);dtimer=setTimeout(apply,200);});}\n" +
       "  var heads=document.querySelectorAll('#'+tableId+' thead th[data-type]');\n" +
       "  for(var h=0;h<heads.length;h++){heads[h].addEventListener('click',function(){var th=this;var idx=0;var ths=th.parentNode.children;for(var c=0;c<ths.length;c++){if(ths[c]===th){idx=c;break;}}var type=th.getAttribute('data-type')||'str';var asc=true;if(th.classList.contains('sort-asc'))asc=false;for(var j=0;j<heads.length;j++){heads[j].classList.remove('sort-asc');heads[j].classList.remove('sort-desc');}th.classList.add(asc?'sort-asc':'sort-desc');var rowsArr=[];var trs=tbody.querySelectorAll('tr');for(var i=0;i<trs.length;i++)rowsArr.push(trs[i]);rowsArr.sort(function(a,b){var aCell=a.cells[idx];var bCell=b.cells[idx];var av=aCell.getAttribute('data-sort');var bv=bCell.getAttribute('data-sort');if(av===null)av=aCell.textContent.trim();if(bv===null)bv=bCell.textContent.trim();if(type==='num'){av=parseFloat(av)||0;bv=parseFloat(bv)||0;return asc?av-bv:bv-av;}return asc?a.localeCompare(b):b.localeCompare(a);});for(var i=0;i<rowsArr.length;i++)tbody.appendChild(rowsArr[i]);});}\n" +
+      "})();\n" +
+      "</script>\n");
+}
+
+void PropWriteRunsFooter(const int handle, const bool hasWeightCol)
+{
+   string colsJs = hasWeightCol ?
+      "['n','strat','startDay','status','reason','startBal','endBal','net','winRate','wins','losses','trades','pf','rr','maxProfit','maxDD','daysTgt','daysBrk','eqProt','weight','ended']" :
+      "['n','strat','startDay','status','reason','startBal','endBal','net','winRate','wins','losses','trades','pf','rr','maxProfit','maxDD','daysTgt','daysBrk','eqProt','ended']";
+   FileWriteString(handle,
+      "<div class=\"footer\">Generated by <code>HundredStrategyEA</code> propfirm backtest mode. This is a virtual simulation - no real trades were placed.</div>\n" +
+      "<script>\n" +
+      "(function(){\n" +
+      "  var data=window.runData||[];\n" +
+      "  var tbody=document.querySelector('#runs tbody');\n" +
+      "  if(!tbody)return;\n" +
+      "  var search=document.getElementById('search_runs');\n" +
+      "  var btns=document.querySelectorAll('.btn[data-tbl=\"runs\"]');\n" +
+      "  var filter='all';\n" +
+      "  var sortIdx=-1,sortAsc=true;\n" +
+      "  var page=1,pageSize=50;\n" +
+      "  var filtered=data.slice();\n" +
+      "  var dtimer=null;\n" +
+      "  var cols=" + colsJs + ";\n" +
+      "  var hasWeight=" + (hasWeightCol ? "true" : "false") + ";\n" +
+      "  function doFilter(){\n" +
+      "    var q=search.value.toLowerCase();\n" +
+      "    filtered=data.filter(function(r){var mq=r.strat.toLowerCase().indexOf(q)>=0;var mf=(filter==='all'||r.status===filter);return mq&&mf;});\n" +
+      "    if(sortIdx>=0)doSort();\n" +
+      "    page=1;render();\n" +
+      "  }\n" +
+      "  function doSort(){\n" +
+      "    if(sortIdx<0)return;\n" +
+      "    var key=cols[sortIdx];\n" +
+      "    var types={'n':'num','startBal':'num','endBal':'num','net':'num','winRate':'num','wins':'num','losses':'num','trades':'num','pf':'num','rr':'num','maxProfit':'num','maxDD':'num','daysTgt':'num','daysBrk':'num','eqProt':'num','weight':'num'};\n" +
+      "    var isNum=types[key]==='num';\n" +
+      "    filtered.sort(function(a,b){var av=a[key],bv=b[key];if(isNum){av=parseFloat(av)||0;bv=parseFloat(bv)||0;return sortAsc?av-bv:bv-av;}return sortAsc?String(av).localeCompare(String(bv)):String(bv).localeCompare(String(av));});\n" +
+      "  }\n" +
+      "  function render(){\n" +
+      "    tbody.innerHTML='';\n" +
+      "    var totalPages=Math.max(1,Math.ceil(filtered.length/pageSize));\n" +
+      "    if(page>totalPages)page=totalPages;\n" +
+      "    if(page<1)page=1;\n" +
+      "    var start=(page-1)*pageSize;\n" +
+      "    var end=Math.min(start+pageSize,filtered.length);\n" +
+      "    for(var i=start;i<end;i++){tbody.appendChild(makeRow(filtered[i]));}\n" +
+      "    renderPagination(totalPages);\n" +
+      "  }\n" +
+      "  function makeRow(r){\n" +
+      "    var tr=document.createElement('tr');\n" +
+      "    tr.className=r.status;\n" +
+      "    tr.setAttribute('data-status',r.status);\n" +
+      "    var badgeMap={'pass':'PASSED','blow':'BLOWN','act':'ACTIVE'};\n" +
+      "    var nc=r.netZero?'zero':(r.netPos?'pos':'neg');\n" +
+      "    var wrHtml=r.hasWinRate?'<div class=barwrap><div class=barfill b'+Math.round(r.winRate)+'></div></div>'+r.winRate.toFixed(1)+'%':'<span class=\"zero\">n/a</span>';\n" +
+      "    var pfHtml=r.hasPF?'<span class=\"num\">'+r.pf.toFixed(2)+'</span>':'<span class=\"zero\">n/a</span>';\n" +
+      "    var rrHtml=r.hasRR?'<span class=\"num\">'+r.rr.toFixed(2)+'</span>':'<span class=\"zero\">n/a</span>';\n" +
+      "    tr.innerHTML='<td class=num>'+r.n+'</td><td>'+r.strat+'</td><td>'+r.startDay+'</td><td><span class=\"badge '+r.status+'\">'+badgeMap[r.status]+'</span></td><td class=reason>'+r.reason+'</td><td class=num>'+r.startBal.toFixed(2)+'</td><td class=num>'+r.endBal.toFixed(2)+'</td><td class=\"num '+nc+'\">'+r.netStr+'</td><td class=num>'+wrHtml+'</td><td class=\"num pos\">'+r.wins+'</td><td class=\"num neg\">'+r.losses+'</td><td class=num>'+r.trades+'</td><td>'+pfHtml+'</td><td>'+rrHtml+'</td><td class=\"num pos\">'+r.maxProfit.toFixed(2)+'</td><td class=\"num neg\">'+r.maxDD.toFixed(2)+'</td><td class=num>'+r.daysTgt+'</td><td class=num>'+r.daysBrk+'</td><td class=num>'+r.eqProt+'</td>'+(hasWeight?'<td class=num>'+r.weight.toFixed(3)+'</td>':'')+'<td>'+r.ended+'</td>';\n" +
+      "    return tr;\n" +
+      "  }\n" +
+      "  function renderPagination(totalPages){\n" +
+      "    var pg=document.getElementById('runs_pagination');\n" +
+      "    if(!pg)return;\n" +
+      "    if(totalPages<=1){pg.innerHTML='';return;}\n" +
+      "    var h='';\n" +
+      "    h+='<button class=\"btn'+(page<=1?' disabled':'')+'\" onclick=\"window.__runsPage('+(page-1)+')\">&#9664; Prev</button>';\n" +
+      "    h+='<span class=\"page-info\">Page '+page+' of '+totalPages+' ('+filtered.length+' rows)</span>';\n" +
+      "    h+='<button class=\"btn'+(page>=totalPages?' disabled':'')+'\" onclick=\"window.__runsPage('+(page+1)+')\">Next &#9654;</button>';\n" +
+      "    pg.innerHTML=h;\n" +
+      "  }\n" +
+      "  window.__runsPage=function(p){page=p;render();};\n" +
+      "  if(search)search.addEventListener('input',function(){clearTimeout(dtimer);dtimer=setTimeout(doFilter,200);});\n" +
+      "  for(var b=0;b<btns.length;b++){btns[b].addEventListener('click',function(){for(var k=0;k<btns.length;k++)btns[k].classList.remove('active');this.classList.add('active');filter=this.getAttribute('data-f');clearTimeout(dtimer);dtimer=setTimeout(doFilter,200);});}\n" +
+      "  var heads=document.querySelectorAll('#runs thead th[data-type]');\n" +
+      "  for(var h=0;h<heads.length;h++){(function(idx){heads[idx].addEventListener('click',function(){var th=heads[idx];if(sortIdx===idx){sortAsc=!sortAsc;}else{sortIdx=idx;sortAsc=true;}for(var j=0;j<heads.length;j++){heads[j].classList.remove('sort-asc');heads[j].classList.remove('sort-desc');}th.classList.add(sortAsc?'sort-asc':'sort-desc');doSort();page=1;render();});})(h);}\n" +
+      "  render();\n" +
       "})();\n" +
       "</script>\n");
 }
@@ -2255,12 +2432,13 @@ void UpdateDashboard()
    SetLine(line++, "Loss %        " + DoubleToString(StopLossPercentOfStart, 2) + "    Drawdown %    " + DoubleToString(StopDrawdownPercentOfStart, 2));
    SetLine(line++, " ");
 
-   if(EnablePropfirmBacktestMode)
-   {
-      SetLine(line++, "BACKTEST MODE", WarnColor());
-      SetLine(line++, "Virtual simulation running - no real trades placed");
-      SetLine(line++, " ");
-   }
+    if(EnablePropfirmBacktestMode)
+    {
+       SetLine(line++, "BACKTEST MODE", WarnColor());
+       SetLine(line++, "Virtual simulation running - no real trades placed");
+       SetLine(line++, "Recency HL    " + DoubleToString(PropRecencyHalfLifeDays, 1) + "d" + (PropRecencyHalfLifeDays > 0.0 ? " (active)" : " (disabled)"), PropRecencyHalfLifeDays > 0.0 ? GoodColor() : MutedColor());
+       SetLine(line++, " ");
+    }
    else
    {
       SetLine(line++, "LIVE STATE", MutedColor());
