@@ -3129,9 +3129,10 @@ void ExportPropfirmSingleReport()
 
    FileWriteString(handle,
       "<div class=\"section\">\n<h2>Strategy Results (ranked)</h2>\n" +
-      PropToolbarHtml("results") +
-      "<div class=\"table-scroll\">\n<table id=\"results\">\n<thead><tr>\n" +
-      "<th data-type=\"num\">Rank</th>\n<th data-type=\"str\">Strategy</th>\n<th data-type=\"str\">Status</th>\n" +
+       PropToolbarHtml("results") +
+       PropTopScrollHtml("results") +
+       "<div class=\"table-scroll has-top\" id=\"ts_results\">\n<table id=\"results\">\n<thead><tr>\n" +
+       "<th data-type=\"num\" class=\"sticky-col\">Rank</th>\n<th data-type=\"str\" class=\"sticky-col\">Strategy</th>\n<th data-type=\"str\">Status</th>\n" +
       "<th data-type=\"str\">Reason</th>\n<th data-type=\"num\">Start Bal</th>\n<th data-type=\"num\">End Bal</th>\n" +
       "<th data-type=\"num\">Net P/L</th>\n<th data-type=\"num\">Win Rate</th>\n<th data-type=\"num\">Wins</th>\n" +
        "<th data-type=\"num\">Losses</th>\n<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">PF</th>\n" +
@@ -3154,8 +3155,8 @@ void ExportPropfirmSingleReport()
 
       string row = "";
       row += StringFormat("<tr class=\"%s\" data-status=\"%s\">", status, status);
-      row += StringFormat("<td class=\"num\">%d</td>", i + 1);
-      row += StringFormat("<td>%s</td>", propResults[i].name);
+      row += StringFormat("<td class=\"num sticky-col\">%d</td>", i + 1);
+      row += StringFormat("<td class=\"sticky-col\">%s</td>", propResults[i].name);
       row += StringFormat("<td><span class=\"badge %s\">%s</span></td>", status, badge);
       row += StringFormat("<td class=\"reason\">%s</td>", reason);
       row += StringFormat("<td class=\"num\">%.2f</td>", propResults[i].startingBalance);
@@ -3359,12 +3360,154 @@ void ExportPropfirmRollingReport()
             int net = trendPass[s][d] - trendBreach[s][d];
             cumulative += net;
             trendCumulative[s][d] = cumulative;
-            if(trendHasData[s][d])
+         if(trendHasData[s][d])
                trendLatestCumulative[s] = cumulative;
          }
       }
 
-     for(int i = 0; i < 499; i++)
+      int rankHistory[500][90];
+      for(int s = 0; s < 500; s++)
+         for(int d = 0; d < 90; d++)
+            rankHistory[s][d] = 0;
+
+      for(int d = 0; d < trendDayCount; d++)
+      {
+         int candList[500];
+         int candCount = 0;
+         for(int s = 0; s < 500; s++)
+         {
+            if(trendHasData[s][d])
+               candList[candCount++] = s;
+         }
+         if(candCount == 0) continue;
+         for(int i = 0; i < candCount - 1; i++)
+         {
+            for(int j = i + 1; j < candCount; j++)
+            {
+               int a = candList[i], b = candList[j];
+               int totA = trendPass[a][d] + trendBreach[a][d];
+               int totB = trendPass[b][d] + trendBreach[b][d];
+               double rateA = (totA > 0) ? (double)trendPass[a][d] / totA : 0.0;
+               double rateB = (totB > 0) ? (double)trendPass[b][d] / totB : 0.0;
+               int netA = trendPass[a][d] - trendBreach[a][d];
+               int netB = trendPass[b][d] - trendBreach[b][d];
+               bool swap = false;
+               if(rateB > rateA + 0.0001) swap = true;
+               else if(MathAbs(rateB - rateA) <= 0.0001 && netB > netA) swap = true;
+               if(swap) { candList[i] = b; candList[j] = a; }
+            }
+         }
+         for(int i = 0; i < candCount; i++)
+            rankHistory[candList[i]][d] = i + 1;
+      }
+
+      int numRankedStrats = 0;
+      for(int s = 0; s < 500; s++)
+      {
+         for(int d = 0; d < trendDayCount; d++)
+         {
+            if(rankHistory[s][d] > 0) { numRankedStrats++; break; }
+         }
+      }
+
+      double persistenceScore[500];
+      double persistTop10[500];
+      double persistAvgRank[500];
+      double persistStability[500];
+      double persistMomentum[500];
+      bool persistHasData[500];
+      for(int s = 0; s < 500; s++)
+      {
+         persistHasData[s] = false;
+         persistenceScore[s] = 0.0;
+         persistTop10[s] = 0.0;
+         persistAvgRank[s] = 0.0;
+         persistStability[s] = 0.0;
+         persistMomentum[s] = 0.0;
+      }
+      for(int s = 0; s < 500; s++)
+      {
+         int daysWithData = 0, daysTop10 = 0, comparablePairs = 0;
+         double sumAbsChange = 0.0;
+         double sumRanks = 0.0;
+         int prevRank = 0;
+         bool hasPrev = false;
+         int recentRanks[90];
+         int recentCount = 0;
+         int recentDayIdx[90];
+         for(int d = 0; d < trendDayCount; d++)
+         {
+            int rk = rankHistory[s][d];
+            if(rk == 0) continue;
+            persistHasData[s] = true;
+            daysWithData++;
+            daysTop10 += (rk <= 10) ? 1 : 0;
+            sumRanks += rk;
+            recentDayIdx[recentCount] = d;
+            recentRanks[recentCount] = rk;
+            recentCount++;
+            if(hasPrev)
+            {
+               comparablePairs++;
+               sumAbsChange += MathAbs(rk - prevRank);
+            }
+            prevRank = rk;
+            hasPrev = true;
+         }
+         if(!persistHasData[s]) continue;
+         double pctTop10 = (double)daysTop10 / daysWithData * 100.0;
+         double avgRank = sumRanks / daysWithData;
+         double meanAbsChange = (comparablePairs > 0) ? sumAbsChange / comparablePairs : 0.0;
+         double rankVolatility = (numRankedStrats > 1) ? meanAbsChange / (double)(numRankedStrats - 1) * 100.0 : 0.0;
+         if(rankVolatility > 100.0) rankVolatility = 100.0;
+         double stabilityScore = 100.0 - rankVolatility;
+         double avgRankScore = (numRankedStrats > 1) ? (double)(numRankedStrats - avgRank) / (double)(numRankedStrats - 1) * 100.0 : 100.0;
+         if(avgRankScore < 0.0) avgRankScore = 0.0;
+         if(avgRankScore > 100.0) avgRankScore = 100.0;
+         double momentumScore = 50.0;
+         if(recentCount >= 2)
+         {
+            int half = recentCount / 2;
+            if(half < 1) half = 1;
+            double recentSum = 0.0, prevSum = 0.0;
+            int recentN = 0, prevN = 0;
+            int splitPoint = recentCount - half;
+            if(splitPoint < 1) splitPoint = 1;
+            if(splitPoint >= recentCount) splitPoint = recentCount - 1;
+            for(int r = 0; r < splitPoint; r++) { prevSum += recentRanks[r]; prevN++; }
+            for(int r = splitPoint; r < recentCount; r++) { recentSum += recentRanks[r]; recentN++; }
+            if(prevN > 0 && recentN > 0)
+            {
+               double prevAvg = prevSum / prevN;
+               double recentAvg = recentSum / recentN;
+               if(prevAvg > 0.0)
+               {
+                  double improvement = (prevAvg - recentAvg) / prevAvg;
+                  momentumScore = 50.0 + improvement * 50.0;
+               }
+            }
+         }
+         if(momentumScore < 0.0) momentumScore = 0.0;
+         if(momentumScore > 100.0) momentumScore = 100.0;
+         persistenceScore[s] = 0.40 * pctTop10 + 0.25 * avgRankScore + 0.20 * stabilityScore + 0.15 * momentumScore;
+         persistTop10[s] = pctTop10;
+         persistAvgRank[s] = avgRank;
+         persistStability[s] = stabilityScore;
+         persistMomentum[s] = momentumScore;
+      }
+
+      string bestPersistStratName = "";
+      double bestPersistScore = -999.0;
+      for(int s = 0; s < 500; s++)
+      {
+         if(persistHasData[s] && persistenceScore[s] > bestPersistScore)
+         {
+            bestPersistScore = persistenceScore[s];
+            bestPersistStratName = StrategyName(s + 1);
+         }
+      }
+
+      for(int i = 0; i < 499; i++)
     {
        for(int j = i + 1; j < 500; j++)
        {
@@ -3439,6 +3582,7 @@ void ExportPropfirmRollingReport()
    FileWriteString(handle, PropKv("Total Runs Simulated", IntegerToString(totalRuns)));
     FileWriteString(handle, "</div>\n<div class=\"note\">Each strategy is re-started fresh " + PropSpawnIntervalLabel() + " during the active window (pause/close hours skipped). A strategy can have multiple runs active simultaneously. Best strategy: <b>" + bestStratName + "</b> (" + DoubleToString(bestStratRate, 1) + "% pass rate)" + (recencyIneffective ? "<br><b style=\"color:#dc2626\">&#9888; Recency warning:</b> Half-life (" + DoubleToString(PropRecencyHalfLifeDays, 1) + "d) is much longer than test span (" + DoubleToString(testSpanDays, 1) + "d). All runs get near-equal weight, so recency score &asymp; raw pass rate. For meaningful recency differentiation, use a half-life &le; " + DoubleToString(testSpanDays, 1) + "d or run a longer backtest." : "") + "</div>\n</div>\n");
 
+    PropWriteMethodology(handle);
     FileWriteString(handle,
        "<div class=\"section\">\n<h2>Summary Dashboard</h2>\n<div class=\"cards\">\n" +
        "<div class=\"card pass\"><div class=\"label\">Passed Runs</div><div class=\"value\">" + IntegerToString(totalPassed) + "</div><div class=\"sub\">target hit</div></div>\n" +
@@ -3448,20 +3592,29 @@ void ExportPropfirmRollingReport()
        "<div class=\"card avg\"><div class=\"label\">Total Trades</div><div class=\"value\">" + IntegerToString(grandTotalTrades) + "</div><div class=\"sub\">virtual positions</div></div>\n" +
        "<div class=\"card sig\"><div class=\"label\">Total Signals</div><div class=\"value\">" + IntegerToString(grandTotalSignals) + "</div><div class=\"sub\">strategy triggers</div></div>\n" +
        "<div class=\"card tot\"><div class=\"label\">Total Runs</div><div class=\"value\">" + IntegerToString(totalRuns) + "</div><div class=\"sub\">strategy x start-days</div></div>\n" +
-       (useRecency ?
-          "<div class=\"card rec\"><div class=\"label\">Top Strategy (Recent)</div><div class=\"value\" style=\"font-size:13px;line-height:1.3\">" + bestRecentStratName + "</div><div class=\"sub\">Recency: " + DoubleToString(bestRecentStratScore, 1) + "% &nbsp;|&nbsp; All-time: " + DoubleToString(bestRecentAllTimeRate, 1) + "%</div></div>\n" :
-          "") +
-       "</div>\n</div>\n");
+        (useRecency ?
+           "<div class=\"card rec\"><div class=\"label\">Top Strategy (Recent)</div><div class=\"value\" style=\"font-size:13px;line-height:1.3\">" + bestRecentStratName + "</div><div class=\"sub\">Recency: " + DoubleToString(bestRecentStratScore, 1) + "% &nbsp;|&nbsp; All-time: " + DoubleToString(bestRecentAllTimeRate, 1) + "%</div></div>\n" :
+           "") +
+        (bestPersistStratName != "" ?
+           "<div class=\"card persist\"><div class=\"label\">Top Strategy (Persistence)</div><div class=\"value\" style=\"font-size:13px;line-height:1.3\">" + bestPersistStratName + "</div><div class=\"sub\">Score: " + DoubleToString(bestPersistScore, 1) + "</div></div>\n" :
+           "") +
+        "</div>\n</div>\n");
 
     FileWriteString(handle,
        "<div class=\"section\">\n<h2>Strategy Ranking (" + (useRecency ? "by recency score" : "by pass rate across start-days") + ")</h2>\n" +
        PropToolbarHtml("strat") +
-       "<div class=\"table-scroll\">\n<table id=\"strat\">\n<thead><tr>\n" +
-       "<th data-type=\"num\">Rank</th>\n<th data-type=\"str\">Strategy</th>\n<th data-type=\"num\">Starts</th>\n" +
+       PropTopScrollHtml("strat") +
+       "<div class=\"table-scroll has-top\" id=\"ts_strat\">\n<table id=\"strat\">\n<thead><tr>\n" +
+        "<th data-type=\"num\" class=\"sticky-col\">Rank</th>\n<th data-type=\"str\" class=\"sticky-col\">Strategy</th>\n<th data-type=\"num\">Starts</th>\n" +
        "<th data-type=\"num\">Passed</th>\n<th data-type=\"num\">Blown</th>\n<th data-type=\"num\">Active</th>\n" +
         (useRecency ? "<th data-type=\"num\">Recency Score</th>\n" : "") +
         "<th data-type=\"num\">All-Time Pass Rate</th>\n<th data-type=\"num\">Avg Win Rate</th>\n" +
          "<th data-type=\"num\">Trend<br><span style=\"font-weight:400;font-size:10px\">equity curve &middot; pass +1 / blow -1</span></th>\n" +
+         "<th data-type=\"num\" class=\"persist-col\">Persist</th>\n" +
+         "<th data-type=\"num\" class=\"persist-col\">Top10%</th>\n" +
+         "<th data-type=\"num\" class=\"persist-col\">Avg Rank</th>\n" +
+         "<th data-type=\"num\" class=\"persist-col\">Stability</th>\n" +
+         "<th data-type=\"num\" class=\"persist-col\">Momentum</th>\n" +
         "<th data-type=\"num\">PF</th>\n<th data-type=\"num\">Avg R:R</th>\n" +
         "<th data-type=\"num\">Avg Net P/L</th>\n<th data-type=\"num\">Best Net</th>\n<th data-type=\"num\">Worst Net</th>\n" +
          "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
@@ -3486,8 +3639,8 @@ void ExportPropfirmRollingReport()
        string stratName = StrategyName(sid + 1);
 
        string row = "";
-       row += StringFormat("<tr><td class=\"num\">%d</td>", rank + 1);
-       row += "<td><a href=\"javascript:void(0)\" onclick=\"filterRuns('" + stratName + "')\" class=\"strat-link\">" + stratName + "</a></td>";
+       row += StringFormat("<tr><td class=\"num sticky-col\">%d</td>", rank + 1);
+       row += "<td class=\"sticky-col\"><a href=\"javascript:void(0)\" onclick=\"filterRuns('" + stratName + "')\" class=\"strat-link\">" + stratName + "</a></td>";
       row += StringFormat("<td class=\"num\">%d</td>", aggStarts[sid]);
       row += StringFormat("<td class=\"num pos\">%d</td>", aggPassed[sid]);
       row += StringFormat("<td class=\"num neg\">%d</td>", aggBlown[sid]);
@@ -3508,6 +3661,24 @@ void ExportPropfirmRollingReport()
        else
           row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
        row += StringFormat("<td class=\"spark\" data-sort=\"%.4f\" id=\"spark_%d\"></td>", trendLatestCumulative[sid], sid);
+       if(persistHasData[sid])
+       {
+          string persistClass = (persistenceScore[sid] >= 60.0) ? "pos" : ((persistenceScore[sid] < 30.0) ? "neg" : "");
+          row += StringFormat("<td class=\"num persist-col %s\" data-sort=\"%.4f\">%.1f</td>", persistClass, persistenceScore[sid], persistenceScore[sid]);
+          row += StringFormat("<td class=\"num persist-col\" data-sort=\"%.4f\">%.0f%%</td>", persistTop10[sid], persistTop10[sid]);
+          row += StringFormat("<td class=\"num persist-col\" data-sort=\"%.4f\">%.1f</td>", persistAvgRank[sid], persistAvgRank[sid]);
+          row += StringFormat("<td class=\"num persist-col\" data-sort=\"%.4f\">%.0f%%</td>", persistStability[sid], persistStability[sid]);
+          string momClass = (persistMomentum[sid] > 55.0) ? "pos" : ((persistMomentum[sid] < 45.0) ? "neg" : "");
+          row += StringFormat("<td class=\"num persist-col %s\" data-sort=\"%.4f\">%.0f%%</td>", momClass, persistMomentum[sid], persistMomentum[sid]);
+       }
+       else
+       {
+          row += "<td data-sort=\"-999\" class=\"zero persist-col\">n/a</td>";
+          row += "<td data-sort=\"-999\" class=\"zero persist-col\">n/a</td>";
+          row += "<td data-sort=\"-999\" class=\"zero persist-col\">n/a</td>";
+          row += "<td data-sort=\"-999\" class=\"zero persist-col\">n/a</td>";
+          row += "<td data-sort=\"-999\" class=\"zero persist-col\">n/a</td>";
+       }
       if(aggGrossLoss[sid] < 0.0)
          row += StringFormat("<td class=\"num %s\">%.2f</td>", pfClass, profitFactor);
       else
@@ -3539,8 +3710,9 @@ void ExportPropfirmRollingReport()
        "<span class=\"collapse-arrow\">&#9654;</span> Click to expand per-run detail (" + IntegerToString(totalRuns) + " runs)</div>\n" +
        "<div id=\"runs_body\" style=\"display:none\">\n" +
        PropToolbarHtml("runs") +
-       "<div class=\"table-scroll\">\n<table id=\"runs\">\n<thead><tr>\n" +
-       "<th data-type=\"num\">#</th>\n<th data-type=\"str\">Strategy</th>\n<th data-type=\"str\">Start Day</th>\n" +
+       PropTopScrollHtml("runs") +
+       "<div class=\"table-scroll has-top\" id=\"ts_runs\">\n<table id=\"runs\">\n<thead><tr>\n" +
+       "<th data-type=\"num\" class=\"sticky-col\">#</th>\n<th data-type=\"str\" class=\"sticky-col\">Strategy</th>\n<th data-type=\"str\">Start Day</th>\n" +
        "<th data-type=\"str\">Status</th>\n<th data-type=\"str\">Reason</th>\n" +
        "<th data-type=\"num\">Start Bal</th>\n<th data-type=\"num\">End Bal</th>\n<th data-type=\"num\">Net P/L</th>\n" +
        "<th data-type=\"num\">Win Rate</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
@@ -3759,21 +3931,44 @@ void PropWriteHtmlHead(const int handle)
       ".card .label{color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.8px}\n" +
       ".card .value{color:#1e293b;font-size:22px;font-weight:700;margin-top:6px}\n" +
       ".card .sub{color:#94a3b8;font-size:11px;margin-top:2px}\n" +
-      ".note{color:#64748b;font-size:12px;margin-top:12px}\n.note b{color:#1e293b}\n" +
+       ".note{color:#64748b;font-size:12px;margin-top:12px}\n.note b{color:#1e293b}\n" +
+       ".method{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}\n" +
+       ".m-item{background:#f8fafc;border:1px solid #e2e8f0;border-left:3px solid #6366f1;border-radius:8px;padding:12px 14px}\n" +
+       ".m-item h3{color:#4f46e5;font-size:13px;margin-bottom:6px;font-weight:700}\n" +
+       ".m-item p{color:#475569;font-size:12px;line-height:1.55}\n" +
+       ".m-item p code{background:#e0e7ff;padding:1px 5px;border-radius:4px;color:#3730a3;font-size:11px}\n" +
+       ".m-item ul{margin:6px 0 0 16px;color:#475569;font-size:12px;line-height:1.6}\n" +
+       ".m-item li b{color:#1e293b}\n" +
       ".toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}\n" +
       ".toolbar input[type=text]{flex:1;min-width:220px;background:#f8fafc;border:1px solid #cbd5e1;color:#1e293b;padding:9px 12px;border-radius:8px;font-size:13px}\n" +
       ".toolbar input:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.15)}\n" +
       ".btn{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;padding:8px 14px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:600}\n" +
       ".btn:hover{background:#e2e8f0;color:#1e293b}\n.btn.active{background:#6366f1;border-color:#818cf8;color:#fff}\n" +
-      ".table-scroll{overflow-x:auto;border:1px solid #e2e8f0;border-radius:10px}\n" +
-      "table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:1550px}\n" +
-      "thead th{background:#6366f1;color:#fff;padding:11px 10px;text-align:left;font-weight:600;position:sticky;top:0;cursor:pointer;user-select:none;white-space:nowrap;border-bottom:2px solid #4f46e5}\n" +
+       ".table-scroll{overflow-x:auto;border:1px solid #e2e8f0;border-radius:10px;max-width:100%}\n" +
+       ".table-scroll.has-top{border-top:none;border-radius:0 0 10px 10px}\n" +
+       ".scroll-top{overflow-x:auto;overflow-y:hidden;height:16px;border:1px solid #e2e8f0;border-bottom:none;border-radius:10px 10px 0 0;background:#f8fafc}\n" +
+       ".scroll-top>div{height:1px;min-width:1px}\n" +
+       "table{border-collapse:collapse;font-size:12.5px;width:max-content;min-width:100%}\n" +
+       "thead th{background:#6366f1;color:#fff;padding:11px 10px;text-align:left;font-weight:600;position:sticky;top:0;cursor:pointer;user-select:none;white-space:nowrap;border-bottom:2px solid #4f46e5;z-index:2}\n" +
+       "thead th.sticky-col{position:sticky;z-index:3}\n" +
+       "thead th.sticky-col:nth-child(1){left:0;background:#4f46e5;min-width:50px}\n" +
+       "thead th.sticky-col:nth-child(2){left:50px;background:#4f46e5;min-width:180px}\n" +
       "thead th:hover{background:#5457e5}\n" +
       "th[data-type]{position:relative}\n" +
       "th[data-type]::after{content:\"\";position:absolute;right:8px;top:50%;transform:translateY(-50%);width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid rgba(255,255,255,.4);opacity:.7}\n" +
       "th.sort-asc::after{border-top:0;border-bottom:5px solid #fbbf24;border-left:4px solid transparent;border-right:4px solid transparent;opacity:1}\n" +
       "th.sort-desc::after{border-top:5px solid #fbbf24;opacity:1}\n" +
-      "tbody td{padding:9px 10px;border-bottom:1px solid #f1f5f9;white-space:nowrap}\n" +
+       "tbody td{padding:9px 10px;border-bottom:1px solid #f1f5f9;white-space:nowrap}\n" +
+       "tbody td.sticky-col{position:sticky;z-index:1}\n" +
+       "tbody td.sticky-col:nth-child(1){left:0;min-width:50px}\n" +
+       "tbody td.sticky-col:nth-child(2){left:50px;min-width:180px}\n" +
+       "tbody tr:nth-child(even) td.sticky-col{background:#f8fafc}\n" +
+       "tbody tr:nth-child(odd) td.sticky-col{background:#fff}\n" +
+       "tbody tr:hover td.sticky-col{background:#e0e7ff}\n" +
+       "tbody td.persist-col{background:rgba(16,185,129,.06)!important;border-left:2px solid rgba(16,185,129,.2)!important}\n" +
+       "tbody tr:hover td.persist-col{background:rgba(16,185,129,.12)!important}\n" +
+       "thead th.persist-col{background:#047857!important;border-left:2px solid rgba(110,231,183,.55)!important;color:#fff!important}\n" +
+       "thead th.persist-col:hover{background:#065f46!important}\n" +
       "tbody tr:nth-child(even){background:#f8fafc}\n" +
       "tbody tr:hover{background:#e0e7ff}\n" +
       "tbody tr.pass{border-left:3px solid #22c55e}\n" +
@@ -3798,6 +3993,7 @@ void PropWriteHtmlHead(const int handle)
        ".pagination .page-info{font-size:12px;color:#64748b;font-weight:600}\n" +
        ".pagination .btn.disabled{opacity:.4;cursor:default}\n" +
        ".card.rec::before{background:#6366f1}\n" +
+       ".card.persist::before{background:#10b981}\n" +
       ".footer{color:#94a3b8;font-size:12px;text-align:center;margin-top:22px;padding:14px}\n" +
        ".footer code{background:#f1f5f9;padding:2px 8px;border-radius:4px;color:#64748b}\n" +
        "</style>\n<script>(function(){var s=document.createElement('style');var c='';for(var i=0;i<=100;i++){c+='.b'+i+'{width:'+i+'%}';}s.textContent=c;document.head.appendChild(s);})();</script>\n</head>\n<body>\n<div class=\"wrap\">\n");
@@ -3835,7 +4031,47 @@ void PropWriteCommonSettings(const int handle, const datetime testStart, const d
    FileWriteString(handle, PropKv("Virtual Take Profit", DoubleToString(VirtualTakeProfitMoney, 2)));
    FileWriteString(handle, PropKv("Virtual Stop Loss", DoubleToString(VirtualStopLossMoney, 2)));
    FileWriteString(handle, PropKv("Test Started", TimeToString(testStart, TIME_DATE | TIME_MINUTES)));
-   FileWriteString(handle, PropKv("Report Generated", TimeToString(testEnd, TIME_DATE | TIME_SECONDS)));
+    FileWriteString(handle, PropKv("Report Generated", TimeToString(testEnd, TIME_DATE | TIME_SECONDS)));
+}
+
+void PropWriteMethodology(const int handle)
+{
+   FileWriteString(handle,
+      "<div class=\"section\">\n<h2>Methodology &mdash; How Scores Are Calculated</h2>\n<div class=\"method\">\n");
+   FileWriteString(handle,
+      "<div class=\"m-item\">\n<h3>Pass Rate (All-Time)</h3>\n" +
+      "<p>Passed runs &divide; total starts for the strategy, shown as a percentage. A run <b>passes</b> when equity reaches the profit target (" + DoubleToString(PropProfitTargetPercent, 1) + "% of starting balance) before any rule breach. A run <b>blows</b> when total drawdown exceeds " + DoubleToString(PropMaxTotalDrawdownPercent, 1) + "% or daily drawdown exceeds " + DoubleToString(PropDailyDrawdownPercent, 1) + "%.</p>\n</div>\n");
+   if(PropRecencyHalfLifeDays > 0.0)
+   {
+      FileWriteString(handle,
+         "<div class=\"m-item\">\n<h3>Recency Score</h3>\n" +
+         "<p>Exponential time-weighted pass rate. Each run is weighted by <code>w = exp(-&lambda;&middot;age)</code>, where <i>age</i> is days since the run started and <code>&lambda; = ln(2) / " + DoubleToString(PropRecencyHalfLifeDays, 1) + "</code> (the half-life in days). Older runs contribute exponentially less. Score = &Sigma;(passed&middot;w) &divide; &Sigma;(all&middot;w). The ranking uses this score when recency is enabled.</p>\n</div>\n");
+   }
+   FileWriteString(handle,
+      "<div class=\"m-item\">\n<h3>Trend (sparkline)</h3>\n" +
+      "<p>Per-day cumulative net = &Sigma;(passes &minus; breaches) up to that day. Each strategy is ranked daily by that day's pass rate; the sparkline plots the running cumulative net &mdash; <span style=\"color:#16a34a\">green</span> = net positive, <span style=\"color:#dc2626\">red</span> = net negative. Hover for the daily breakdown.</p>\n</div>\n");
+   FileWriteString(handle,
+      "<div class=\"m-item\">\n<h3>Persistence Score (0&ndash;100)</h3>\n" +
+      "<p>A composite of how consistently a strategy stays near the top of the daily ranking. It is a weighted blend of four sub-metrics (shown in the five green-tinted columns):</p>\n" +
+      "<ul>\n" +
+      "<li><b>Top10% (weight 40%)</b> &mdash; share of ranked days the strategy placed in the top 10.</li>\n" +
+      "<li><b>Avg Rank (weight 25%)</b> &mdash; mean daily rank normalized to 0&ndash;100 (higher is better): (N &minus; avgRank) / (N &minus; 1) &times; 100.</li>\n" +
+      "<li><b>Stability (weight 20%)</b> &mdash; 100 minus rank volatility, where volatility = mean absolute day-to-day rank change normalized by the number of ranked strategies.</li>\n" +
+      "<li><b>Momentum (weight 15%)</b> &mdash; compares the average rank of the recent half of days to the earlier half. 50 = no change, &gt;50 = improving, &lt;50 = declining.</li>\n" +
+      "</ul>\n</div>\n");
+   FileWriteString(handle,
+      "<div class=\"m-item\">\n<h3>Profit Factor (PF)</h3>\n" +
+      "<p>Gross profit &divide; |gross loss| across all runs of the strategy. PF &ge; 1 indicates net profitable trading.</p>\n</div>\n");
+   FileWriteString(handle,
+      "<div class=\"m-item\">\n<h3>Avg R:R (Reward : Risk)</h3>\n" +
+      "<p>Average win ($) &divide; average loss ($) per strategy, where each trade exits at the Virtual Take Profit / Stop Loss money thresholds.</p>\n</div>\n");
+   FileWriteString(handle,
+      "<div class=\"m-item\">\n<h3>Net P/L (Avg / Best / Worst)</h3>\n" +
+      "<p>End balance &minus; starting balance. <b>Avg Net</b> is the mean across runs; <b>Best</b> and <b>Worst Net</b> are the single most and least profitable runs for the strategy.</p>\n</div>\n");
+   FileWriteString(handle,
+      "<div class=\"m-item\">\n<h3>Ranking / Sort Order</h3>\n" +
+      "<p>Strategies are sorted by <b>recency score</b> when enabled (then all-time pass rate, then average net P/L as tiebreakers); otherwise by all-time pass rate then average net P/L. Click any column header to re-sort the table.</p>\n</div>\n");
+   FileWriteString(handle, "</div>\n</div>\n");
 }
 
 string PropToolbarHtml(const string tableId)
@@ -3846,7 +4082,12 @@ string PropToolbarHtml(const string tableId)
           "<button class=\"btn\" data-f=\"pass\" data-tbl=\"" + tableId + "\">Passed</button>\n" +
           "<button class=\"btn\" data-f=\"blow\" data-tbl=\"" + tableId + "\">Blown</button>\n" +
           "<button class=\"btn\" data-f=\"act\" data-tbl=\"" + tableId + "\">Active</button>\n" +
-          "</div>\n";
+           "</div>\n";
+}
+
+string PropTopScrollHtml(const string tableId)
+{
+   return "<div class=\"scroll-top\" id=\"topscroll_" + tableId + "\"><div></div></div>\n";
 }
 
 void PropWriteFooter(const int handle, const string tableId)
@@ -3867,6 +4108,51 @@ void PropWriteFooter(const int handle, const string tableId)
       "  for(var b=0;b<btns.length;b++){btns[b].addEventListener('click',function(){for(var k=0;k<btns.length;k++)btns[k].classList.remove('active');this.classList.add('active');filter=this.getAttribute('data-f');clearTimeout(dtimer);dtimer=setTimeout(apply,200);});}\n" +
       "  var heads=document.querySelectorAll('#'+tableId+' thead th[data-type]');\n" +
       "  for(var h=0;h<heads.length;h++){heads[h].addEventListener('click',function(){var th=this;var idx=0;var ths=th.parentNode.children;for(var c=0;c<ths.length;c++){if(ths[c]===th){idx=c;break;}}var type=th.getAttribute('data-type')||'str';var asc=true;if(th.classList.contains('sort-asc'))asc=false;for(var j=0;j<heads.length;j++){heads[j].classList.remove('sort-asc');heads[j].classList.remove('sort-desc');}th.classList.add(asc?'sort-asc':'sort-desc');var rowsArr=[];var trs=tbody.querySelectorAll('tr');for(var i=0;i<trs.length;i++)rowsArr.push(trs[i]);rowsArr.sort(function(a,b){var aCell=a.cells[idx];var bCell=b.cells[idx];var av=aCell.getAttribute('data-sort');var bv=bCell.getAttribute('data-sort');if(av===null)av=aCell.textContent.trim();if(bv===null)bv=bCell.textContent.trim();if(type==='num'){av=parseFloat(av)||0;bv=parseFloat(bv)||0;return asc?av-bv:bv-av;}return asc?a.localeCompare(b):b.localeCompare(a);});for(var i=0;i<rowsArr.length;i++)tbody.appendChild(rowsArr[i]);});}\n" +
+       "})();\n" +
+       "</script>\n");
+   FileWriteString(handle,
+      "<script>\n" +
+      "(function(){\n" +
+      "  function bindPair(top,ts){\n" +
+      "    var inner=top.querySelector('div');\n" +
+      "    if(!inner){inner=document.createElement('div');top.appendChild(inner);}\n" +
+      "    var syncing=false;\n" +
+      "    function syncWidth(){try{inner.style.width=Math.max(ts.scrollWidth,1)+'px';}catch(e){}}\n" +
+      "    ts.addEventListener('scroll',function(){if(syncing)return;syncing=true;top.scrollLeft=ts.scrollLeft;syncing=false;});\n" +
+      "    top.addEventListener('scroll',function(){if(syncing)return;syncing=true;ts.scrollLeft=top.scrollLeft;syncing=false;});\n" +
+      "    top.__syncWidth=syncWidth;\n" +
+      "    syncWidth();\n" +
+      "  }\n" +
+      "  function setupAll(){\n" +
+      "    var tops=document.querySelectorAll('.scroll-top');\n" +
+      "    for(var i=0;i<tops.length;i++){\n" +
+      "      var top=tops[i];\n" +
+      "      if(top.__bound)continue;\n" +
+      "      var id=(top.id||'').replace('topscroll_','');\n" +
+      "      var ts=document.getElementById('ts_'+id);\n" +
+      "      if(!ts)continue;\n" +
+      "      bindPair(top,ts);\n" +
+      "      top.__bound=true;\n" +
+      "    }\n" +
+      "  }\n" +
+      "  window.__syncTopScrolls=function(){\n" +
+      "    setupAll();\n" +
+      "    var tops=document.querySelectorAll('.scroll-top');\n" +
+      "    for(var i=0;i<tops.length;i++){if(tops[i].__syncWidth)tops[i].__syncWidth();}\n" +
+      "  };\n" +
+      "  window.__syncTopScrolls();\n" +
+      "  window.addEventListener('load',window.__syncTopScrolls);\n" +
+      "  if(window.ResizeObserver){\n" +
+      "    window.__tsRo=new ResizeObserver(function(){window.__syncTopScrolls();});\n" +
+      "    var tops=document.querySelectorAll('.scroll-top');\n" +
+      "    for(var i=0;i<tops.length;i++){\n" +
+      "      var id=(tops[i].id||'').replace('topscroll_','');\n" +
+      "      var ts=document.getElementById('ts_'+id);\n" +
+      "      var tbl=ts?ts.querySelector('table'):null;\n" +
+      "      if(tbl)window.__tsRo.observe(tbl);\n" +
+      "    }\n" +
+      "  }\n" +
+      "  setTimeout(window.__syncTopScrolls,300);\n" +
       "})();\n" +
       "</script>\n");
 }
@@ -3914,6 +4200,7 @@ void PropWriteRunsFooter(const int handle, const bool hasWeightCol)
       "    var end=Math.min(start+pageSize,filtered.length);\n" +
       "    for(var i=start;i<end;i++){tbody.appendChild(makeRow(filtered[i]));}\n" +
       "    renderPagination(totalPages);\n" +
+      "    if(window.__syncTopScrolls)window.__syncTopScrolls();\n" +
       "  }\n" +
       "  function makeRow(r){\n" +
       "    var tr=document.createElement('tr');\n" +
@@ -3924,7 +4211,7 @@ void PropWriteRunsFooter(const int handle, const bool hasWeightCol)
       "    var wrHtml=r.hasWinRate?'<div class=barwrap><div class=barfill b'+Math.round(r.winRate)+'></div></div>'+r.winRate.toFixed(1)+'%':'<span class=\"zero\">n/a</span>';\n" +
       "    var pfHtml=r.hasPF?'<span class=\"num\">'+r.pf.toFixed(2)+'</span>':'<span class=\"zero\">n/a</span>';\n" +
       "    var rrHtml=r.hasRR?'<span class=\"num\">'+r.rr.toFixed(2)+'</span>':'<span class=\"zero\">n/a</span>';\n" +
-      "    tr.innerHTML='<td class=num>'+r.n+'</td><td>'+r.strat+'</td><td>'+r.startDay+'</td><td><span class=\"badge '+r.status+'\">'+badgeMap[r.status]+'</span></td><td class=reason>'+r.reason+'</td><td class=num>'+r.startBal.toFixed(2)+'</td><td class=num>'+r.endBal.toFixed(2)+'</td><td class=\"num '+nc+'\">'+r.netStr+'</td><td class=num>'+wrHtml+'</td><td class=\"num pos\">'+r.wins+'</td><td class=\"num neg\">'+r.losses+'</td><td class=num>'+r.trades+'</td><td>'+pfHtml+'</td><td>'+rrHtml+'</td><td class=\"num pos\">'+r.maxProfit.toFixed(2)+'</td><td class=\"num neg\">'+r.maxDD.toFixed(2)+'</td><td class=num>'+r.daysTgt+'</td><td class=num>'+r.daysBrk+'</td><td class=num>'+r.eqProt+'</td>'+(hasWeight?'<td class=num>'+r.weight.toFixed(3)+'</td>':'')+'<td>'+r.ended+'</td>';\n" +
+      "    tr.innerHTML='<td class=\"num sticky-col\">'+r.n+'</td><td class=\"sticky-col\">'+r.strat+'</td><td>'+r.startDay+'</td><td><span class=\"badge '+r.status+'\">'+badgeMap[r.status]+'</span></td><td class=reason>'+r.reason+'</td><td class=num>'+r.startBal.toFixed(2)+'</td><td class=num>'+r.endBal.toFixed(2)+'</td><td class=\"num '+nc+'\">'+r.netStr+'</td><td class=num>'+wrHtml+'</td><td class=\"num pos\">'+r.wins+'</td><td class=\"num neg\">'+r.losses+'</td><td class=num>'+r.trades+'</td><td>'+pfHtml+'</td><td>'+rrHtml+'</td><td class=\"num pos\">'+r.maxProfit.toFixed(2)+'</td><td class=\"num neg\">'+r.maxDD.toFixed(2)+'</td><td class=num>'+r.daysTgt+'</td><td class=num>'+r.daysBrk+'</td><td class=num>'+r.eqProt+'</td>'+(hasWeight?'<td class=num>'+r.weight.toFixed(3)+'</td>':'')+'<td>'+r.ended+'</td>';\n" +
       "    return tr;\n" +
       "  }\n" +
       "  function renderPagination(totalPages){\n" +
