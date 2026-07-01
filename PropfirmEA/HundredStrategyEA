@@ -3606,8 +3606,10 @@ void ExportPropfirmRollingReport()
        PropTopScrollHtml("strat") +
        "<div class=\"table-scroll has-top\" id=\"ts_strat\">\n<table id=\"strat\">\n<thead><tr>\n" +
         "<th data-type=\"num\" class=\"sticky-col\">Rank</th>\n<th data-type=\"str\" class=\"sticky-col\">Strategy</th>\n<th data-type=\"num\">Starts</th>\n" +
-       "<th data-type=\"num\">Passed</th>\n<th data-type=\"num\">Blown</th>\n<th data-type=\"num\">Active</th>\n" +
-        (useRecency ? "<th data-type=\"num\">Recency Score</th>\n" : "") +
+        "<th data-type=\"num\">Passed</th>\n<th data-type=\"num\">Blown</th>\n<th data-type=\"num\">Active</th>\n" +
+         "<th data-type=\"num\">True Blow Risk<br><span style=\"font-weight:400;font-size:10px\">blown &divide; (passed+blown)</span></th>\n" +
+         "<th data-type=\"num\">Safety Score<br><span style=\"font-weight:400;font-size:10px\">100 &minus; blow risk</span></th>\n" +
+         (useRecency ? "<th data-type=\"num\">Recency Score</th>\n" : "") +
         "<th data-type=\"num\">All-Time Pass Rate</th>\n<th data-type=\"num\">Avg Win Rate</th>\n" +
          "<th data-type=\"num\">Trend<br><span style=\"font-weight:400;font-size:10px\">equity curve &middot; pass +1 / blow -1</span></th>\n" +
          "<th data-type=\"num\" class=\"persist-col\">Persist</th>\n" +
@@ -3644,8 +3646,23 @@ void ExportPropfirmRollingReport()
       row += StringFormat("<td class=\"num\">%d</td>", aggStarts[sid]);
       row += StringFormat("<td class=\"num pos\">%d</td>", aggPassed[sid]);
       row += StringFormat("<td class=\"num neg\">%d</td>", aggBlown[sid]);
-      row += StringFormat("<td class=\"num\">%d</td>", aggActive[sid]);
-       if(useRecency)
+       row += StringFormat("<td class=\"num\">%d</td>", aggActive[sid]);
+       int resolvedRuns = aggPassed[sid] + aggBlown[sid];
+       double trueBlowRisk = (resolvedRuns > 0) ? (double)aggBlown[sid] / (double)resolvedRuns * 100.0 : 0.0;
+       double safetyScore = (resolvedRuns > 0) ? 100.0 - trueBlowRisk : 0.0;
+       string blowRiskClass = (resolvedRuns > 0) ? (trueBlowRisk < 5.0 ? "pos" : (trueBlowRisk > 15.0 ? "neg" : "")) : "zero";
+       string safetyClass = (resolvedRuns > 0) ? (safetyScore >= 95.0 ? "pos" : (safetyScore < 85.0 ? "neg" : "")) : "zero";
+       if(resolvedRuns > 0)
+       {
+          row += StringFormat("<td class=\"num %s\" data-sort=\"%.4f\">%.1f%%</td>", blowRiskClass, trueBlowRisk, trueBlowRisk);
+          row += StringFormat("<td class=\"num %s\" data-sort=\"%.4f\">%.1f</td>", safetyClass, safetyScore, safetyScore);
+       }
+       else
+       {
+          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+          row += "<td data-sort=\"-1\" class=\"zero\">n/a</td>";
+       }
+        if(useRecency)
        {
           if(aggRecencyWeightSum[sid] > 0.0)
              row += StringFormat("<td data-sort=\"%.4f\"><div class=\"barwrap\"><div class=\"barfill b%d\"></div></div>%.1f%%</td>", recencyScore, (int)MathRound(recencyScore), recencyScore);
@@ -4040,7 +4057,16 @@ void PropWriteMethodology(const int handle)
       "<div class=\"section\">\n<h2>Methodology &mdash; How Scores Are Calculated</h2>\n<div class=\"method\">\n");
    FileWriteString(handle,
       "<div class=\"m-item\">\n<h3>Pass Rate (All-Time)</h3>\n" +
-      "<p>Passed runs &divide; total starts for the strategy, shown as a percentage. A run <b>passes</b> when equity reaches the profit target (" + DoubleToString(PropProfitTargetPercent, 1) + "% of starting balance) before any rule breach. A run <b>blows</b> when total drawdown exceeds " + DoubleToString(PropMaxTotalDrawdownPercent, 1) + "% or daily drawdown exceeds " + DoubleToString(PropDailyDrawdownPercent, 1) + "%.</p>\n</div>\n");
+       "<p>Passed runs &divide; total starts for the strategy, shown as a percentage. A run <b>passes</b> when equity reaches the profit target (" + DoubleToString(PropProfitTargetPercent, 1) + "% of starting balance) before any rule breach. A run <b>blows</b> when total drawdown exceeds " + DoubleToString(PropMaxTotalDrawdownPercent, 1) + "% or daily drawdown exceeds " + DoubleToString(PropDailyDrawdownPercent, 1) + "%.</p>\n" +
+       "<p><b>Caution:</b> Pass rate rewards strategies that hit the profit target <i>quickly</i>. A fast strategy resolves runs as &ldquo;passed&rdquo; before it ever has time to blow, inflating its pass rate. Slower-but-safer strategies accumulate &ldquo;active&rdquo; (unresolved) runs that drag their pass rate down without indicating any real risk. Use <b>True Blow Risk</b> and <b>Safety Score</b> below to judge actual danger.</p>\n</div>\n");
+    FileWriteString(handle,
+       "<div class=\"m-item\">\n<h3>True Blow Risk</h3>\n" +
+       "<p>Blown runs &divide; (passed + blown runs), shown as a percentage. This <b>excludes active (unresolved) runs entirely</b>, so it answers: <i>of the runs that actually finished one way or the other, what fraction blew?</i></p>\n" +
+       "<p>Unlike pass rate, this is not distorted by speed. A strategy with 0% blow risk has <b>never</b> blown a single account among all resolved runs &mdash; the safest possible record. Lower is better. A strategy with 80% pass rate and 5% blow risk is far safer than one with 83% pass rate and 13% blow risk, even though the report sorts them in the opposite order by pass rate alone.</p>\n</div>\n");
+    FileWriteString(handle,
+       "<div class=\"m-item\">\n<h3>Safety Score</h3>\n" +
+       "<p>100 &minus; True Blow Risk. Higher is safer. A score of 100 means the strategy has never blown an account (0% blow risk). A score of 85 means 15% of resolved runs blew. This is the single most reliable column for ranking by <b>risk of failure</b> rather than speed of success.</p>\n" +
+       "<p><b>How to read it:</b> Sort by this column (click the header) to find the strategies least likely to breach propfirm drawdown rules. Pair high-safety strategies with high-recency strategies to get both durability and current-regime fit.</p>\n</div>\n");
    if(PropRecencyHalfLifeDays > 0.0)
    {
       FileWriteString(handle,
