@@ -712,6 +712,13 @@ int propSignalCache[PROP_STRATEGY_COUNT];
 int propSignalCounts[PROP_STRATEGY_COUNT];
 datetime propSignalCacheBar = 0;
 
+int propActiveIdx[];
+int propPosInActive[];
+double propCacheBid = 0.0;
+double propCacheAsk = 0.0;
+double propCacheTickValue = 0.0;
+double propCacheTickSize = 0.0;
+
 int atrHandle = INVALID_HANDLE;
 datetime lastBarTime = 0;
 bool eaStopped = false;
@@ -2072,11 +2079,7 @@ double BufferValue(const int handle, const int buffer, const int shift)
    double values[];
    ArraySetAsSeries(values, true);
    if(CopyBuffer(handle, buffer, shift, 1, values) != 1)
-   {
-      IndicatorRelease(handle);
       return 0.0;
-   }
-   IndicatorRelease(handle);
    return values[0];
 }
 
@@ -2362,15 +2365,17 @@ void CloseAllEaPositions()
 void InitPropfirmBacktest()
 {
    propCurrentDayReset = PropCurrentResetTime(TimeCurrent());
-    if(PropRollingStartMode)
-    {
-       ArrayResize(propRuns, 0);
-       propLastResumeSpawn = 0;
-       propSignalCacheBar = 0;
-       ArrayInitialize(propSignalCounts, 0);
-       LogEvent("PROP_INIT", "Rolling spawn mode enabled (" + PropSpawnIntervalLabel() + "). Real orders disabled; spawning fresh runs per strategy during the active window (pause/close hours skipped).");
-       return;
-    }
+     if(PropRollingStartMode)
+     {
+        ArrayResize(propRuns, 0);
+        ArrayResize(propActiveIdx, 0);
+        ArrayResize(propPosInActive, 0);
+        propLastResumeSpawn = 0;
+        propSignalCacheBar = 0;
+        ArrayInitialize(propSignalCounts, 0);
+        LogEvent("PROP_INIT", "Rolling spawn mode enabled (" + PropSpawnIntervalLabel() + "). Real orders disabled; spawning fresh runs per strategy during the active window (pause/close hours skipped).");
+        return;
+     }
     ArrayInitialize(propSignalCounts, 0);
     for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
    {
@@ -2742,6 +2747,11 @@ void RunPropfirmRollingTick()
 {
    datetime now = TimeCurrent();
 
+   propCacheBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   propCacheAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   propCacheTickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   propCacheTickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+
    while(now >= propCurrentDayReset + 86400)
    {
       propCurrentDayReset += 86400;
@@ -2751,62 +2761,61 @@ void RunPropfirmRollingTick()
    if(PropIsCloseTime(now))
       PropRollingCloseAll();
 
-   datetime currentBar = iTime(_Symbol, _Period, 0);
-   bool newBar = (currentBar != propSignalCacheBar);
-   if(newBar)
-      propSignalCacheBar = currentBar;
+    datetime currentBar = iTime(_Symbol, _Period, 0);
+    bool newBar = (currentBar != propSignalCacheBar);
+    if(newBar)
+       propSignalCacheBar = currentBar;
 
-   PropRollingUpdatePositions();
+     if(newBar && !PropSignalsPaused(now))
+     {
+        for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
+        {
+           StrategySignal signal;
+           signal.buyVotes = 0;
+           signal.sellVotes = 0;
+           signal.details = "";
+           EvaluateStrategy(id, signal);
+           if(signal.buyVotes > 0)
+              propSignalCache[id - 1] = ORDER_TYPE_BUY;
+           else if(signal.sellVotes > 0)
+              propSignalCache[id - 1] = ORDER_TYPE_SELL;
+           else
+              propSignalCache[id - 1] = 0;
+           if(propSignalCache[id - 1] != 0)
+              propSignalCounts[id - 1]++;
+        }
+     }
 
-    if(newBar && !PropSignalsPaused(now))
+     PropRollingUpdateAndCheck();
+
+    if(PropRollingShouldSpawn(now))
+       PropRollingSpawnRuns(now);
+
+    if(PropSignalsPaused(now))
+       return;
+
+    if(OneTradePerBar && !newBar)
+       return;
+
+    for(int k = 0; k < ArraySize(propActiveIdx); k++)
     {
-       for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
-       {
-          StrategySignal signal;
-          signal.buyVotes = 0;
-          signal.sellVotes = 0;
-          signal.details = "";
-          EvaluateStrategy(id, signal);
-          if(signal.buyVotes > 0)
-             propSignalCache[id - 1] = ORDER_TYPE_BUY;
-          else if(signal.sellVotes > 0)
-             propSignalCache[id - 1] = ORDER_TYPE_SELL;
-          else
-             propSignalCache[id - 1] = 0;
-          if(propSignalCache[id - 1] != 0)
-             propSignalCounts[id - 1]++;
-       }
+       int i = propActiveIdx[k];
+       if(propRuns[i].breached || propRuns[i].passed || propRuns[i].pos.open)
+          continue;
+       if(propRuns[i].protectionTriggeredToday)
+          continue;
+
+       int dir = propSignalCache[propRuns[i].strategyId - 1];
+       if(dir == 0)
+          continue;
+       if(ReverseSignals)
+          dir = (dir == ORDER_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+       if((AllowedDirection == SIGNAL_BUY_ONLY && dir == ORDER_TYPE_SELL) ||
+          (AllowedDirection == SIGNAL_SELL_ONLY && dir == ORDER_TYPE_BUY))
+          continue;
+
+       PropRollingOpenPosition(i, dir, now);
     }
-
-   PropRollingCheckRules();
-
-   if(PropRollingShouldSpawn(now))
-      PropRollingSpawnRuns(now);
-
-   if(PropSignalsPaused(now))
-      return;
-
-   if(OneTradePerBar && !newBar)
-      return;
-
-   for(int i = 0; i < ArraySize(propRuns); i++)
-   {
-      if(propRuns[i].breached || propRuns[i].passed || propRuns[i].pos.open)
-         continue;
-      if(propRuns[i].protectionTriggeredToday)
-         continue;
-
-      int dir = propSignalCache[propRuns[i].strategyId - 1];
-      if(dir == 0)
-         continue;
-      if(ReverseSignals)
-         dir = (dir == ORDER_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-      if((AllowedDirection == SIGNAL_BUY_ONLY && dir == ORDER_TYPE_SELL) ||
-         (AllowedDirection == SIGNAL_SELL_ONLY && dir == ORDER_TYPE_BUY))
-         continue;
-
-      PropRollingOpenPosition(i, dir, now);
-   }
 }
 
 bool PropRollingShouldSpawn(const datetime now)
@@ -2848,6 +2857,7 @@ void PropRollingSpawnRuns(const datetime now)
 {
    int oldSize = ArraySize(propRuns);
    ArrayResize(propRuns, oldSize + PROP_STRATEGY_COUNT);
+   ArrayResize(propPosInActive, ArraySize(propRuns));
    datetime dayReset = PropCurrentResetTime(now);
 
    for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
@@ -2879,10 +2889,30 @@ void PropRollingSpawnRuns(const datetime now)
       propRuns[idx].losses = 0;
       propRuns[idx].breakevenTrades = 0;
       propRuns[idx].pos.open = false;
+
+      propPosInActive[idx] = ArraySize(propActiveIdx);
+      ArrayResize(propActiveIdx, propPosInActive[idx] + 1);
+      propActiveIdx[propPosInActive[idx]] = idx;
    }
 
    propLastResumeSpawn = now;
    LogEvent("PROP_SPAWN", "Spawned " + IntegerToString(PROP_STRATEGY_COUNT) + " runs at " + TimeToString(now, TIME_DATE | TIME_MINUTES) + ". Total runs: " + IntegerToString(ArraySize(propRuns)));
+}
+
+void PropRemoveActive(const int index)
+{
+   int p = propPosInActive[index];
+   if(p < 0)
+      return;
+   int last = ArraySize(propActiveIdx) - 1;
+   if(p != last)
+   {
+      int movedRun = propActiveIdx[last];
+      propActiveIdx[p] = movedRun;
+      propPosInActive[movedRun] = p;
+   }
+   propPosInActive[index] = -1;
+   ArrayResize(propActiveIdx, last);
 }
 
 void PropRollingOpenPosition(const int index, const int type, const datetime now)
@@ -2900,13 +2930,11 @@ double PropRollingPositionProfit(const int index)
    if(!propRuns[index].pos.open)
       return 0.0;
    int type = propRuns[index].pos.type;
-   double price = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double price = (type == ORDER_TYPE_BUY) ? propCacheBid : propCacheAsk;
    double diff = (type == ORDER_TYPE_BUY) ? price - propRuns[index].pos.entry : propRuns[index].pos.entry - price;
-   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   if(tickValue <= 0.0 || tickSize <= 0.0)
+   if(propCacheTickValue <= 0.0 || propCacheTickSize <= 0.0)
       return 0.0;
-   return diff / tickSize * tickValue * propRuns[index].pos.lot;
+   return diff / propCacheTickSize * propCacheTickValue * propRuns[index].pos.lot;
 }
 
 void PropRollingCloseVirtualPosition(const int index)
@@ -2933,16 +2961,24 @@ void PropRollingCloseVirtualPosition(const int index)
 
 void PropRollingCloseAll()
 {
-   for(int i = 0; i < ArraySize(propRuns); i++)
-      PropRollingCloseVirtualPosition(i);
+   for(int k = 0; k < ArraySize(propActiveIdx); k++)
+      PropRollingCloseVirtualPosition(propActiveIdx[k]);
 }
 
-void PropRollingUpdatePositions()
+void PropRollingUpdateAndCheck()
 {
-   for(int i = 0; i < ArraySize(propRuns); i++)
+   datetime now = TimeCurrent();
+   int k = 0;
+   int count = ArraySize(propActiveIdx);
+   while(k < count)
    {
+      int i = propActiveIdx[k];
       if(propRuns[i].breached || propRuns[i].passed)
+      {
+         PropRemoveActive(i);
+         count = ArraySize(propActiveIdx);
          continue;
+      }
 
       if(propRuns[i].pos.open)
       {
@@ -2956,16 +2992,6 @@ void PropRollingUpdatePositions()
       propRuns[i].equity = propRuns[i].balance + (propRuns[i].pos.open ? PropRollingPositionProfit(i) : 0.0);
       propRuns[i].maxDrawdown = MathMax(propRuns[i].maxDrawdown, propRuns[i].startingBalance - propRuns[i].equity);
       propRuns[i].maxProfit = MathMax(propRuns[i].maxProfit, propRuns[i].equity - propRuns[i].startingBalance);
-   }
-}
-
-void PropRollingCheckRules()
-{
-   datetime now = TimeCurrent();
-   for(int i = 0; i < ArraySize(propRuns); i++)
-   {
-      if(propRuns[i].breached || propRuns[i].passed)
-         continue;
 
       double totalDrawdown = propRuns[i].startingBalance - propRuns[i].equity;
       double dailyDrawdown = propRuns[i].dayStartReference - propRuns[i].equity;
@@ -2975,11 +3001,14 @@ void PropRollingCheckRules()
       double dailyProtectionMoney = propRuns[i].dayStartReference * protectedDailyPercent / 100.0;
       double dailyBreachMoney = propRuns[i].dayStartReference * PropDailyDrawdownPercent / 100.0;
 
+      bool finished = false;
+
       if(dailyProtectionMoney > 0.0 && dailyDrawdown >= dailyProtectionMoney && propRuns[i].pos.open && !propRuns[i].protectionTriggeredToday)
       {
          propRuns[i].equityProtectionTriggers++;
          propRuns[i].protectionTriggeredToday = true;
          PropRollingCloseVirtualPosition(i);
+         propRuns[i].equity = propRuns[i].balance;
       }
 
       if(propRuns[i].equity - propRuns[i].startingBalance >= targetMoney)
@@ -2989,6 +3018,7 @@ void PropRollingCheckRules()
          propRuns[i].daysToTarget = (int)((now - propRuns[i].startDay) / 86400) + 1;
          propRuns[i].breachReason = "Target hit";
          PropRollingCloseVirtualPosition(i);
+         finished = true;
       }
       else if(totalDrawdown >= maxDrawdownMoney || dailyDrawdown >= dailyBreachMoney)
       {
@@ -3002,16 +3032,24 @@ void PropRollingCheckRules()
          else
             propRuns[i].breachReason = "Daily DD";
          PropRollingCloseVirtualPosition(i);
+         finished = true;
       }
+
+      if(finished)
+      {
+         PropRemoveActive(i);
+         count = ArraySize(propActiveIdx);
+         continue;
+      }
+      k++;
    }
 }
 
 void PropRollingResetDaily()
 {
-   for(int i = 0; i < ArraySize(propRuns); i++)
+   for(int k = 0; k < ArraySize(propActiveIdx); k++)
    {
-      if(propRuns[i].breached || propRuns[i].passed)
-         continue;
+      int i = propActiveIdx[k];
       propRuns[i].dayStartReference = propRuns[i].balance;
       propRuns[i].protectionTriggeredToday = false;
    }
