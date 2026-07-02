@@ -33,6 +33,12 @@ enum ENUM_STRATEGY_MODE
    STRATEGY_SINGLE = 1
 };
 
+enum ENUM_PROP_STRATEGY_MODE
+{
+   PROP_STRATEGY_ALL = 0,
+   PROP_STRATEGY_CUSTOM = 1
+};
+
 enum ENUM_NAMED_STRATEGY
 {
    STRAT_001_EMA_SCALP_CROSS = 1,
@@ -610,6 +616,8 @@ enum ENUM_PROP_SPAWN_INTERVAL
 
 input group "Propfirm All-Strategy Backtest"
 input bool EnablePropfirmBacktestMode = false;      // If true, no real trades are placed. It virtually tests all 500 strategies in this EA.
+input ENUM_PROP_STRATEGY_MODE PropStrategyMode = PROP_STRATEGY_ALL;
+input string PropCustomStrategies = "";              // Comma-separated IDs when PropStrategyMode=CUSTOM, e.g. "12,111,112"
 input double PropStartingBalance = 5000.0;
 input double PropMaxTotalDrawdownPercent = 6.0;
 input double PropProfitTargetPercent = 10.0;
@@ -876,6 +884,43 @@ void OnTick()
    bool tradeOpened = OpenTrade(direction, signal);
    RecordSignalAudit(DirectionText(direction), tradeOpened ? "OPENED" : "FAILED", tradeOpened, signal.details);
    UpdateDashboard();
+}
+
+int PropEffectiveStrategyCount()
+{
+   if(PropStrategyMode != PROP_STRATEGY_CUSTOM || PropCustomStrategies == "")
+      return PROP_STRATEGY_COUNT;
+   string custom = PropCustomStrategies;
+   StringReplace(custom, " ", "");
+   string parts[];
+   int count = StringSplit(custom, (ushort)',', parts);
+   int validCount = 0;
+   for(int i = 0; i < count; i++)
+   {
+      int val = (int)StringToInteger(parts[i]);
+      if(val >= 1 && val <= PROP_STRATEGY_COUNT)
+         validCount++;
+   }
+   return validCount > 0 ? validCount : 0;
+}
+
+bool PropIsCustomStrategy(const int id)
+{
+   if(PropStrategyMode != PROP_STRATEGY_CUSTOM)
+      return true;
+   string custom = PropCustomStrategies;
+   StringReplace(custom, " ", "");
+   if(custom == "")
+      return false;
+   string parts[];
+   int count = StringSplit(custom, (ushort)',', parts);
+   for(int i = 0; i < count; i++)
+   {
+      int val = (int)StringToInteger(parts[i]);
+      if(val == id)
+         return true;
+   }
+   return false;
 }
 
 void EvaluateStrategies(StrategySignal &signal)
@@ -2373,7 +2418,8 @@ void InitPropfirmBacktest()
         propLastResumeSpawn = 0;
         propSignalCacheBar = 0;
         ArrayInitialize(propSignalCounts, 0);
-        LogEvent("PROP_INIT", "Rolling spawn mode enabled (" + PropSpawnIntervalLabel() + "). Real orders disabled; spawning fresh runs per strategy during the active window (pause/close hours skipped).");
+        string stratInfo = (PropStrategyMode == PROP_STRATEGY_CUSTOM) ? ("custom strategies: " + PropCustomStrategies) : ("all " + IntegerToString(PROP_STRATEGY_COUNT) + " strategies");
+        LogEvent("PROP_INIT", "Rolling spawn mode enabled (" + PropSpawnIntervalLabel() + "). Real orders disabled; spawning fresh runs for " + stratInfo + " during the active window (pause/close hours skipped).");
         return;
      }
     ArrayInitialize(propSignalCounts, 0);
@@ -2404,7 +2450,8 @@ void InitPropfirmBacktest()
       propResults[i].breachReason = "";
       propResults[i].pos.open = false;
    }
-   LogEvent("PROP_INIT", "Single-run mode enabled. Real orders disabled; testing all " + IntegerToString(PROP_STRATEGY_COUNT) + " strategies virtually.");
+   string stratInfo = (PropStrategyMode == PROP_STRATEGY_CUSTOM) ? ("custom strategies: " + PropCustomStrategies) : ("all " + IntegerToString(PROP_STRATEGY_COUNT) + " strategies");
+   LogEvent("PROP_INIT", "Single-run mode enabled. Real orders disabled; testing " + stratInfo + " virtually.");
 }
 
 void RunPropfirmBacktestTick()
@@ -2439,15 +2486,18 @@ void RunPropfirmBacktestTick()
    if(PropSignalsPaused(now))
       return;
 
-    for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
-    {
-       int index = id - 1;
+     for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
+     {
+        if(!PropIsCustomStrategy(id))
+           continue;
 
-       StrategySignal signal;
-       signal.buyVotes = 0;
-       signal.sellVotes = 0;
-       signal.details = "";
-       EvaluateStrategy(id, signal);
+        int index = id - 1;
+
+        StrategySignal signal;
+        signal.buyVotes = 0;
+        signal.sellVotes = 0;
+        signal.details = "";
+        EvaluateStrategy(id, signal);
 
        int direction = 0;
        if(signal.buyVotes > 0)
@@ -2766,11 +2816,14 @@ void RunPropfirmRollingTick()
     if(newBar)
        propSignalCacheBar = currentBar;
 
-     if(newBar && !PropSignalsPaused(now))
+      if(newBar && !PropSignalsPaused(now))
+      {
+     for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
      {
-        for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
-        {
-           StrategySignal signal;
+        if(!PropIsCustomStrategy(id))
+           continue;
+
+            StrategySignal signal;
            signal.buyVotes = 0;
            signal.sellVotes = 0;
            signal.details = "";
@@ -2845,7 +2898,15 @@ bool PropRollingShouldSpawn(const datetime now)
 
    if(PropMaxStartDays > 0)
    {
-      int totalBatches = ArraySize(propRuns) / PROP_STRATEGY_COUNT;
+      int spawnCount = 0;
+      for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+      {
+         if(PropIsCustomStrategy(i + 1))
+            spawnCount++;
+      }
+      if(spawnCount == 0)
+         return false;
+      int totalBatches = ArraySize(propRuns) / spawnCount;
       if(totalBatches >= PropMaxStartDays)
          return false;
    }
@@ -2856,13 +2917,26 @@ bool PropRollingShouldSpawn(const datetime now)
 void PropRollingSpawnRuns(const datetime now)
 {
    int oldSize = ArraySize(propRuns);
-   ArrayResize(propRuns, oldSize + PROP_STRATEGY_COUNT);
+   int spawnCount = 0;
+   for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+   {
+      if(PropIsCustomStrategy(i + 1))
+         spawnCount++;
+   }
+   if(spawnCount == 0)
+      return;
+
+   ArrayResize(propRuns, oldSize + spawnCount);
    ArrayResize(propPosInActive, ArraySize(propRuns));
    datetime dayReset = PropCurrentResetTime(now);
+   int spawnIdx = 0;
 
    for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
    {
-      int idx = oldSize + i;
+      if(!PropIsCustomStrategy(i + 1))
+         continue;
+
+      int idx = oldSize + spawnIdx;
       propRuns[idx].strategyId = i + 1;
       propRuns[idx].strategyName = StrategyName(i + 1);
       propRuns[idx].startDay = now;
@@ -2893,10 +2967,11 @@ void PropRollingSpawnRuns(const datetime now)
       propPosInActive[idx] = ArraySize(propActiveIdx);
       ArrayResize(propActiveIdx, propPosInActive[idx] + 1);
       propActiveIdx[propPosInActive[idx]] = idx;
+      spawnIdx++;
    }
 
    propLastResumeSpawn = now;
-   LogEvent("PROP_SPAWN", "Spawned " + IntegerToString(PROP_STRATEGY_COUNT) + " runs at " + TimeToString(now, TIME_DATE | TIME_MINUTES) + ". Total runs: " + IntegerToString(ArraySize(propRuns)));
+   LogEvent("PROP_SPAWN", "Spawned " + IntegerToString(spawnCount) + " runs at " + TimeToString(now, TIME_DATE | TIME_MINUTES) + ". Total runs: " + IntegerToString(ArraySize(propRuns)));
 }
 
 void PropRemoveActive(const int index)
@@ -3107,8 +3182,13 @@ void ExportPropfirmSingleReport()
    string bestName = "", worstName = "";
    datetime testStart = 0;
 
+   int reportCount = PropEffectiveStrategyCount();
+
    for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
    {
+      if(!PropIsCustomStrategy(i + 1))
+         continue;
+
       if(propResults[i].passed) passedCount++;
       else if(propResults[i].breached) blownCount++;
       else activeCount++;
@@ -3132,7 +3212,7 @@ void ExportPropfirmSingleReport()
    }
 
    double avgWinRate = (winRateCount > 0) ? totalWinRateSum / (double)winRateCount : 0.0;
-   double passRate = (PROP_STRATEGY_COUNT > 0) ? (double)passedCount / (double)PROP_STRATEGY_COUNT * 100.0 : 0.0;
+   double passRate = (reportCount > 0) ? (double)passedCount / (double)reportCount * 100.0 : 0.0;
    datetime testEnd = TimeCurrent();
 
    PropSortResults();
@@ -3151,12 +3231,12 @@ void ExportPropfirmSingleReport()
    FileWriteString(handle, "<div class=\"section\">\n<h2>Run Report - Settings Used For This Run</h2>\n<div class=\"settings-grid\">\n");
    PropWriteCommonSettings(handle, testStart, testEnd);
    FileWriteString(handle, PropKv("Rolling Start Mode", PropBoolStr(false)));
-   FileWriteString(handle, PropKv("Total Strategies Tested", IntegerToString(PROP_STRATEGY_COUNT)));
+   FileWriteString(handle, PropKv("Total Strategies Tested", IntegerToString(reportCount)));
    FileWriteString(handle, "</div>\n<div class=\"note\">Best performer: <b>" + bestName + "</b> (" + DoubleToString(bestNetProfit, 2) + ") &nbsp;|&nbsp; Worst performer: <b>" + worstName + "</b> (" + DoubleToString(worstNetProfit, 2) + ")</div>\n</div>\n");
 
    FileWriteString(handle,
       "<div class=\"section\">\n<h2>Summary Dashboard</h2>\n<div class=\"cards\">\n" +
-      "<div class=\"card pass\"><div class=\"label\">Passed</div><div class=\"value\">" + IntegerToString(passedCount) + "</div><div class=\"sub\">of " + IntegerToString(PROP_STRATEGY_COUNT) + " strategies</div></div>\n" +
+      "<div class=\"card pass\"><div class=\"label\">Passed</div><div class=\"value\">" + IntegerToString(passedCount) + "</div><div class=\"sub\">of " + IntegerToString(reportCount) + " strategies</div></div>\n" +
       "<div class=\"card blow\"><div class=\"label\">Blown</div><div class=\"value\">" + IntegerToString(blownCount) + "</div><div class=\"sub\">rule breach</div></div>\n" +
       "<div class=\"card act\"><div class=\"label\">Active</div><div class=\"value\">" + IntegerToString(activeCount) + "</div><div class=\"sub\">still running</div></div>\n" +
       "<div class=\"card rate\"><div class=\"label\">Pass Rate</div><div class=\"value\">" + DoubleToString(passRate, 1) + "%</div><div class=\"sub\">target hit</div></div>\n" +
@@ -3178,8 +3258,13 @@ void ExportPropfirmSingleReport()
       "<th data-type=\"num\">Days->Breach</th>\n<th data-type=\"num\">Eq. Prot</th>\n<th data-type=\"str\">Started</th>\n" +
       "<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody>\n");
 
+   int rankOut = 0;
    for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
    {
+      if(!PropIsCustomStrategy(i + 1))
+         continue;
+      rankOut++;
+
       string status = propResults[i].passed ? "pass" : (propResults[i].breached ? "blow" : "act");
       string badge = propResults[i].passed ? "PASSED" : (propResults[i].breached ? "BLOWN" : "ACTIVE");
       int closedTrades = propResults[i].wins + propResults[i].losses;
@@ -3193,7 +3278,7 @@ void ExportPropfirmSingleReport()
 
       string row = "";
       row += StringFormat("<tr class=\"%s\" data-status=\"%s\">", status, status);
-      row += StringFormat("<td class=\"num sticky-col\">%d</td>", i + 1);
+      row += StringFormat("<td class=\"num sticky-col\">%d</td>", rankOut);
       row += StringFormat("<td class=\"sticky-col\">%s</td>", propResults[i].name);
       row += StringFormat("<td><span class=\"badge %s\">%s</span></td>", status, badge);
       row += StringFormat("<td class=\"reason\">%s</td>", reason);
@@ -3616,7 +3701,7 @@ void ExportPropfirmRollingReport()
    PropWriteCommonSettings(handle, testStart, testEnd);
    FileWriteString(handle, PropKv("Rolling Start Mode", PropBoolStr(true)));
    FileWriteString(handle, PropKv("Max Spawn Batches", IntegerToString(PropMaxStartDays) + " (0=unlimited)"));
-   FileWriteString(handle, PropKv("Total Strategies", IntegerToString(PROP_STRATEGY_COUNT)));
+   FileWriteString(handle, PropKv("Total Strategies", IntegerToString(PropEffectiveStrategyCount())));
    FileWriteString(handle, PropKv("Total Runs Simulated", IntegerToString(totalRuns)));
     FileWriteString(handle, "</div>\n<div class=\"note\">Each strategy is re-started fresh " + PropSpawnIntervalLabel() + " during the active window (pause/close hours skipped). A strategy can have multiple runs active simultaneously. Best strategy: <b>" + bestStratName + "</b> (" + DoubleToString(bestStratRate, 1) + "% pass rate)" + (recencyIneffective ? "<br><b style=\"color:#dc2626\">&#9888; Recency warning:</b> Half-life (" + DoubleToString(PropRecencyHalfLifeDays, 1) + "d) is much longer than test span (" + DoubleToString(testSpanDays, 1) + "d). All runs get near-equal weight, so recency score &asymp; raw pass rate. For meaningful recency differentiation, use a half-life &le; " + DoubleToString(testSpanDays, 1) + "d or run a longer backtest." : "") + "</div>\n</div>\n");
 
@@ -3660,9 +3745,16 @@ void ExportPropfirmRollingReport()
          "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
         "<th data-type=\"num\">Avg Days->Target</th>\n</tr></thead>\n<tbody>\n");
 
+   int rankOut = 0;
    for(int rank = 0; rank < 500; rank++)
    {
       int sid = sortOrder[rank];
+      if(PropStrategyMode == PROP_STRATEGY_CUSTOM && !PropIsCustomStrategy(sid + 1))
+         continue;
+      if(PropStrategyMode == PROP_STRATEGY_CUSTOM && aggStarts[sid] == 0)
+         continue;
+      rankOut++;
+
       double passRate = (aggStarts[sid] > 0) ? (double)aggPassed[sid] / (double)aggStarts[sid] * 100.0 : 0.0;
       double recencyScore = (aggRecencyWeightSum[sid] > 0.0) ? aggRecencyPassedWeight[sid] / aggRecencyWeightSum[sid] * 100.0 : 0.0;
       double avgWinRate = (aggWinRateCount[sid] > 0) ? aggWinRateSum[sid] / (double)aggWinRateCount[sid] : 0.0;
@@ -3679,7 +3771,7 @@ void ExportPropfirmRollingReport()
        string stratName = StrategyName(sid + 1);
 
        string row = "";
-       row += StringFormat("<tr><td class=\"num sticky-col\">%d</td>", rank + 1);
+        row += StringFormat("<tr><td class=\"num sticky-col\">%d</td>", rankOut);
        row += "<td class=\"sticky-col\"><a href=\"javascript:void(0)\" onclick=\"filterRuns('" + stratName + "')\" class=\"strat-link\">" + stratName + "</a></td>";
       row += StringFormat("<td class=\"num\">%d</td>", aggStarts[sid]);
       row += StringFormat("<td class=\"num pos\">%d</td>", aggPassed[sid]);
@@ -4081,6 +4173,7 @@ void PropWriteCommonSettings(const int handle, const datetime testStart, const d
    FileWriteString(handle, PropKv("Resume Signals (UTC)", StringFormat("%02d:%02d", PropResumeSignalsHourUTC, PropResumeSignalsMinuteUTC)));
     FileWriteString(handle, PropKv("Spawn Interval", PropSpawnIntervalLabel()));
     FileWriteString(handle, PropKv("Recency Half-Life (days)", DoubleToString(PropRecencyHalfLifeDays, 1) + (PropRecencyHalfLifeDays > 0.0 ? "" : " (disabled)")));
+   FileWriteString(handle, PropKv("Prop Strategy Mode", (PropStrategyMode == PROP_STRATEGY_CUSTOM) ? ("CUSTOM: " + PropCustomStrategies) : "ALL"));
     FileWriteString(handle, PropKv("Virtual Dollar Exit", PropBoolStr(EnableVirtualDollarExit)));
    FileWriteString(handle, PropKv("Virtual Exit Lot", DoubleToString(VirtualExitLot, 2)));
    FileWriteString(handle, PropKv("Virtual Take Profit", DoubleToString(VirtualTakeProfitMoney, 2)));
