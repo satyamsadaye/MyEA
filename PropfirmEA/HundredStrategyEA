@@ -3226,7 +3226,8 @@ void ExportPropfirmSingleReport()
    }
 
    PropWriteHtmlHead(handle);
-   PropWriteHeader(handle, "Propfirm 100 Strategy Backtest Report", testEnd);
+   string singleTitle = (PropStrategyMode == PROP_STRATEGY_CUSTOM) ? "Forward test" : "Propfirm 100 Strategy Backtest Report";
+   PropWriteHeader(handle, singleTitle, testEnd);
 
    FileWriteString(handle, "<div class=\"section\">\n<h2>Run Report - Settings Used For This Run</h2>\n<div class=\"settings-grid\">\n");
    PropWriteCommonSettings(handle, testStart, testEnd);
@@ -3695,7 +3696,8 @@ void ExportPropfirmRollingReport()
    }
 
    PropWriteHtmlHead(handle);
-   PropWriteHeader(handle, "Propfirm Rolling Backtest Report", testEnd);
+   string rollingTitle = (PropStrategyMode == PROP_STRATEGY_CUSTOM) ? "Forward test" : "Propfirm Rolling Backtest Report";
+   PropWriteHeader(handle, rollingTitle, testEnd);
 
    FileWriteString(handle, "<div class=\"section\">\n<h2>Run Report - Settings Used For This Run</h2>\n<div class=\"settings-grid\">\n");
    PropWriteCommonSettings(handle, testStart, testEnd);
@@ -4057,7 +4059,7 @@ void PropWriteHtmlHead(const int handle)
    FileWriteString(handle,
       "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n" +
       "<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
-      "<title>Propfirm Backtest Report</title>\n<style>\n" +
+       "<title>" + (PropStrategyMode == PROP_STRATEGY_CUSTOM ? "Forward test" : "Propfirm Backtest Report") + "</title>\n<style>\n" +
       "*{box-sizing:border-box;margin:0;padding:0}\n" +
       "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f8fafc;color:#1e293b;line-height:1.5;padding:24px}\n" +
       ".wrap{max-width:1500px;margin:0 auto}\n" +
