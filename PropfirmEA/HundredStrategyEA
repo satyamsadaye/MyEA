@@ -3684,7 +3684,8 @@ void ExportPropfirmRollingReport()
           if(recScore > bestRecentStratScore) { bestRecentStratScore = recScore; bestRecentStratName = StrategyName(i + 1); bestRecentAllTimeRate = rate; }
        }
     }
-   double overallPassRate = (totalRuns > 0) ? (double)totalPassed / (double)totalRuns * 100.0 : 0.0;
+    double overallPassRate = (totalRuns > 0) ? (double)totalPassed / (double)totalRuns * 100.0 : 0.0;
+    double completedPassRate = (totalPassed + totalBlown > 0) ? (double)totalPassed / (double)(totalPassed + totalBlown) * 100.0 : 0.0;
    datetime testEnd = TimeCurrent();
 
    string reportFileName = PropTimestampedReportFileName();
@@ -3714,6 +3715,7 @@ void ExportPropfirmRollingReport()
        "<div class=\"card blow\"><div class=\"label\">Blown Runs</div><div class=\"value\">" + IntegerToString(totalBlown) + "</div><div class=\"sub\">rule breach</div></div>\n" +
        "<div class=\"card act\"><div class=\"label\">Active Runs</div><div class=\"value\">" + IntegerToString(totalActive) + "</div><div class=\"sub\">still running at end</div></div>\n" +
        "<div class=\"card rate\"><div class=\"label\">Overall Pass Rate</div><div class=\"value\">" + DoubleToString(overallPassRate, 1) + "%</div><div class=\"sub\">passed / total runs</div></div>\n" +
+       "<div class=\"card done\"><div class=\"label\">Completed Pass Rate</div><div class=\"value\">" + DoubleToString(completedPassRate, 1) + "%</div><div class=\"sub\">passed / (passed+blown)</div></div>\n" +
        "<div class=\"card avg\"><div class=\"label\">Total Trades</div><div class=\"value\">" + IntegerToString(grandTotalTrades) + "</div><div class=\"sub\">virtual positions</div></div>\n" +
        "<div class=\"card sig\"><div class=\"label\">Total Signals</div><div class=\"value\">" + IntegerToString(grandTotalSignals) + "</div><div class=\"sub\">strategy triggers</div></div>\n" +
        "<div class=\"card tot\"><div class=\"label\">Total Runs</div><div class=\"value\">" + IntegerToString(totalRuns) + "</div><div class=\"sub\">strategy x start-days</div></div>\n" +
@@ -4076,7 +4078,7 @@ void PropWriteHtmlHead(const int handle)
       ".card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:16px 18px;position:relative;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.05)}\n" +
       ".card::before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:4px;border-radius:10px 0 0 10px}\n" +
       ".card.pass::before{background:#22c55e}\n.card.blow::before{background:#ef4444}\n.card.act::before{background:#3b82f6}\n" +
-      ".card.rate::before{background:#a855f7}\n.card.avg::before{background:#f59e0b}\n.card.tot::before{background:#14b8a6}\n.card.sig::before{background:#0ea5e9}\n" +
+      ".card.rate::before{background:#a855f7}\n.card.done::before{background:#06b6d4}\n.card.avg::before{background:#f59e0b}\n.card.tot::before{background:#14b8a6}\n.card.sig::before{background:#0ea5e9}\n" +
       ".card .label{color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.8px}\n" +
       ".card .value{color:#1e293b;font-size:22px;font-weight:700;margin-top:6px}\n" +
       ".card .sub{color:#94a3b8;font-size:11px;margin-top:2px}\n" +
