@@ -642,6 +642,11 @@ input bool EnableCsvLog = true;
 input string LogFileName = "HundredStrategyEA_Log.csv";
 input bool PrintDetailedLog = true;
 
+input group "Receiver EA Connection"
+input bool   EnableReceiverConnection = false;       // Check receiver status before executing trades
+input string ReceiverCopierKey = "client1";          // CopierKey matching PropfirmReceiverEA
+input int    ReceiverPollIntervalMs = 500;           // Milliseconds between receiver status file reads
+
 #define PROP_STRATEGY_COUNT 500
 
 struct PropVirtualPosition
@@ -739,11 +744,17 @@ struct SignalAuditEntry
    string reason;
    bool executed;
    string details;
+   ulong ticket;
 };
 
 SignalAuditEntry signalHistory[5];
 int signalHistoryCount = 0;
 bool dashboardCreated = false;
+
+// Receiver EA status cache
+uint   g_lastReceiverTickCheck = 0;
+bool   g_receiverTradingAllowed = true;
+string g_receiverBlockReason = "";
 
 struct StrategySignal
 {
@@ -832,6 +843,17 @@ void OnTick()
 
    if(GlobalSignalsPaused())
    {
+      RecordSignalAudit("NONE", "Global signals paused", false, "");
+      UpdateDashboard();
+      return;
+   }
+
+   // ── Receiver EA Gate ──────────────────────────────────────────────────────
+   if(!ReadReceiverStatusForReceiverEA())
+   {
+      string reason = "ReceiverEA blocked: " + g_receiverBlockReason;
+      LogEvent("SIGNAL_SKIPPED", reason);
+      RecordSignalAudit("NONE", reason, false, "");
       UpdateDashboard();
       return;
    }
@@ -847,7 +869,10 @@ void OnTick()
    int openPositions = CountOpenPositions();
    if(openPositions >= MaxOpenPositions)
    {
-      LogEvent("SIGNAL_SKIPPED", "MaxOpenPositions reached: " + IntegerToString(openPositions));
+      string reason = "MaxOpenPositions reached: " + IntegerToString(openPositions);
+      LogEvent("SIGNAL_SKIPPED", reason);
+      RecordSignalAudit("NONE", reason, false, "");
+      UpdateDashboard();
       return;
    }
 
@@ -881,8 +906,9 @@ void OnTick()
       return;
    }
 
-   bool tradeOpened = OpenTrade(direction, signal);
-   RecordSignalAudit(DirectionText(direction), tradeOpened ? "OPENED" : "FAILED", tradeOpened, signal.details);
+   ulong ticket = OpenTrade(direction, signal);
+   bool tradeOpened = (ticket > 0);
+   RecordSignalAudit(DirectionText(direction), tradeOpened ? "OPENED" : "FAILED", tradeOpened, signal.details, ticket);
    UpdateDashboard();
 }
 
@@ -2145,7 +2171,7 @@ double AverageRange(const int lookback)
    return count > 0 ? sum / count : 0.0;
 }
 
-bool OpenTrade(const int orderType, const StrategySignal &signal)
+ulong OpenTrade(const int orderType, const StrategySignal &signal)
 {
    double entry = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    bool useBrokerStops = PlaceBrokerStopLossTakeProfit && !(EnableVirtualDollarExit && DisableBrokerStopsWhenVirtualExitOn);
@@ -2163,7 +2189,7 @@ bool OpenTrade(const int orderType, const StrategySignal &signal)
            if((slNeeded && slDistance <= 0.0) || (tpNeeded && tpDistance <= 0.0))
            {
               LogEvent("TRADE_SKIPPED", "Invalid SL/TP distance");
-              return false;
+              return 0;
            }
         }
         else
@@ -2173,7 +2199,7 @@ bool OpenTrade(const int orderType, const StrategySignal &signal)
            if(slDistance <= 0.0 || tpDistance <= 0.0)
            {
               LogEvent("TRADE_SKIPPED", "Invalid SL/TP distance");
-              return false;
+              return 0;
            }
            if(ReverseSignals)
            {
@@ -2189,7 +2215,7 @@ bool OpenTrade(const int orderType, const StrategySignal &signal)
        if(slDistance <= 0.0)
        {
           LogEvent("TRADE_SKIPPED", "Invalid risk distance for lot sizing while broker stops are disabled");
-          return false;
+          return 0;
        }
        if(ReverseSignals)
           slDistance = StopDistance(TakeProfitMode, false);
@@ -2199,7 +2225,7 @@ bool OpenTrade(const int orderType, const StrategySignal &signal)
     if(lots <= 0.0)
     {
        LogEvent("TRADE_SKIPPED", "Calculated lot is zero");
-       return false;
+       return 0;
     }
 
     double sl = 0.0;
@@ -2224,12 +2250,14 @@ bool OpenTrade(const int orderType, const StrategySignal &signal)
        ok = trade.Sell(lots, _Symbol, 0.0, sl, tp, comment);
 
     string message = StringFormat("type=%s,lots=%.2f,entry=%.5f,sl=%.5f,tp=%.5f,brokerStops=%s,virtualExit=%s,virtualTP=%.2f,virtualSL=%.2f,buyVotes=%d,sellVotes=%d,reversed=%s,strategies=%s,retcode=%d",
-                                  orderType == ORDER_TYPE_BUY ? "BUY" : "SELL", lots, entry, sl, tp,
-                                  useBrokerStops ? "true" : "false", EnableVirtualDollarExit ? "true" : "false",
-                                  VirtualTakeProfitMoney, VirtualStopLossMoney,
-                                  signal.buyVotes, signal.sellVotes, ReverseSignals ? "true" : "false", signal.details, trade.ResultRetcode());
+                                   orderType == ORDER_TYPE_BUY ? "BUY" : "SELL", lots, entry, sl, tp,
+                                   useBrokerStops ? "true" : "false", EnableVirtualDollarExit ? "true" : "false",
+                                   VirtualTakeProfitMoney, VirtualStopLossMoney,
+                                   signal.buyVotes, signal.sellVotes, ReverseSignals ? "true" : "false", signal.details, trade.ResultRetcode());
    LogEvent(ok ? "TRADE_OPENED" : "TRADE_FAILED", message);
-   return ok;
+   if(ok)
+      return trade.ResultOrder();
+   return 0;
 }
 
 double StopDistance(const ENUM_STOP_MODE mode, const bool isStopLoss)
@@ -4422,7 +4450,7 @@ double PropScore(const int index)
    return score;
 }
 
-void RecordSignalAudit(const string direction, const string reason, const bool executed, const string details)
+void RecordSignalAudit(const string direction, const string reason, const bool executed, const string details, const ulong ticket = 0)
 {
    SignalAuditEntry entry;
    entry.time = TimeCurrent();
@@ -4430,6 +4458,7 @@ void RecordSignalAudit(const string direction, const string reason, const bool e
    entry.reason = reason;
    entry.executed = executed;
    entry.details = details;
+   entry.ticket = ticket;
 
    if(signalHistoryCount < 5)
       signalHistoryCount++;
@@ -4449,8 +4478,66 @@ string DirectionText(const int orderType)
    return "NONE";
 }
 
+// ── Receiver EA Status Reader ───────────────────────────────────────────────
+bool ReadReceiverStatusForReceiverEA()
+{
+   if(!EnableReceiverConnection)
+   {
+      g_receiverTradingAllowed = true;
+      g_receiverBlockReason = "";
+      return true;
+   }
+
+   uint now = GetTickCount();
+   if(now - g_lastReceiverTickCheck < (uint)ReceiverPollIntervalMs)
+      return g_receiverTradingAllowed;
+
+   g_lastReceiverTickCheck = now;
+
+   string key = ReceiverCopierKey;
+   StringTrimLeft(key);
+   StringTrimRight(key);
+   if(StringLen(key) == 0)
+      key = "default";
+
+   string status_file = "propfirm_receiver_status_" + key + ".csv";
+
+   int handle = FileOpen(status_file, FILE_READ|FILE_CSV|FILE_COMMON|FILE_SHARE_READ|FILE_SHARE_WRITE, ';');
+   if(handle == INVALID_HANDLE)
+   {
+      g_receiverBlockReason = "Status file not found: " + status_file;
+      return g_receiverTradingAllowed;
+   }
+
+   string version = FileReadString(handle);
+   if(version != "PROP_RECEIVER_STATUS_V6")
+   {
+      FileClose(handle);
+      g_receiverBlockReason = "File version mismatch: " + version;
+      return g_receiverTradingAllowed;
+   }
+
+   // Skip 25 fields after version (fields 1-25)
+   for(int skip = 0; skip < 25; skip++)
+      FileReadString(handle);
+
+   bool trading_allowed = (StringToInteger(FileReadString(handle)) != 0);
+   bool protection_breached = (StringToInteger(FileReadString(handle)) != 0);
+
+   // Skip hit_time (28), hit_receiver (29), hit_source (30)
+   for(int skip2 = 0; skip2 < 3; skip2++)
+      FileReadString(handle);
+   g_receiverBlockReason = FileReadString(handle);
+
+   FileClose(handle);
+
+   g_receiverTradingAllowed = trading_allowed && !protection_breached;
+
+   return g_receiverTradingAllowed;
+}
+
 #define H100_PREFIX "H100_"
-#define H100_LINE_COUNT 46
+#define H100_LINE_COUNT 48
 
 color PanelColor()  { return C'16,18,24'; }
 color HeaderColor() { return C'28,32,42'; }
@@ -4619,6 +4706,21 @@ void UpdateDashboard()
       }
    }
 
+   // ── Receiver EA Status ─────────────────────────────────────────────────────
+   string recLabel = "Receiver EA [" + ReceiverCopierKey + "]";
+   if(EnableReceiverConnection)
+   {
+      if(g_receiverTradingAllowed)
+         SetLine(line++, recLabel + "  ON - READY", GoodColor());
+      else
+         SetLine(line++, recLabel + "  BLOCKED (" + g_receiverBlockReason + ")", BadColor());
+   }
+   else
+   {
+      SetLine(line++, recLabel + "  OFF", MutedColor());
+   }
+   SetLine(line++, " ");
+
    SetLine(line++, "LAST 5 SIGNALS", MutedColor());
    if(signalHistoryCount == 0)
    {
@@ -4629,9 +4731,22 @@ void UpdateDashboard()
       for(int i = 0; i < signalHistoryCount && i < 5; i++)
       {
          string ts = TimeToString(signalHistory[i].time, TIME_DATE | TIME_MINUTES);
-         string status = signalHistory[i].executed ? "EXEC" : "SKIP";
+         string status = "";
+         color col = WarnColor();
+         if(signalHistory[i].executed)
+         {
+            if(signalHistory[i].ticket > 0 && PositionSelectByTicket(signalHistory[i].ticket))
+               status = "RUNNING";
+            else
+               status = "CLOSED";
+            col = GoodColor();
+         }
+         else
+         {
+            status = "SKIP";
+         }
          string txt = IntegerToString(i + 1) + ". " + ts + " " + status + " " + signalHistory[i].direction + " - " + signalHistory[i].reason;
-         SetLine(line++, txt, signalHistory[i].executed ? GoodColor() : WarnColor());
+         SetLine(line++, txt, col);
       }
    }
 
