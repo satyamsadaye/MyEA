@@ -755,6 +755,8 @@ bool dashboardCreated = false;
 uint   g_lastReceiverTickCheck = 0;
 bool   g_receiverTradingAllowed = true;
 string g_receiverBlockReason = "";
+string g_receiverHitTime = "";
+bool   g_receiverTradingCSV = true;
 
 struct StrategySignal
 {
@@ -4524,13 +4526,14 @@ bool ReadReceiverStatusForReceiverEA()
    bool trading_allowed = (StringToInteger(FileReadString(handle)) != 0);
    bool protection_breached = (StringToInteger(FileReadString(handle)) != 0);
 
-   // Skip hit_time (28), hit_receiver (29), hit_source (30)
-   for(int skip2 = 0; skip2 < 3; skip2++)
-      FileReadString(handle);
+   g_receiverHitTime = FileReadString(handle);       // hit_time (28)
+   FileReadString(handle);                            // hit_receiver (29)
+   FileReadString(handle);                            // hit_source  (30)
    g_receiverBlockReason = FileReadString(handle);
 
    FileClose(handle);
 
+   g_receiverTradingCSV = trading_allowed;
    g_receiverTradingAllowed = trading_allowed && !protection_breached;
 
    return g_receiverTradingAllowed;
@@ -4710,10 +4713,21 @@ void UpdateDashboard()
    string recLabel = "Receiver EA [" + ReceiverCopierKey + "]";
    if(EnableReceiverConnection)
    {
-      if(g_receiverTradingAllowed)
-         SetLine(line++, recLabel + "  ON - READY", GoodColor());
+      string csvStatus = g_receiverTradingCSV ? "ENABLED" : "DISABLED";
+      color csvColor = g_receiverTradingCSV ? GoodColor() : BadColor();
+      SetLine(line++, recLabel + "  CSV: Trading " + csvStatus, csvColor);
+      if(g_receiverHitTime != "")
+      {
+         string ts = g_receiverHitTime;
+         int dot = StringFind(ts, ".");
+         if(dot > 0)
+            ts = StringSubstr(ts, 0, dot);
+         SetLine(line++, recLabel + "  Last CSV: " + ts, GoodColor());
+      }
       else
-         SetLine(line++, recLabel + "  BLOCKED (" + g_receiverBlockReason + ")", BadColor());
+      {
+         SetLine(line++, recLabel + "  Last CSV: ---", MutedColor());
+      }
    }
    else
    {
