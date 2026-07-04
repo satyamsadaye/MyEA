@@ -213,6 +213,8 @@ tbody tr td:first-child{font-weight:600;color:#6b7280;width:34px;text-align:cent
 </div>
 
 <div class="stats-bar" id="aggregateStats"></div>
+<div style="margin:2px 0 4px 0;font-size:13px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.4px">Forward Test Results</div>
+<div class="stats-bar" id="forwardAggregateStats"></div>
 
 <div class="toolbar">
 <input type="text" id="searchInput" placeholder="Search symbol, period, strategy...">
@@ -362,12 +364,19 @@ function render(){
 }
 
 function updateAggregates(filtered){
-    var passed=0,blown=0,active=0,trades=0,runs=0,rateSum=0,rateCount=0;
+    var passed=0,blown=0,active=0,trades=0,runs=0,rateSum=0,rateCount=0,backtestCount=0;
+    var fwdPassed=0,fwdBlown=0,fwdActive=0,fwdTrades=0,fwdRuns=0,fwdRateSum=0,fwdRateCount=0,fwdCount=0;
     for(var i=0;i<filtered.length;i++){
-        passed+=parseInt(filtered[i].Passed)||0;blown+=parseInt(filtered[i].Blown)||0;
-        active+=parseInt(filtered[i].Active)||0;trades+=parseInt(filtered[i].Trades)||0;
-        runs+=parseInt(filtered[i].Runs)||0;
-        var r=parseFloat(filtered[i].PassRate)||0;if(r>0){rateSum+=r;rateCount++;}
+        var p=parseInt(filtered[i].Passed)||0,b=parseInt(filtered[i].Blown)||0,a=parseInt(filtered[i].Active)||0;
+        var t=parseInt(filtered[i].Trades)||0,r=parseInt(filtered[i].Runs)||0;
+        var rt=parseFloat(filtered[i].PassRate)||0;
+        if(filtered[i].IsForwardTest){
+            fwdPassed+=p;fwdBlown+=b;fwdActive+=a;fwdTrades+=t;fwdRuns+=r;
+            if(rt>0){fwdRateSum+=rt;fwdRateCount++;}fwdCount++;
+        }else{
+            passed+=p;blown+=b;active+=a;trades+=t;runs+=r;
+            if(rt>0){rateSum+=rt;rateCount++;}backtestCount++;
+        }
     }
     var avgRate=rateCount>0?(rateSum/rateCount).toFixed(1):'0.0';
     var resolved=passed+blown;var blowRate=resolved>0?((blown/resolved)*100).toFixed(1):'0.0';
@@ -382,7 +391,21 @@ function updateAggregates(filtered){
         '<div class="stat-card"><div class="val purple">'+completedPassRate+'%</div><div class="lbl">Completed Pass</div></div>'+
         '<div class="stat-card"><div class="val">'+trades+'</div><div class="lbl">Trades</div></div>'+
         '<div class="stat-card"><div class="val">'+runs+'</div><div class="lbl">Runs</div></div>'+
-        '<div class="stat-card"><div class="val">'+filtered.length+'</div><div class="lbl">Reports</div></div>';
+        '<div class="stat-card"><div class="val">'+backtestCount+'</div><div class="lbl">Reports</div></div>';
+    var fwdAvgRate=fwdRateCount>0?(fwdRateSum/fwdRateCount).toFixed(1):'0.0';
+    var fwdResolved=fwdPassed+fwdBlown;var fwdBlowRate=fwdResolved>0?((fwdBlown/fwdResolved)*100).toFixed(1):'0.0';
+    var fwdCompletedPassRate=fwdResolved>0?((fwdPassed/fwdResolved)*100).toFixed(1):'0.0';
+    var fwdBar=document.getElementById('forwardAggregateStats');
+    fwdBar.innerHTML=
+        '<div class="stat-card"><div class="val green">'+fwdPassed+'</div><div class="lbl">Passed</div></div>'+
+        '<div class="stat-card"><div class="val red">'+fwdBlown+'</div><div class="lbl">Blown</div></div>'+
+        '<div class="stat-card"><div class="val blue">'+fwdActive+'</div><div class="lbl">Active</div></div>'+
+        '<div class="stat-card"><div class="val">'+fwdAvgRate+'%</div><div class="lbl">Avg Pass</div></div>'+
+        '<div class="stat-card"><div class="val orange">'+fwdBlowRate+'%</div><div class="lbl">Blow Risk</div></div>'+
+        '<div class="stat-card"><div class="val purple">'+fwdCompletedPassRate+'%</div><div class="lbl">Completed Pass</div></div>'+
+        '<div class="stat-card"><div class="val">'+fwdTrades+'</div><div class="lbl">Trades</div></div>'+
+        '<div class="stat-card"><div class="val">'+fwdRuns+'</div><div class="lbl">Runs</div></div>'+
+        '<div class="stat-card"><div class="val">'+fwdCount+'</div><div class="lbl">Reports</div></div>';
 }
 
 document.addEventListener('DOMContentLoaded',function(){
