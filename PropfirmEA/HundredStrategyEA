@@ -611,7 +611,12 @@ enum ENUM_PROP_SPAWN_INTERVAL
    SPAWN_EVERY_5H  = 5,
    SPAWN_EVERY_6H  = 6,
    SPAWN_EVERY_12H = 12,
-   SPAWN_EVERY_20H = 20
+   SPAWN_EVERY_20H = 20,
+   SPAWN_EVERY_1M  = -1,
+   SPAWN_EVERY_3M  = -3,
+   SPAWN_EVERY_5M  = -5,
+   SPAWN_EVERY_15M = -15,
+   SPAWN_EVERY_30M = -30
 };
 
 input group "Propfirm All-Strategy Backtest"
@@ -2918,10 +2923,9 @@ bool PropRollingShouldSpawn(const datetime now)
 
    if(propLastResumeSpawn >= resumeToday)
    {
-      int intervalHours = (int)PropSpawnInterval;
-      if(intervalHours <= 0)
+      long intervalSeconds = PropSpawnIntervalSeconds();
+      if(intervalSeconds <= 0)
          return false;
-      long intervalSeconds = (long)intervalHours * 3600;
       if((long)(now - propLastResumeSpawn) < intervalSeconds)
          return false;
    }
@@ -3170,12 +3174,20 @@ string PropBoolStr(const bool b)
    return b ? "true" : "false";
 }
 
+long PropSpawnIntervalSeconds()
+{
+   int val = (int)PropSpawnInterval;
+   if(val == 0) return 0;
+   if(val > 0) return (long)val * 3600;
+   return (long)MathAbs(val) * 60;
+}
+
 string PropSpawnIntervalLabel()
 {
-   int intervalHours = (int)PropSpawnInterval;
-   if(intervalHours <= 0)
-      return "daily at resume time";
-   return "every " + IntegerToString(intervalHours) + "h";
+   int val = (int)PropSpawnInterval;
+   if(val == 0) return "daily at resume time";
+   if(val > 0) return "every " + IntegerToString(val) + "h";
+   return "every " + IntegerToString(MathAbs(val)) + "m";
 }
 
 string PropTimestampedReportFileName()
