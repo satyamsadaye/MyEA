@@ -5248,7 +5248,9 @@
       int totalImported = 0;
       bool isRollingMode = true;
       datetime commonTestStart = 0;
+      datetime commonTestEnd = 0;
       bool testStartSet = false;
+      bool testEndSet = false;
 
       for(int n = 1; n <= totalNodes; n++)
       {
@@ -5276,24 +5278,34 @@
                 isRollingMode = (StringToInteger(StringSubstr(line, 13)) != 0);
                 continue;
              }
-             if(StringFind(line, "#TEST_START ") == 0)
-             {
-                datetime ts = (datetime)StringToInteger(StringSubstr(line, 12));
-                if(testStartSet && ts != commonTestStart)
-                {
-                   LogEvent("PARALLEL_ERR", "TEST_START mismatch in " + fileName
-                      + ": expected " + IntegerToString((long)commonTestStart)
-                      + " got " + IntegerToString((long)ts)
-                      + ". All partials must come from the same backtest date range.");
-                }
-                if(!testStartSet)
-                {
-                   commonTestStart = ts;
-                   testStartSet = true;
-                }
-                continue;
-             }
-             if(StringFind(line, "#SIGNALS") == 0)
+              if(StringFind(line, "#TEST_START ") == 0)
+              {
+                 datetime ts = (datetime)StringToInteger(StringSubstr(line, 12));
+                 if(testStartSet && ts != commonTestStart)
+                 {
+                    LogEvent("PARALLEL_ERR", "TEST_START mismatch in " + fileName
+                       + ": expected " + IntegerToString((long)commonTestStart)
+                       + " got " + IntegerToString((long)ts)
+                       + ". All partials must come from the same backtest date range.");
+                 }
+                 if(!testStartSet)
+                 {
+                    commonTestStart = ts;
+                    testStartSet = true;
+                 }
+                 continue;
+              }
+              if(StringFind(line, "#TEST_END ") == 0)
+              {
+                 datetime te = (datetime)StringToInteger(StringSubstr(line, 10));
+                 if(!testEndSet || te > commonTestEnd)
+                 {
+                    commonTestEnd = te;
+                    testEndSet = true;
+                 }
+                 continue;
+              }
+              if(StringFind(line, "#SIGNALS") == 0)
             {
                string data = StringSubstr(line, 8);
                StringTrimLeft(data);
@@ -5450,24 +5462,32 @@
          return;
       }
 
-      // Compute the actual test end timestamp from imported data
+      // Compute the actual test start/end timestamps from imported data
+      g_testStartTime = 0;
       g_testEndTime = 0;
-      if(isRollingMode)
+      if(testStartSet)
+         g_testStartTime = commonTestStart;
+      if(testEndSet)
+         g_testEndTime = commonTestEnd;
+      if(!testEndSet)
       {
-         for(int i = 0; i < ArraySize(propRuns); i++)
+         if(isRollingMode)
          {
-            if(propRuns[i].ended > 0 && propRuns[i].ended > g_testEndTime)
-               g_testEndTime = propRuns[i].ended;
-            if(propRuns[i].ended == 0 && propRuns[i].startDay > g_testEndTime)
-               g_testEndTime = propRuns[i].startDay;
+            for(int i = 0; i < ArraySize(propRuns); i++)
+            {
+               if(propRuns[i].ended > 0 && propRuns[i].ended > g_testEndTime)
+                  g_testEndTime = propRuns[i].ended;
+               if(propRuns[i].ended == 0 && propRuns[i].startDay > g_testEndTime)
+                  g_testEndTime = propRuns[i].startDay;
+            }
          }
-      }
-      else
-      {
-         for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+         else
          {
-            if(propResults[i].ended > 0 && propResults[i].ended > g_testEndTime)
-               g_testEndTime = propResults[i].ended;
+            for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+            {
+               if(propResults[i].ended > 0 && propResults[i].ended > g_testEndTime)
+                  g_testEndTime = propResults[i].ended;
+            }
          }
       }
 
