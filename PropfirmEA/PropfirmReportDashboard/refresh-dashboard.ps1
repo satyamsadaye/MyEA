@@ -31,6 +31,8 @@ foreach ($f in $files) {
     $passed = ExtractCard $content "pass" "Passed Runs"
     $blown = ExtractCard $content "blow" "Blown Runs"
     $active = ExtractCard $content "act" "Active Runs"
+    $activeProfit = ExtractCard $content "profit" "Active in Profit"
+    $activeDrawdown = ExtractCard $content "loss" "Active in Drawdown"
     $passRate = ExtractCard $content "rate" "Overall Pass Rate"
     $trades = ExtractCard $content "avg" "Total Trades"
     $signals = ExtractCard $content "sig" "Total Signals"
@@ -97,6 +99,8 @@ foreach ($f in $files) {
         Passed = $passed
         Blown = $blown
         Active = $active
+        ActiveProfit = $activeProfit
+        ActiveDrawdown = $activeDrawdown
         PassRate = $passRate
         Trades = $trades
         Signals = $signals
@@ -333,7 +337,7 @@ function render(){
                 '<span class="lbl">Total Runs <b>'+escapeHtml(report.TotalRunsSim)+'</b></span>'+
                 '<span class="stat-item"><span class="num pass">'+passed+'</span> passed</span>'+
                 '<span class="stat-item"><span class="num blow">'+blown+'</span> blown</span>'+
-                '<span class="stat-item"><span class="num act">'+active+'</span> active</span>'+
+                '<span class="stat-item"><span class="num act">'+active+'</span> active'+(active>0&&report.ActiveProfit?' <span style="font-size:13px;color:#059669">'+escapeHtml(report.ActiveProfit)+' profit</span> <span style="font-size:13px;color:#6b7280">|</span> <span style="font-size:13px;color:#dc2626">'+escapeHtml(report.ActiveDrawdown)+' DD</span>':'')+'</span>'+
                 '<span class="stat-item"><span class="num rate">'+escapeHtml(report.PassRate)+'</span> pass rate</span>'+
                 '<span class="stat-item"><span class="num purple">'+completedPass+'%</span> completed pass rate</span>'+
                 '</div>'+
