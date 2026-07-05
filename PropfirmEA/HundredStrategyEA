@@ -646,6 +646,12 @@
    input string PropHtmlReportFileName = "Propfirm_100_Strategy_Report.html";
    input double PropRecencyHalfLifeDays = 14.0;            // Half-life in days for recency weighting (0=disabled, ranks by raw pass rate)
 
+   input group "Parallel Backtest (shared session for multi-node)"
+   input int    ParallelMode = 0;              // 0=Off (original EA), 1=Node mode, 2=Merge mode
+   input int    ParallelNodeNumber = 1;        // 1-based Terminal ID (when ParallelMode=1)
+   input int    ParallelTotalNodes = 2;        // Total nodes in pool (when ParallelMode=1)
+   input string ParallelSessionKey = "";       // Shared key to pair partial results
+
    input group "Logging"
    input bool EnableCsvLog = true;
    input string LogFileName = "HundredStrategyEA_Log.csv";
@@ -767,6 +773,14 @@
    string g_receiverHitTime = "";
    bool   g_receiverTradingCSV = true;
 
+   // Parallel backtest mode globals
+   bool   g_parallelEnabled = false;
+   bool   g_mergeMode = false;
+   int    g_parallelFromId = 1;
+   int    g_parallelToId = PROP_STRATEGY_COUNT;
+   datetime g_testStartTime = 0;
+   datetime g_testEndTime = 0;
+
    struct StrategySignal
    {
       int buyVotes;
@@ -799,6 +813,61 @@
          return INIT_PARAMETERS_INCORRECT;
       }
 
+      if(ParallelMode > 0)
+      {
+         if(ParallelMode == 1)
+         {
+            if(ParallelNodeNumber < 1 || ParallelNodeNumber > ParallelTotalNodes)
+            {
+               LogEvent("INIT_ERROR", "ParallelNodeNumber must be between 1 and ParallelTotalNodes");
+               return INIT_PARAMETERS_INCORRECT;
+            }
+            if(!EnablePropfirmBacktestMode)
+            {
+               LogEvent("INIT_ERROR", "Parallel node mode requires EnablePropfirmBacktestMode=true");
+               return INIT_PARAMETERS_INCORRECT;
+            }
+             g_parallelEnabled = true;
+             if(ParallelTotalNodes < 2)
+             {
+                Print("=== WARNING: ParallelTotalNodes=1 means multi-node is disabled. Set >1 for actual parallel split.");
+             }
+             g_testStartTime = TimeCurrent();
+             int total = PROP_STRATEGY_COUNT;
+            int perNode = total / ParallelTotalNodes;
+            int rem = total % ParallelTotalNodes;
+            g_parallelFromId = (ParallelNodeNumber - 1) * perNode + MathMin(ParallelNodeNumber - 1, rem) + 1;
+            g_parallelToId = g_parallelFromId + perNode - 1;
+            if(ParallelNodeNumber <= rem)
+               g_parallelToId++;
+            if(g_parallelToId > total) g_parallelToId = total;
+            Print("=== PARALLEL NODE ", IntegerToString(ParallelNodeNumber), " of ", IntegerToString(ParallelTotalNodes),
+                  " === Terminal ID: ", IntegerToString(ParallelNodeNumber),
+                  " | Batch: strategies ", IntegerToString(g_parallelFromId), " - ", IntegerToString(g_parallelToId),
+                  " (", IntegerToString(g_parallelToId - g_parallelFromId + 1), " strategies)");
+            Print("Run the other node(s) with different ParallelNodeNumber, then merge with ParallelMode=2.");
+            LogEvent("PARALLEL_INIT", "Node " + IntegerToString(ParallelNodeNumber) + "/" + IntegerToString(ParallelTotalNodes)
+               + " | Terminal ID " + IntegerToString(ParallelNodeNumber)
+               + " running strategies " + IntegerToString(g_parallelFromId) + "-" + IntegerToString(g_parallelToId));
+         }
+         else if(ParallelMode == 2)
+         {
+            if(ParallelSessionKey == "")
+            {
+               LogEvent("INIT_ERROR", "ParallelSessionKey is required for merge mode");
+               return INIT_PARAMETERS_INCORRECT;
+            }
+            if(!EnablePropfirmBacktestMode)
+            {
+               LogEvent("INIT_ERROR", "Parallel merge requires EnablePropfirmBacktestMode=true");
+               return INIT_PARAMETERS_INCORRECT;
+            }
+            g_mergeMode = true;
+            MergePartialResults();
+            return INIT_FAILED;
+         }
+      }
+
       EnsureLogHeader();
       if(EnablePropfirmBacktestMode)
          InitPropfirmBacktest();
@@ -812,7 +881,12 @@
    void OnDeinit(const int reason)
    {
       if(EnablePropfirmBacktestMode)
-         ExportPropfirmHtmlReport();
+      {
+         if(ParallelMode == 1)
+            ExportPartialResults();
+         else if(ParallelMode != 2)
+            ExportPropfirmHtmlReport();
+      }
       if(atrHandle != INVALID_HANDLE)
          IndicatorRelease(atrHandle);
       EventKillTimer();
@@ -923,8 +997,65 @@
       UpdateDashboard();
    }
 
+   int ParseStrategyToken(const string token, const int id)
+   {
+      string t = token;
+      StringTrimLeft(t);
+      StringTrimRight(t);
+      if(t == "")
+         return 0;
+      int dashPos = StringFind(t, "-");
+      if(dashPos > 0)
+      {
+         int fromId = (int)StringToInteger(StringSubstr(t, 0, dashPos));
+         int toId = (int)StringToInteger(StringSubstr(t, dashPos + 1));
+         if(fromId < 1) fromId = 1;
+         if(toId > PROP_STRATEGY_COUNT) toId = PROP_STRATEGY_COUNT;
+         if(fromId <= toId && id >= fromId && id <= toId)
+            return 1;
+      }
+      else
+      {
+         int val = (int)StringToInteger(t);
+         if(val == id)
+            return 1;
+      }
+      return 0;
+   }
+
+   int CountStrategiesInToken(const string token)
+   {
+      string t = token;
+      StringTrimLeft(t);
+      StringTrimRight(t);
+      if(t == "")
+         return 0;
+      int dashPos = StringFind(t, "-");
+      if(dashPos > 0)
+      {
+         int fromId = (int)StringToInteger(StringSubstr(t, 0, dashPos));
+         int toId = (int)StringToInteger(StringSubstr(t, dashPos + 1));
+         if(fromId < 1) fromId = 1;
+         if(toId > PROP_STRATEGY_COUNT) toId = PROP_STRATEGY_COUNT;
+         if(fromId <= toId)
+            return toId - fromId + 1;
+         return 0;
+      }
+      else
+      {
+         int val = (int)StringToInteger(t);
+         if(val >= 1 && val <= PROP_STRATEGY_COUNT)
+            return 1;
+         return 0;
+      }
+   }
+
    int PropEffectiveStrategyCount()
    {
+      if(g_mergeMode)
+         return PROP_STRATEGY_COUNT;
+      if(g_parallelEnabled)
+         return (g_parallelToId - g_parallelFromId + 1);
       if(PropStrategyMode != PROP_STRATEGY_CUSTOM || PropCustomStrategies == "")
          return PROP_STRATEGY_COUNT;
       string custom = PropCustomStrategies;
@@ -933,16 +1064,16 @@
       int count = StringSplit(custom, (ushort)',', parts);
       int validCount = 0;
       for(int i = 0; i < count; i++)
-      {
-         int val = (int)StringToInteger(parts[i]);
-         if(val >= 1 && val <= PROP_STRATEGY_COUNT)
-            validCount++;
-      }
+         validCount += CountStrategiesInToken(parts[i]);
       return validCount > 0 ? validCount : 0;
    }
 
    bool PropIsCustomStrategy(const int id)
    {
+      if(g_mergeMode)
+         return true;
+      if(g_parallelEnabled)
+         return (id >= g_parallelFromId && id <= g_parallelToId);
       if(PropStrategyMode != PROP_STRATEGY_CUSTOM)
          return true;
       string custom = PropCustomStrategies;
@@ -953,8 +1084,7 @@
       int count = StringSplit(custom, (ushort)',', parts);
       for(int i = 0; i < count; i++)
       {
-         int val = (int)StringToInteger(parts[i]);
-         if(val == id)
+         if(ParseStrategyToken(parts[i], id) > 0)
             return true;
       }
       return false;
@@ -3445,6 +3575,7 @@
       ArrayInitialize(aggRecencyPassedWeight, 0.0);
 
       datetime testEndTime = TimeCurrent();
+      if(g_testEndTime > 0) testEndTime = g_testEndTime;
       int activeProfit = 0, activeDD = 0;
 
       for(int i = 0; i < totalRuns; i++)
@@ -3789,6 +3920,7 @@
       double overallPassRate = (totalRuns > 0) ? (double)totalPassed / (double)totalRuns * 100.0 : 0.0;
       double completedPassRate = (totalPassed + totalBlown > 0) ? (double)totalPassed / (double)(totalPassed + totalBlown) * 100.0 : 0.0;
       datetime testEnd = TimeCurrent();
+      if(g_testEndTime > 0) testEnd = g_testEndTime;
 
       string reportFileName = PropTimestampedReportFileName();
       int handle = FileOpen(reportFileName, FILE_WRITE | FILE_TXT | FILE_COMMON);
@@ -4915,4 +5047,472 @@
                DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2),
                message);
       FileClose(handle);
+   }
+
+   // ── Parallel Backtest Helpers ──────────────────────────────────────────────────
+
+   string PropCsvEscape(const string s)
+   {
+      string result = "";
+      for(int i = 0; i < StringLen(s); i++)
+      {
+         ushort ch = StringGetCharacter(s, i);
+         if(ch == '|')
+            result += "\\p";
+         else if(ch == '\\')
+            result += "\\\\";
+         else if(ch == '\n')
+            result += "\\n";
+         else if(ch == '\r')
+            result += "\\r";
+         else
+            result += ShortToString(ch);
+      }
+      return result;
+   }
+
+   string PropCsvUnescape(const string s)
+   {
+      string result = "";
+      int len = StringLen(s);
+      for(int i = 0; i < len; i++)
+      {
+         ushort ch = StringGetCharacter(s, i);
+         if(ch == '\\' && i + 1 < len)
+         {
+            ushort next = StringGetCharacter(s, i + 1);
+            if(next == 'p') { result += "|"; i++; }
+            else if(next == '\\') { result += "\\"; i++; }
+            else if(next == 'n') { result += "\n"; i++; }
+            else if(next == 'r') { result += "\r"; i++; }
+            else result += ShortToString(ch);
+         }
+         else
+            result += ShortToString(ch);
+      }
+      return result;
+   }
+
+   void ExportPartialResults()
+   {
+      string sessionKey = ParallelSessionKey;
+      if(sessionKey == "")
+      {
+         MqlDateTime dt;
+         TimeToStruct(TimeLocal(), dt);
+         sessionKey = StringFormat("bt%04d%02d%02d_%02d%02d%02d", dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec);
+      }
+
+      string fileName = "Partial_" + sessionKey + "_Node" + IntegerToString(ParallelNodeNumber) + ".csv";
+
+      // Warn if overwriting existing partial (possible session key collision)
+      if(FileIsExist(fileName, FILE_COMMON))
+      {
+         Print("WARNING: ", fileName, " already exists. Overwriting. Use a unique ParallelSessionKey for each backtest run.");
+      }
+
+      int handle = FileOpen(fileName, FILE_WRITE | FILE_TXT | FILE_COMMON);
+      if(handle == INVALID_HANDLE)
+      {
+         Print("Failed to open partial results file: ", fileName, " error=", GetLastError());
+         return;
+      }
+
+      datetime testEndTime = TimeCurrent();
+      FileWriteString(handle, "#PARALLEL_V1\n");
+      FileWriteString(handle, "#SESSION " + sessionKey + "\n");
+      FileWriteString(handle, "#NODE " + IntegerToString(ParallelNodeNumber) + "\n");
+      FileWriteString(handle, "#TOTAL_NODES " + IntegerToString(ParallelTotalNodes) + "\n");
+      FileWriteString(handle, "#TEST_START " + IntegerToString((long)g_testStartTime) + "\n");
+      FileWriteString(handle, "#TEST_END " + IntegerToString((long)testEndTime) + "\n");
+      FileWriteString(handle, "#ROLLING_MODE " + (PropRollingStartMode ? "1" : "0") + "\n");
+      FileWriteString(handle, "#STRAT_FROM " + IntegerToString(g_parallelFromId) + "\n");
+      FileWriteString(handle, "#STRAT_TO " + IntegerToString(g_parallelToId) + "\n");
+
+      int nodeStratCount = g_parallelToId - g_parallelFromId + 1;
+      FileWriteString(handle, "#STRAT_COUNT " + IntegerToString(nodeStratCount) + "\n");
+      string sigLine = "#SIGNALS";
+      for(int id = g_parallelFromId; id <= g_parallelToId; id++)
+         sigLine += " " + IntegerToString(id) + ";" + IntegerToString(propSignalCounts[id - 1]);
+      sigLine += "\n";
+      FileWriteString(handle, sigLine);
+
+      if(PropRollingStartMode)
+      {
+         int totalRuns = ArraySize(propRuns);
+         FileWriteString(handle, "#RUN_COUNT " + IntegerToString(totalRuns) + "\n");
+         for(int i = 0; i < totalRuns; i++)
+         {
+            string line = "R";
+            line += "|" + IntegerToString(propRuns[i].strategyId);
+            line += "|" + PropCsvEscape(propRuns[i].strategyName);
+            line += "|" + IntegerToString((long)propRuns[i].startDay);
+            line += "|" + IntegerToString((long)propRuns[i].ended);
+            line += "|" + (propRuns[i].breached ? "1" : "0");
+            line += "|" + (propRuns[i].passed ? "1" : "0");
+            line += "|" + (propRuns[i].protectionTriggeredToday ? "1" : "0");
+            line += "|" + PropCsvEscape(propRuns[i].breachReason);
+            line += "|" + IntegerToString((long)propRuns[i].dayReset);
+            line += "|" + IntegerToString((long)propRuns[i].lastTradeBar);
+            line += "|" + DoubleToString(propRuns[i].balance, 2);
+            line += "|" + DoubleToString(propRuns[i].equity, 2);
+            line += "|" + DoubleToString(propRuns[i].dayStartReference, 2);
+            line += "|" + DoubleToString(propRuns[i].startingBalance, 2);
+            line += "|" + DoubleToString(propRuns[i].maxDrawdown, 2);
+            line += "|" + DoubleToString(propRuns[i].maxProfit, 2);
+            line += "|" + DoubleToString(propRuns[i].grossProfit, 2);
+            line += "|" + DoubleToString(propRuns[i].grossLoss, 2);
+            line += "|" + IntegerToString(propRuns[i].daysToTarget);
+            line += "|" + IntegerToString(propRuns[i].daysToBreach);
+            line += "|" + IntegerToString(propRuns[i].equityProtectionTriggers);
+            line += "|" + IntegerToString(propRuns[i].trades);
+            line += "|" + IntegerToString(propRuns[i].wins);
+            line += "|" + IntegerToString(propRuns[i].losses);
+            line += "|" + IntegerToString(propRuns[i].breakevenTrades);
+            line += "|" + (propRuns[i].pos.open ? "1" : "0");
+            line += "|" + IntegerToString(propRuns[i].pos.type);
+            line += "|" + DoubleToString(propRuns[i].pos.entry, 5);
+            line += "|" + DoubleToString(propRuns[i].pos.lot, 2);
+            line += "|" + IntegerToString((long)propRuns[i].pos.openTime);
+            line += "\n";
+            FileWriteString(handle, line);
+         }
+         Print("Partial export: ", fileName, " (", IntegerToString(totalRuns), " rolling runs)");
+      }
+      else
+      {
+         int resultCount = 0;
+         for(int i = g_parallelFromId - 1; i < g_parallelToId; i++)
+         {
+            if(PropIsCustomStrategy(i + 1))
+               resultCount++;
+         }
+         FileWriteString(handle, "#RESULT_COUNT " + IntegerToString(resultCount) + "\n");
+         for(int i = g_parallelFromId - 1; i < g_parallelToId; i++)
+         {
+            if(!PropIsCustomStrategy(i + 1))
+               continue;
+            string line = "S";
+            line += "|" + IntegerToString(i + 1);
+            line += "|" + PropCsvEscape(propResults[i].name);
+            line += "|" + (propResults[i].breached ? "1" : "0");
+            line += "|" + (propResults[i].passed ? "1" : "0");
+            line += "|" + IntegerToString((long)propResults[i].started);
+            line += "|" + IntegerToString((long)propResults[i].ended);
+            line += "|" + DoubleToString(propResults[i].balance, 2);
+            line += "|" + DoubleToString(propResults[i].equity, 2);
+            line += "|" + DoubleToString(propResults[i].dayStartReference, 2);
+            line += "|" + DoubleToString(propResults[i].maxDrawdown, 2);
+            line += "|" + DoubleToString(propResults[i].maxProfit, 2);
+            line += "|" + IntegerToString(propResults[i].daysToTarget);
+            line += "|" + IntegerToString(propResults[i].daysToBreach);
+            line += "|" + IntegerToString(propResults[i].equityProtectionTriggers);
+            line += "|" + IntegerToString(propResults[i].trades);
+            line += "|" + IntegerToString(propResults[i].wins);
+            line += "|" + IntegerToString(propResults[i].losses);
+            line += "|" + IntegerToString(propResults[i].breakevenTrades);
+            line += "|" + IntegerToString(propResults[i].totalSignals);
+            line += "|" + DoubleToString(propResults[i].startingBalance, 2);
+            line += "|" + DoubleToString(propResults[i].grossProfit, 2);
+            line += "|" + DoubleToString(propResults[i].grossLoss, 2);
+            line += "|" + (propResults[i].protectionTriggeredToday ? "1" : "0");
+            line += "|" + PropCsvEscape(propResults[i].breachReason);
+            line += "|" + (propResults[i].pos.open ? "1" : "0");
+            line += "|" + IntegerToString(propResults[i].pos.type);
+            line += "|" + DoubleToString(propResults[i].pos.entry, 5);
+            line += "|" + DoubleToString(propResults[i].pos.lot, 2);
+            line += "|" + IntegerToString((long)propResults[i].pos.openTime);
+            line += "\n";
+            FileWriteString(handle, line);
+         }
+         Print("Partial export: ", fileName, " (", IntegerToString(resultCount), " single-run results)");
+      }
+
+      FileClose(handle);
+   }
+
+   void MergePartialResults()
+   {
+      string sessionKey = ParallelSessionKey;
+      if(sessionKey == "")
+      {
+         LogEvent("PARALLEL_ERR", "Session key is required for merge mode");
+         return;
+      }
+
+      int totalNodes = ParallelTotalNodes;
+      if(totalNodes < 1) totalNodes = 1;
+
+      ArrayResize(propRuns, 0);
+      ArrayInitialize(propSignalCounts, 0);
+      int totalImported = 0;
+      bool isRollingMode = true;
+      datetime commonTestStart = 0;
+      bool testStartSet = false;
+
+      for(int n = 1; n <= totalNodes; n++)
+      {
+         string fileName = "Partial_" + sessionKey + "_Node" + IntegerToString(n) + ".csv";
+         int handle = FileOpen(fileName, FILE_READ | FILE_TXT | FILE_COMMON);
+         if(handle == INVALID_HANDLE)
+         {
+            LogEvent("PARALLEL_ERR", "Cannot open " + fileName + " (error " + IntegerToString(GetLastError()) + ")");
+            continue;
+         }
+
+         int runCount = 0;
+         bool readingRuns = false;
+
+         while(!FileIsEnding(handle))
+         {
+            string line = FileReadString(handle);
+            StringTrimLeft(line);
+            StringTrimRight(line);
+            if(line == "")
+               continue;
+
+             if(StringFind(line, "#ROLLING_MODE ") == 0)
+             {
+                isRollingMode = (StringToInteger(StringSubstr(line, 13)) != 0);
+                continue;
+             }
+             if(StringFind(line, "#TEST_START ") == 0)
+             {
+                datetime ts = (datetime)StringToInteger(StringSubstr(line, 12));
+                if(testStartSet && ts != commonTestStart)
+                {
+                   LogEvent("PARALLEL_ERR", "TEST_START mismatch in " + fileName
+                      + ": expected " + IntegerToString((long)commonTestStart)
+                      + " got " + IntegerToString((long)ts)
+                      + ". All partials must come from the same backtest date range.");
+                }
+                if(!testStartSet)
+                {
+                   commonTestStart = ts;
+                   testStartSet = true;
+                }
+                continue;
+             }
+             if(StringFind(line, "#SIGNALS") == 0)
+            {
+               string data = StringSubstr(line, 8);
+               StringTrimLeft(data);
+               string parts[];
+               int pCount = StringSplit(data, (ushort)' ', parts);
+               for(int p = 0; p < pCount; p++)
+               {
+                  string pair = parts[p];
+                  StringTrimLeft(pair);
+                  StringTrimRight(pair);
+                  if(pair == "")
+                     continue;
+                  int semiPos = StringFind(pair, ";");
+                  if(semiPos >= 0)
+                  {
+                     int id = (int)StringToInteger(StringSubstr(pair, 0, semiPos));
+                     int cnt = (int)StringToInteger(StringSubstr(pair, semiPos + 1));
+                     if(id >= 1 && id <= PROP_STRATEGY_COUNT)
+                        propSignalCounts[id - 1] = cnt;
+                  }
+               }
+               continue;
+            }
+
+            if(isRollingMode)
+            {
+               if(StringFind(line, "#RUN_COUNT ") == 0)
+               {
+                  runCount = (int)StringToInteger(StringSubstr(line, 10));
+                  readingRuns = true;
+                  if(runCount > 0)
+                  {
+                     int oldSize = ArraySize(propRuns);
+                     ArrayResize(propRuns, oldSize + runCount);
+                  }
+                  continue;
+               }
+
+               if(readingRuns && StringFind(line, "R|") == 0)
+               {
+                  string parts[];
+                  int pCount = StringSplit(line, (ushort)'|', parts);
+                  if(pCount >= 31)
+                  {
+                     int idx = totalImported;
+                     if(idx >= ArraySize(propRuns))
+                     {
+                        int oldSize = ArraySize(propRuns);
+                        ArrayResize(propRuns, oldSize + 1000);
+                     }
+
+                     propRuns[idx].strategyId = (int)StringToInteger(parts[1]);
+                     propRuns[idx].strategyName = PropCsvUnescape(parts[2]);
+                     propRuns[idx].startDay = (datetime)StringToInteger(parts[3]);
+                     propRuns[idx].ended = (datetime)StringToInteger(parts[4]);
+                     propRuns[idx].breached = (StringToInteger(parts[5]) != 0);
+                     propRuns[idx].passed = (StringToInteger(parts[6]) != 0);
+                     propRuns[idx].protectionTriggeredToday = (StringToInteger(parts[7]) != 0);
+                     propRuns[idx].breachReason = PropCsvUnescape(parts[8]);
+                     propRuns[idx].dayReset = (datetime)StringToInteger(parts[9]);
+                     propRuns[idx].lastTradeBar = (datetime)StringToInteger(parts[10]);
+                     propRuns[idx].balance = StringToDouble(parts[11]);
+                     propRuns[idx].equity = StringToDouble(parts[12]);
+                     propRuns[idx].dayStartReference = StringToDouble(parts[13]);
+                     propRuns[idx].startingBalance = StringToDouble(parts[14]);
+                     propRuns[idx].maxDrawdown = StringToDouble(parts[15]);
+                     propRuns[idx].maxProfit = StringToDouble(parts[16]);
+                     propRuns[idx].grossProfit = StringToDouble(parts[17]);
+                     propRuns[idx].grossLoss = StringToDouble(parts[18]);
+                     propRuns[idx].daysToTarget = (int)StringToInteger(parts[19]);
+                     propRuns[idx].daysToBreach = (int)StringToInteger(parts[20]);
+                     propRuns[idx].equityProtectionTriggers = (int)StringToInteger(parts[21]);
+                     propRuns[idx].trades = (int)StringToInteger(parts[22]);
+                     propRuns[idx].wins = (int)StringToInteger(parts[23]);
+                     propRuns[idx].losses = (int)StringToInteger(parts[24]);
+                     propRuns[idx].breakevenTrades = (int)StringToInteger(parts[25]);
+                     propRuns[idx].pos.open = (StringToInteger(parts[26]) != 0);
+                     propRuns[idx].pos.type = (int)StringToInteger(parts[27]);
+                     propRuns[idx].pos.entry = StringToDouble(parts[28]);
+                     propRuns[idx].pos.lot = StringToDouble(parts[29]);
+                     propRuns[idx].pos.openTime = (datetime)StringToInteger(parts[30]);
+
+                     totalImported++;
+                  }
+               }
+            }
+            else
+            {
+               if(StringFind(line, "#RESULT_COUNT ") == 0)
+               {
+                  runCount = (int)StringToInteger(StringSubstr(line, 13));
+                  readingRuns = true;
+                  continue;
+               }
+
+               if(readingRuns && StringFind(line, "S|") == 0)
+               {
+                  string parts[];
+                  int pCount = StringSplit(line, (ushort)'|', parts);
+                  if(pCount >= 30)
+                  {
+                     int sid = (int)StringToInteger(parts[1]);
+                     int idx = sid - 1;
+                     if(idx >= 0 && idx < PROP_STRATEGY_COUNT)
+                     {
+                        propResults[idx].name = PropCsvUnescape(parts[2]);
+                        propResults[idx].breached = (StringToInteger(parts[3]) != 0);
+                        propResults[idx].passed = (StringToInteger(parts[4]) != 0);
+                        propResults[idx].started = (datetime)StringToInteger(parts[5]);
+                        propResults[idx].ended = (datetime)StringToInteger(parts[6]);
+                        propResults[idx].balance = StringToDouble(parts[7]);
+                        propResults[idx].equity = StringToDouble(parts[8]);
+                        propResults[idx].dayStartReference = StringToDouble(parts[9]);
+                        propResults[idx].maxDrawdown = StringToDouble(parts[10]);
+                        propResults[idx].maxProfit = StringToDouble(parts[11]);
+                        propResults[idx].daysToTarget = (int)StringToInteger(parts[12]);
+                        propResults[idx].daysToBreach = (int)StringToInteger(parts[13]);
+                        propResults[idx].equityProtectionTriggers = (int)StringToInteger(parts[14]);
+                        propResults[idx].trades = (int)StringToInteger(parts[15]);
+                        propResults[idx].wins = (int)StringToInteger(parts[16]);
+                        propResults[idx].losses = (int)StringToInteger(parts[17]);
+                        propResults[idx].breakevenTrades = (int)StringToInteger(parts[18]);
+                        propResults[idx].totalSignals = (int)StringToInteger(parts[19]);
+                        propResults[idx].startingBalance = StringToDouble(parts[20]);
+                        propResults[idx].grossProfit = StringToDouble(parts[21]);
+                        propResults[idx].grossLoss = StringToDouble(parts[22]);
+                        propResults[idx].protectionTriggeredToday = (StringToInteger(parts[23]) != 0);
+                        propResults[idx].breachReason = PropCsvUnescape(parts[24]);
+                        propResults[idx].pos.open = (StringToInteger(parts[25]) != 0);
+                        propResults[idx].pos.type = (int)StringToInteger(parts[26]);
+                        propResults[idx].pos.entry = StringToDouble(parts[27]);
+                        propResults[idx].pos.lot = StringToDouble(parts[28]);
+                        propResults[idx].pos.openTime = (datetime)StringToInteger(parts[29]);
+
+                        totalImported++;
+                     }
+                  }
+               }
+            }
+         }
+
+          FileClose(handle);
+          Print("Merge: imported ", IntegerToString(runCount), " items from Node ", IntegerToString(n), " (", fileName, ")");
+       }
+
+      if(isRollingMode)
+         ArrayResize(propRuns, totalImported);
+
+      Print("Merge: total imported = ", IntegerToString(totalImported), " | rolling mode = ", isRollingMode ? "true" : "false");
+
+      if(totalImported == 0)
+      {
+         LogEvent("PARALLEL_ERR", "No data imported. Merge aborted.");
+         return;
+      }
+
+      // Compute the actual test end timestamp from imported data
+      g_testEndTime = 0;
+      if(isRollingMode)
+      {
+         for(int i = 0; i < ArraySize(propRuns); i++)
+         {
+            if(propRuns[i].ended > 0 && propRuns[i].ended > g_testEndTime)
+               g_testEndTime = propRuns[i].ended;
+            if(propRuns[i].ended == 0 && propRuns[i].startDay > g_testEndTime)
+               g_testEndTime = propRuns[i].startDay;
+         }
+      }
+      else
+      {
+         for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+         {
+            if(propResults[i].ended > 0 && propResults[i].ended > g_testEndTime)
+               g_testEndTime = propResults[i].ended;
+         }
+      }
+
+      g_mergeMode = true;
+      g_parallelEnabled = false;
+
+      if(isRollingMode)
+      {
+         ExportPropfirmRollingReport();
+         Print("Merged rolling report generated for session: ", sessionKey);
+      }
+      else
+      {
+         for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
+         {
+            if(propResults[i].name == "")
+            {
+               propResults[i].name = StrategyName(i + 1);
+               propResults[i].breached = false;
+               propResults[i].passed = false;
+               propResults[i].started = 0;
+               propResults[i].ended = 0;
+               propResults[i].balance = 0;
+               propResults[i].equity = 0;
+               propResults[i].dayStartReference = 0;
+               propResults[i].maxDrawdown = 0;
+               propResults[i].maxProfit = 0;
+               propResults[i].daysToTarget = 0;
+               propResults[i].daysToBreach = 0;
+               propResults[i].startingBalance = 0;
+               propResults[i].trades = 0;
+               propResults[i].wins = 0;
+               propResults[i].losses = 0;
+               propResults[i].breakevenTrades = 0;
+               propResults[i].totalSignals = 0;
+               propResults[i].grossProfit = 0;
+               propResults[i].grossLoss = 0;
+               propResults[i].protectionTriggeredToday = false;
+               propResults[i].breachReason = "";
+               propResults[i].pos.open = false;
+            }
+         }
+         ExportPropfirmSingleReport();
+         Print("Merged single-run report generated for session: ", sessionKey);
+      }
+
+      g_mergeMode = false;
    }
