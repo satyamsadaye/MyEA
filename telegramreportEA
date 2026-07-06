@@ -42,6 +42,14 @@ input bool InpShowChartStatus = true;          // Show reporter status on chart
 input bool InpShowSendNowButton = true;        // Show Send Report Now button
 input bool InpPrintDebugLogs = true;           // Print report debug logs in Experts tab
 
+input group "Performance Alerts"
+input bool InpEnableAlerts = false;                 // Enable performance alerts
+input bool InpAlertOnEquityTarget = false;          // Alert when equity hits target level
+input double InpEquityTargetLevel = 0.0;            // Equity target level (absolute)
+input bool InpAlertOnConsecutiveTrades = false;     // Alert on consecutive wins/losses
+input int InpAlertWinStreakCount = 5;               // Consecutive wins threshold
+input int InpAlertLossStreakCount = 3;              // Consecutive losses threshold
+
 #define SEND_NOW_BUTTON_NAME "TTR_SEND_REPORT_NOW"
 #define SEND_TODAY_BUTTON_NAME "TTR_SEND_TODAY_REPORT"
 #define SEND_WEEKLY_BUTTON_NAME "TTR_SEND_WEEKLY_REPORT"
@@ -82,6 +90,10 @@ string g_last_error = "";
 string g_detected_chat_id = "";
 bool g_effective_magic_filter_enabled = false;
 long g_effective_magic_filter = 0;
+
+bool g_equity_target_alert_sent = false;
+int g_last_alerted_win_streak = 0;
+int g_last_alerted_loss_streak = 0;
 
 int OnInit()
 {
@@ -182,6 +194,7 @@ void OnTimer()
    }
 
    UpdateStatus();
+   CheckAlerts();
 }
 
 datetime ComputeNextAutoReportTime(datetime now)
@@ -1618,6 +1631,7 @@ void UpdateStatus()
    text += "Custom To: " + CustomEditText(CUSTOM_TO_EDIT_NAME) + "\n";
    text += "Auto schedule: " + AutoScheduleText() + "\n";
    text += "Next auto report: " + TimeToString(g_next_report_time, TIME_DATE | TIME_SECONDS) + "\n";
+   text += "Alerts: " + (InpEnableAlerts ? "ON" : "OFF") + "\n";
    if(g_last_error != "")
       text += "Error: " + g_last_error + "\n";
 
@@ -1630,4 +1644,123 @@ void Log(string message)
       return;
 
    Print("TelegramTradeReporter: " + message);
+}
+
+void CheckAlerts()
+{
+   if(!InpEnableAlerts)
+      return;
+
+   if(InpAlertOnEquityTarget && InpEquityTargetLevel > 0.0)
+      CheckEquityTargetAlert();
+
+   if(InpAlertOnConsecutiveTrades)
+      CheckConsecutiveTradesAlert();
+}
+
+void CheckEquityTargetAlert()
+{
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   if(equity >= InpEquityTargetLevel)
+   {
+      if(!g_equity_target_alert_sent)
+      {
+         string msg = "<b>🚨 Equity Target Reached</b>\n";
+         msg += "Account: <b>" + EscapeHtml(AccountInfoString(ACCOUNT_NAME)) + "</b>\n";
+         msg += "Login: <code>" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "</code>\n";
+         msg += "Server: " + EscapeHtml(AccountInfoString(ACCOUNT_SERVER)) + "\n";
+         msg += "Currency: " + EscapeHtml(AccountInfoString(ACCOUNT_CURRENCY)) + "\n";
+         msg += "Current equity: <b>" + MoneyAmountText(equity) + "</b>\n";
+         msg += "Target level: <b>" + MoneyAmountText(InpEquityTargetLevel) + "</b>\n";
+         SendTelegram(msg);
+         g_equity_target_alert_sent = true;
+         Log("Equity target alert sent. equity=" + DoubleToString(equity, 2) + " target=" + DoubleToString(InpEquityTargetLevel, 2));
+      }
+   }
+   else
+   {
+      if(g_equity_target_alert_sent)
+      {
+         g_equity_target_alert_sent = false;
+         Log("Equity dropped below target, alert flag reset.");
+      }
+   }
+}
+
+void CheckConsecutiveTradesAlert()
+{
+   if(!HistorySelect(0, TimeCurrent()))
+   {
+      Log("CheckConsecutiveTradesAlert: HistorySelect failed");
+      return;
+   }
+
+   int win_streak = 0;
+   int loss_streak = 0;
+   int deals_total = HistoryDealsTotal();
+   bool found_streak_type = false;
+   bool streak_is_win = false;
+
+   for(int i = deals_total - 1; i >= 0; i--)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      double profit = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+
+      if(IsBreakEvenTrade(profit))
+         continue;
+
+      if(!found_streak_type)
+      {
+         streak_is_win = (profit > 0.0);
+         found_streak_type = true;
+      }
+
+      if((streak_is_win && profit > 0.0) || (!streak_is_win && profit <= 0.0))
+      {
+         if(streak_is_win)
+            win_streak++;
+         else
+            loss_streak++;
+      }
+      else
+         break;
+   }
+
+   if(win_streak >= InpAlertWinStreakCount && win_streak > g_last_alerted_win_streak)
+   {
+      string msg = "<b>🔥 Consecutive Wins: " + (string)win_streak + "</b>\n";
+      msg += "Account: <b>" + EscapeHtml(AccountInfoString(ACCOUNT_NAME)) + "</b>\n";
+      msg += "Login: <code>" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "</code>\n";
+      msg += "Server: " + EscapeHtml(AccountInfoString(ACCOUNT_SERVER)) + "\n";
+      SendTelegram(msg);
+      g_last_alerted_win_streak = win_streak;
+      g_last_alerted_loss_streak = 0;
+      Log("Consecutive wins alert sent: " + (string)win_streak);
+   }
+
+   if(loss_streak >= InpAlertLossStreakCount && loss_streak > g_last_alerted_loss_streak)
+   {
+      string msg = "<b>⚠️ Consecutive Losses: " + (string)loss_streak + "</b>\n";
+      msg += "Account: <b>" + EscapeHtml(AccountInfoString(ACCOUNT_NAME)) + "</b>\n";
+      msg += "Login: <code>" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "</code>\n";
+      msg += "Server: " + EscapeHtml(AccountInfoString(ACCOUNT_SERVER)) + "\n";
+      SendTelegram(msg);
+      g_last_alerted_loss_streak = loss_streak;
+      g_last_alerted_win_streak = 0;
+      Log("Consecutive losses alert sent: " + (string)loss_streak);
+   }
+
+   if(win_streak == 0)
+      g_last_alerted_win_streak = 0;
+
+   if(loss_streak == 0)
+      g_last_alerted_loss_streak = 0;
 }
