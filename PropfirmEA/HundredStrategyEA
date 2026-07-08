@@ -540,10 +540,510 @@
       STRAT_497_TREND_MOM_CONTINUE,
       STRAT_498_TREND_MOM_VOLATILE,
       STRAT_499_TREND_MOM_POSITION,
-      STRAT_500_TREND_MOM_MAJOR
-   };
+       STRAT_500_TREND_MOM_MAJOR,
+       STRAT_501_ICHIMOKU_MICRO,
+       STRAT_502_ICHIMOKU_FAST,
+       STRAT_503_ICHIMOKU_SHORT,
+       STRAT_504_ICHIMOKU_INTRADAY,
+       STRAT_505_ICHIMOKU_SWING,
+       STRAT_506_ICHIMOKU_EXPANSION,
+       STRAT_507_ICHIMOKU_CONTINUE,
+       STRAT_508_ICHIMOKU_VOLATILE,
+       STRAT_509_ICHIMOKU_POSITION,
+       STRAT_510_ICHIMOKU_MAJOR,
+       STRAT_511_CHAIKIN_MICRO,
+       STRAT_512_CHAIKIN_FAST,
+       STRAT_513_CHAIKIN_SHORT,
+       STRAT_514_CHAIKIN_INTRADAY,
+       STRAT_515_CHAIKIN_SWING,
+       STRAT_516_CHAIKIN_EXPANSION,
+       STRAT_517_CHAIKIN_CONTINUE,
+       STRAT_518_CHAIKIN_VOLATILE,
+       STRAT_519_CHAIKIN_POSITION,
+       STRAT_520_CHAIKIN_MAJOR,
+       STRAT_521_GATOR_MICRO,
+       STRAT_522_GATOR_FAST,
+       STRAT_523_GATOR_SHORT,
+       STRAT_524_GATOR_INTRADAY,
+       STRAT_525_GATOR_SWING,
+       STRAT_526_GATOR_EXPANSION,
+       STRAT_527_GATOR_CONTINUE,
+       STRAT_528_GATOR_VOLATILE,
+       STRAT_529_GATOR_POSITION,
+       STRAT_530_GATOR_MAJOR,
+       STRAT_531_FRACTAL_MICRO,
+       STRAT_532_FRACTAL_FAST,
+       STRAT_533_FRACTAL_SHORT,
+       STRAT_534_FRACTAL_INTRADAY,
+       STRAT_535_FRACTAL_SWING,
+       STRAT_536_FRACTAL_EXPANSION,
+       STRAT_537_FRACTAL_CONTINUE,
+       STRAT_538_FRACTAL_VOLATILE,
+       STRAT_539_FRACTAL_POSITION,
+       STRAT_540_FRACTAL_MAJOR,
+       STRAT_541_STDDEV_CHANNEL_MICRO,
+       STRAT_542_STDDEV_CHANNEL_FAST,
+       STRAT_543_STDDEV_CHANNEL_SHORT,
+       STRAT_544_STDDEV_CHANNEL_INTRADAY,
+       STRAT_545_STDDEV_CHANNEL_SWING,
+       STRAT_546_STDDEV_CHANNEL_EXPANSION,
+       STRAT_547_STDDEV_CHANNEL_CONTINUE,
+       STRAT_548_STDDEV_CHANNEL_VOLATILE,
+       STRAT_549_STDDEV_CHANNEL_POSITION,
+       STRAT_550_STDDEV_CHANNEL_MAJOR,
+       STRAT_551_BULLS_POWER_MICRO,
+       STRAT_552_BULLS_POWER_FAST,
+       STRAT_553_BULLS_POWER_SHORT,
+       STRAT_554_BULLS_POWER_INTRADAY,
+       STRAT_555_BULLS_POWER_SWING,
+       STRAT_556_BULLS_POWER_EXPANSION,
+       STRAT_557_BULLS_POWER_CONTINUE,
+       STRAT_558_BULLS_POWER_VOLATILE,
+       STRAT_559_BULLS_POWER_POSITION,
+       STRAT_560_BULLS_POWER_MAJOR,
+       STRAT_561_BEARS_POWER_MICRO,
+       STRAT_562_BEARS_POWER_FAST,
+       STRAT_563_BEARS_POWER_SHORT,
+       STRAT_564_BEARS_POWER_INTRADAY,
+       STRAT_565_BEARS_POWER_SWING,
+       STRAT_566_BEARS_POWER_EXPANSION,
+       STRAT_567_BEARS_POWER_CONTINUE,
+       STRAT_568_BEARS_POWER_VOLATILE,
+       STRAT_569_BEARS_POWER_POSITION,
+       STRAT_570_BEARS_POWER_MAJOR,
+       STRAT_571_CMO_MICRO,
+       STRAT_572_CMO_FAST,
+       STRAT_573_CMO_SHORT,
+       STRAT_574_CMO_INTRADAY,
+       STRAT_575_CMO_SWING,
+       STRAT_576_CMO_EXPANSION,
+       STRAT_577_CMO_CONTINUE,
+       STRAT_578_CMO_VOLATILE,
+       STRAT_579_CMO_POSITION,
+       STRAT_580_CMO_MAJOR,
+       STRAT_581_TEMA_MICRO,
+       STRAT_582_TEMA_FAST,
+       STRAT_583_TEMA_SHORT,
+       STRAT_584_TEMA_INTRADAY,
+       STRAT_585_TEMA_SWING,
+       STRAT_586_TEMA_EXPANSION,
+       STRAT_587_TEMA_CONTINUE,
+       STRAT_588_TEMA_VOLATILE,
+       STRAT_589_TEMA_POSITION,
+       STRAT_590_TEMA_MAJOR,
+       STRAT_591_TRIX_MICRO,
+       STRAT_592_TRIX_FAST,
+       STRAT_593_TRIX_SHORT,
+       STRAT_594_TRIX_INTRADAY,
+       STRAT_595_TRIX_SWING,
+       STRAT_596_TRIX_EXPANSION,
+       STRAT_597_TRIX_CONTINUE,
+       STRAT_598_TRIX_VOLATILE,
+       STRAT_599_TRIX_POSITION,
+       STRAT_600_TRIX_MAJOR,
+       STRAT_601_VIDYA_MICRO,
+       STRAT_602_VIDYA_FAST,
+       STRAT_603_VIDYA_SHORT,
+       STRAT_604_VIDYA_INTRADAY,
+       STRAT_605_VIDYA_SWING,
+       STRAT_606_VIDYA_EXPANSION,
+       STRAT_607_VIDYA_CONTINUE,
+       STRAT_608_VIDYA_VOLATILE,
+       STRAT_609_VIDYA_POSITION,
+       STRAT_610_VIDYA_MAJOR,
+       STRAT_611_FRAMA_MICRO,
+       STRAT_612_FRAMA_FAST,
+       STRAT_613_FRAMA_SHORT,
+       STRAT_614_FRAMA_INTRADAY,
+       STRAT_615_FRAMA_SWING,
+       STRAT_616_FRAMA_EXPANSION,
+       STRAT_617_FRAMA_CONTINUE,
+       STRAT_618_FRAMA_VOLATILE,
+       STRAT_619_FRAMA_POSITION,
+       STRAT_620_FRAMA_MAJOR,
+       STRAT_621_ULTIMATE_OSC_MICRO,
+       STRAT_622_ULTIMATE_OSC_FAST,
+       STRAT_623_ULTIMATE_OSC_SHORT,
+       STRAT_624_ULTIMATE_OSC_INTRADAY,
+       STRAT_625_ULTIMATE_OSC_SWING,
+       STRAT_626_ULTIMATE_OSC_EXPANSION,
+       STRAT_627_ULTIMATE_OSC_CONTINUE,
+       STRAT_628_ULTIMATE_OSC_VOLATILE,
+       STRAT_629_ULTIMATE_OSC_POSITION,
+       STRAT_630_ULTIMATE_OSC_MAJOR,
+       STRAT_631_HEIKEN_ASHI_MICRO,
+       STRAT_632_HEIKEN_ASHI_FAST,
+       STRAT_633_HEIKEN_ASHI_SHORT,
+       STRAT_634_HEIKEN_ASHI_INTRADAY,
+       STRAT_635_HEIKEN_ASHI_SWING,
+       STRAT_636_HEIKEN_ASHI_EXPANSION,
+       STRAT_637_HEIKEN_ASHI_CONTINUE,
+       STRAT_638_HEIKEN_ASHI_VOLATILE,
+       STRAT_639_HEIKEN_ASHI_POSITION,
+       STRAT_640_HEIKEN_ASHI_MAJOR,
+       STRAT_641_AROON_MICRO,
+       STRAT_642_AROON_FAST,
+       STRAT_643_AROON_SHORT,
+       STRAT_644_AROON_INTRADAY,
+       STRAT_645_AROON_SWING,
+       STRAT_646_AROON_EXPANSION,
+       STRAT_647_AROON_CONTINUE,
+       STRAT_648_AROON_VOLATILE,
+       STRAT_649_AROON_POSITION,
+       STRAT_650_AROON_MAJOR,
+       STRAT_651_KST_MICRO,
+       STRAT_652_KST_FAST,
+       STRAT_653_KST_SHORT,
+       STRAT_654_KST_INTRADAY,
+       STRAT_655_KST_SWING,
+       STRAT_656_KST_EXPANSION,
+       STRAT_657_KST_CONTINUE,
+       STRAT_658_KST_VOLATILE,
+       STRAT_659_KST_POSITION,
+       STRAT_660_KST_MAJOR,
+       STRAT_661_VORTEX_MICRO,
+       STRAT_662_VORTEX_FAST,
+       STRAT_663_VORTEX_SHORT,
+       STRAT_664_VORTEX_INTRADAY,
+       STRAT_665_VORTEX_SWING,
+       STRAT_666_VORTEX_EXPANSION,
+       STRAT_667_VORTEX_CONTINUE,
+       STRAT_668_VORTEX_VOLATILE,
+       STRAT_669_VORTEX_POSITION,
+       STRAT_670_VORTEX_MAJOR,
+       STRAT_671_CONNORS_RSI_MICRO,
+       STRAT_672_CONNORS_RSI_FAST,
+       STRAT_673_CONNORS_RSI_SHORT,
+       STRAT_674_CONNORS_RSI_INTRADAY,
+       STRAT_675_CONNORS_RSI_SWING,
+       STRAT_676_CONNORS_RSI_EXPANSION,
+       STRAT_677_CONNORS_RSI_CONTINUE,
+       STRAT_678_CONNORS_RSI_VOLATILE,
+       STRAT_679_CONNORS_RSI_POSITION,
+       STRAT_680_CONNORS_RSI_MAJOR,
+       STRAT_681_VWAP_MICRO,
+       STRAT_682_VWAP_FAST,
+       STRAT_683_VWAP_SHORT,
+       STRAT_684_VWAP_INTRADAY,
+       STRAT_685_VWAP_SWING,
+       STRAT_686_VWAP_EXPANSION,
+       STRAT_687_VWAP_CONTINUE,
+       STRAT_688_VWAP_VOLATILE,
+       STRAT_689_VWAP_POSITION,
+       STRAT_690_VWAP_MAJOR,
+       STRAT_691_PIVOT_MICRO,
+       STRAT_692_PIVOT_FAST,
+       STRAT_693_PIVOT_SHORT,
+       STRAT_694_PIVOT_INTRADAY,
+       STRAT_695_PIVOT_SWING,
+       STRAT_696_PIVOT_EXPANSION,
+       STRAT_697_PIVOT_CONTINUE,
+       STRAT_698_PIVOT_VOLATILE,
+       STRAT_699_PIVOT_POSITION,
+       STRAT_700_PIVOT_MAJOR,
+       STRAT_701_REG_CHANNEL_MICRO,
+       STRAT_702_REG_CHANNEL_FAST,
+       STRAT_703_REG_CHANNEL_SHORT,
+       STRAT_704_REG_CHANNEL_INTRADAY,
+       STRAT_705_REG_CHANNEL_SWING,
+       STRAT_706_REG_CHANNEL_EXPANSION,
+       STRAT_707_REG_CHANNEL_CONTINUE,
+       STRAT_708_REG_CHANNEL_VOLATILE,
+       STRAT_709_REG_CHANNEL_POSITION,
+       STRAT_710_REG_CHANNEL_MAJOR,
+       STRAT_711_MA_ENVELOPE_MICRO,
+       STRAT_712_MA_ENVELOPE_FAST,
+       STRAT_713_MA_ENVELOPE_SHORT,
+       STRAT_714_MA_ENVELOPE_INTRADAY,
+       STRAT_715_MA_ENVELOPE_SWING,
+       STRAT_716_MA_ENVELOPE_EXPANSION,
+       STRAT_717_MA_ENVELOPE_CONTINUE,
+       STRAT_718_MA_ENVELOPE_VOLATILE,
+       STRAT_719_MA_ENVELOPE_POSITION,
+       STRAT_720_MA_ENVELOPE_MAJOR,
+       STRAT_721_RSI_DIVERGE_MICRO,
+       STRAT_722_RSI_DIVERGE_FAST,
+       STRAT_723_RSI_DIVERGE_SHORT,
+       STRAT_724_RSI_DIVERGE_INTRADAY,
+       STRAT_725_RSI_DIVERGE_SWING,
+       STRAT_726_RSI_DIVERGE_EXPANSION,
+       STRAT_727_RSI_DIVERGE_CONTINUE,
+       STRAT_728_RSI_DIVERGE_VOLATILE,
+       STRAT_729_RSI_DIVERGE_POSITION,
+       STRAT_730_RSI_DIVERGE_MAJOR,
+       STRAT_731_MACD_DIVERGE_MICRO,
+       STRAT_732_MACD_DIVERGE_FAST,
+       STRAT_733_MACD_DIVERGE_SHORT,
+       STRAT_734_MACD_DIVERGE_INTRADAY,
+       STRAT_735_MACD_DIVERGE_SWING,
+       STRAT_736_MACD_DIVERGE_EXPANSION,
+       STRAT_737_MACD_DIVERGE_CONTINUE,
+       STRAT_738_MACD_DIVERGE_VOLATILE,
+       STRAT_739_MACD_DIVERGE_POSITION,
+       STRAT_740_MACD_DIVERGE_MAJOR,
+       STRAT_741_CCI_DIVERGE_MICRO,
+       STRAT_742_CCI_DIVERGE_FAST,
+       STRAT_743_CCI_DIVERGE_SHORT,
+       STRAT_744_CCI_DIVERGE_INTRADAY,
+       STRAT_745_CCI_DIVERGE_SWING,
+       STRAT_746_CCI_DIVERGE_EXPANSION,
+       STRAT_747_CCI_DIVERGE_CONTINUE,
+       STRAT_748_CCI_DIVERGE_VOLATILE,
+       STRAT_749_CCI_DIVERGE_POSITION,
+       STRAT_750_CCI_DIVERGE_MAJOR,
+       STRAT_751_STOCH_DIVERGE_MICRO,
+       STRAT_752_STOCH_DIVERGE_FAST,
+       STRAT_753_STOCH_DIVERGE_SHORT,
+       STRAT_754_STOCH_DIVERGE_INTRADAY,
+       STRAT_755_STOCH_DIVERGE_SWING,
+       STRAT_756_STOCH_DIVERGE_EXPANSION,
+       STRAT_757_STOCH_DIVERGE_CONTINUE,
+       STRAT_758_STOCH_DIVERGE_VOLATILE,
+       STRAT_759_STOCH_DIVERGE_POSITION,
+       STRAT_760_STOCH_DIVERGE_MAJOR,
+       STRAT_761_OBV_DIVERGE_MICRO,
+       STRAT_762_OBV_DIVERGE_FAST,
+       STRAT_763_OBV_DIVERGE_SHORT,
+       STRAT_764_OBV_DIVERGE_INTRADAY,
+       STRAT_765_OBV_DIVERGE_SWING,
+       STRAT_766_OBV_DIVERGE_EXPANSION,
+       STRAT_767_OBV_DIVERGE_CONTINUE,
+       STRAT_768_OBV_DIVERGE_VOLATILE,
+       STRAT_769_OBV_DIVERGE_POSITION,
+       STRAT_770_OBV_DIVERGE_MAJOR,
+       STRAT_771_RSI_BANDS_MICRO,
+       STRAT_772_RSI_BANDS_FAST,
+       STRAT_773_RSI_BANDS_SHORT,
+       STRAT_774_RSI_BANDS_INTRADAY,
+       STRAT_775_RSI_BANDS_SWING,
+       STRAT_776_RSI_BANDS_EXPANSION,
+       STRAT_777_RSI_BANDS_CONTINUE,
+       STRAT_778_RSI_BANDS_VOLATILE,
+       STRAT_779_RSI_BANDS_POSITION,
+       STRAT_780_RSI_BANDS_MAJOR,
+       STRAT_781_MACD_RSI_MICRO,
+       STRAT_782_MACD_RSI_FAST,
+       STRAT_783_MACD_RSI_SHORT,
+       STRAT_784_MACD_RSI_INTRADAY,
+       STRAT_785_MACD_RSI_SWING,
+       STRAT_786_MACD_RSI_EXPANSION,
+       STRAT_787_MACD_RSI_CONTINUE,
+       STRAT_788_MACD_RSI_VOLATILE,
+       STRAT_789_MACD_RSI_POSITION,
+       STRAT_790_MACD_RSI_MAJOR,
+       STRAT_791_ADX_RSI_MICRO,
+       STRAT_792_ADX_RSI_FAST,
+       STRAT_793_ADX_RSI_SHORT,
+       STRAT_794_ADX_RSI_INTRADAY,
+       STRAT_795_ADX_RSI_SWING,
+       STRAT_796_ADX_RSI_EXPANSION,
+       STRAT_797_ADX_RSI_CONTINUE,
+       STRAT_798_ADX_RSI_VOLATILE,
+       STRAT_799_ADX_RSI_POSITION,
+       STRAT_800_ADX_RSI_MAJOR,
+       STRAT_801_MA_VOLUME_MICRO,
+       STRAT_802_MA_VOLUME_FAST,
+       STRAT_803_MA_VOLUME_SHORT,
+       STRAT_804_MA_VOLUME_INTRADAY,
+       STRAT_805_MA_VOLUME_SWING,
+       STRAT_806_MA_VOLUME_EXPANSION,
+       STRAT_807_MA_VOLUME_CONTINUE,
+       STRAT_808_MA_VOLUME_VOLATILE,
+       STRAT_809_MA_VOLUME_POSITION,
+       STRAT_810_MA_VOLUME_MAJOR,
+       STRAT_811_MA_VOLATILITY_MICRO,
+       STRAT_812_MA_VOLATILITY_FAST,
+       STRAT_813_MA_VOLATILITY_SHORT,
+       STRAT_814_MA_VOLATILITY_INTRADAY,
+       STRAT_815_MA_VOLATILITY_SWING,
+       STRAT_816_MA_VOLATILITY_EXPANSION,
+       STRAT_817_MA_VOLATILITY_CONTINUE,
+       STRAT_818_MA_VOLATILITY_VOLATILE,
+       STRAT_819_MA_VOLATILITY_POSITION,
+       STRAT_820_MA_VOLATILITY_MAJOR,
+       STRAT_821_TRIPLE_MA_MICRO,
+       STRAT_822_TRIPLE_MA_FAST,
+       STRAT_823_TRIPLE_MA_SHORT,
+       STRAT_824_TRIPLE_MA_INTRADAY,
+       STRAT_825_TRIPLE_MA_SWING,
+       STRAT_826_TRIPLE_MA_EXPANSION,
+       STRAT_827_TRIPLE_MA_CONTINUE,
+       STRAT_828_TRIPLE_MA_VOLATILE,
+       STRAT_829_TRIPLE_MA_POSITION,
+       STRAT_830_TRIPLE_MA_MAJOR,
+       STRAT_831_IMPULSE_MICRO,
+       STRAT_832_IMPULSE_FAST,
+       STRAT_833_IMPULSE_SHORT,
+       STRAT_834_IMPULSE_INTRADAY,
+       STRAT_835_IMPULSE_SWING,
+       STRAT_836_IMPULSE_EXPANSION,
+       STRAT_837_IMPULSE_CONTINUE,
+       STRAT_838_IMPULSE_VOLATILE,
+       STRAT_839_IMPULSE_POSITION,
+       STRAT_840_IMPULSE_MAJOR,
+       STRAT_841_BREAKOUT_PULLBACK_MICRO,
+       STRAT_842_BREAKOUT_PULLBACK_FAST,
+       STRAT_843_BREAKOUT_PULLBACK_SHORT,
+       STRAT_844_BREAKOUT_PULLBACK_INTRADAY,
+       STRAT_845_BREAKOUT_PULLBACK_SWING,
+       STRAT_846_BREAKOUT_PULLBACK_EXPANSION,
+       STRAT_847_BREAKOUT_PULLBACK_CONTINUE,
+       STRAT_848_BREAKOUT_PULLBACK_VOLATILE,
+       STRAT_849_BREAKOUT_PULLBACK_POSITION,
+       STRAT_850_BREAKOUT_PULLBACK_MAJOR,
+       STRAT_851_TREND_PULLBACK_MICRO,
+       STRAT_852_TREND_PULLBACK_FAST,
+       STRAT_853_TREND_PULLBACK_SHORT,
+       STRAT_854_TREND_PULLBACK_INTRADAY,
+       STRAT_855_TREND_PULLBACK_SWING,
+       STRAT_856_TREND_PULLBACK_EXPANSION,
+       STRAT_857_TREND_PULLBACK_CONTINUE,
+       STRAT_858_TREND_PULLBACK_VOLATILE,
+       STRAT_859_TREND_PULLBACK_POSITION,
+       STRAT_860_TREND_PULLBACK_MAJOR,
+       STRAT_861_RSI_MACD_CONFIRM_MICRO,
+       STRAT_862_RSI_MACD_CONFIRM_FAST,
+       STRAT_863_RSI_MACD_CONFIRM_SHORT,
+       STRAT_864_RSI_MACD_CONFIRM_INTRADAY,
+       STRAT_865_RSI_MACD_CONFIRM_SWING,
+       STRAT_866_RSI_MACD_CONFIRM_EXPANSION,
+       STRAT_867_RSI_MACD_CONFIRM_CONTINUE,
+       STRAT_868_RSI_MACD_CONFIRM_VOLATILE,
+       STRAT_869_RSI_MACD_CONFIRM_POSITION,
+       STRAT_870_RSI_MACD_CONFIRM_MAJOR,
+       STRAT_871_TREND_FILTER_MICRO,
+       STRAT_872_TREND_FILTER_FAST,
+       STRAT_873_TREND_FILTER_SHORT,
+       STRAT_874_TREND_FILTER_INTRADAY,
+       STRAT_875_TREND_FILTER_SWING,
+       STRAT_876_TREND_FILTER_EXPANSION,
+       STRAT_877_TREND_FILTER_CONTINUE,
+       STRAT_878_TREND_FILTER_VOLATILE,
+       STRAT_879_TREND_FILTER_POSITION,
+       STRAT_880_TREND_FILTER_MAJOR,
+       STRAT_881_HARAMI_MICRO,
+       STRAT_882_HARAMI_FAST,
+       STRAT_883_HARAMI_SHORT,
+       STRAT_884_HARAMI_INTRADAY,
+       STRAT_885_HARAMI_SWING,
+       STRAT_886_HARAMI_EXPANSION,
+       STRAT_887_HARAMI_CONTINUE,
+       STRAT_888_HARAMI_VOLATILE,
+       STRAT_889_HARAMI_POSITION,
+       STRAT_890_HARAMI_MAJOR,
+       STRAT_891_DOJI_STAR_MICRO,
+       STRAT_892_DOJI_STAR_FAST,
+       STRAT_893_DOJI_STAR_SHORT,
+       STRAT_894_DOJI_STAR_INTRADAY,
+       STRAT_895_DOJI_STAR_SWING,
+       STRAT_896_DOJI_STAR_EXPANSION,
+       STRAT_897_DOJI_STAR_CONTINUE,
+       STRAT_898_DOJI_STAR_VOLATILE,
+       STRAT_899_DOJI_STAR_POSITION,
+       STRAT_900_DOJI_STAR_MAJOR,
+       STRAT_901_STAR_MICRO,
+       STRAT_902_STAR_FAST,
+       STRAT_903_STAR_SHORT,
+       STRAT_904_STAR_INTRADAY,
+       STRAT_905_STAR_SWING,
+       STRAT_906_STAR_EXPANSION,
+       STRAT_907_STAR_CONTINUE,
+       STRAT_908_STAR_VOLATILE,
+       STRAT_909_STAR_POSITION,
+       STRAT_910_STAR_MAJOR,
+       STRAT_911_SOLDIERS_CROWS_MICRO,
+       STRAT_912_SOLDIERS_CROWS_FAST,
+       STRAT_913_SOLDIERS_CROWS_SHORT,
+       STRAT_914_SOLDIERS_CROWS_INTRADAY,
+       STRAT_915_SOLDIERS_CROWS_SWING,
+       STRAT_916_SOLDIERS_CROWS_EXPANSION,
+       STRAT_917_SOLDIERS_CROWS_CONTINUE,
+       STRAT_918_SOLDIERS_CROWS_VOLATILE,
+       STRAT_919_SOLDIERS_CROWS_POSITION,
+       STRAT_920_SOLDIERS_CROWS_MAJOR,
+       STRAT_921_MARUBOZU_MICRO,
+       STRAT_922_MARUBOZU_FAST,
+       STRAT_923_MARUBOZU_SHORT,
+       STRAT_924_MARUBOZU_INTRADAY,
+       STRAT_925_MARUBOZU_SWING,
+       STRAT_926_MARUBOZU_EXPANSION,
+       STRAT_927_MARUBOZU_CONTINUE,
+       STRAT_928_MARUBOZU_VOLATILE,
+       STRAT_929_MARUBOZU_POSITION,
+       STRAT_930_MARUBOZU_MAJOR,
+       STRAT_931_DOUBLE_TOP_BOTTOM_MICRO,
+       STRAT_932_DOUBLE_TOP_BOTTOM_FAST,
+       STRAT_933_DOUBLE_TOP_BOTTOM_SHORT,
+       STRAT_934_DOUBLE_TOP_BOTTOM_INTRADAY,
+       STRAT_935_DOUBLE_TOP_BOTTOM_SWING,
+       STRAT_936_DOUBLE_TOP_BOTTOM_EXPANSION,
+       STRAT_937_DOUBLE_TOP_BOTTOM_CONTINUE,
+       STRAT_938_DOUBLE_TOP_BOTTOM_VOLATILE,
+       STRAT_939_DOUBLE_TOP_BOTTOM_POSITION,
+       STRAT_940_DOUBLE_TOP_BOTTOM_MAJOR,
+       STRAT_941_FALSE_BREAK_MICRO,
+       STRAT_942_FALSE_BREAK_FAST,
+       STRAT_943_FALSE_BREAK_SHORT,
+       STRAT_944_FALSE_BREAK_INTRADAY,
+       STRAT_945_FALSE_BREAK_SWING,
+       STRAT_946_FALSE_BREAK_EXPANSION,
+       STRAT_947_FALSE_BREAK_CONTINUE,
+       STRAT_948_FALSE_BREAK_VOLATILE,
+       STRAT_949_FALSE_BREAK_POSITION,
+       STRAT_950_FALSE_BREAK_MAJOR,
+       STRAT_951_EXHAUSTION_MICRO,
+       STRAT_952_EXHAUSTION_FAST,
+       STRAT_953_EXHAUSTION_SHORT,
+       STRAT_954_EXHAUSTION_INTRADAY,
+       STRAT_955_EXHAUSTION_SWING,
+       STRAT_956_EXHAUSTION_EXPANSION,
+       STRAT_957_EXHAUSTION_CONTINUE,
+       STRAT_958_EXHAUSTION_VOLATILE,
+       STRAT_959_EXHAUSTION_POSITION,
+       STRAT_960_EXHAUSTION_MAJOR,
+       STRAT_961_CLIMAX_MICRO,
+       STRAT_962_CLIMAX_FAST,
+       STRAT_963_CLIMAX_SHORT,
+       STRAT_964_CLIMAX_INTRADAY,
+       STRAT_965_CLIMAX_SWING,
+       STRAT_966_CLIMAX_EXPANSION,
+       STRAT_967_CLIMAX_CONTINUE,
+       STRAT_968_CLIMAX_VOLATILE,
+       STRAT_969_CLIMAX_POSITION,
+       STRAT_970_CLIMAX_MAJOR,
+       STRAT_971_RANGE_EXPANSION_MICRO,
+       STRAT_972_RANGE_EXPANSION_FAST,
+       STRAT_973_RANGE_EXPANSION_SHORT,
+       STRAT_974_RANGE_EXPANSION_INTRADAY,
+       STRAT_975_RANGE_EXPANSION_SWING,
+       STRAT_976_RANGE_EXPANSION_EXPANSION,
+       STRAT_977_RANGE_EXPANSION_CONTINUE,
+       STRAT_978_RANGE_EXPANSION_VOLATILE,
+       STRAT_979_RANGE_EXPANSION_POSITION,
+       STRAT_980_RANGE_EXPANSION_MAJOR,
+       STRAT_981_VOL_CONTRACTION_MICRO,
+       STRAT_982_VOL_CONTRACTION_FAST,
+       STRAT_983_VOL_CONTRACTION_SHORT,
+       STRAT_984_VOL_CONTRACTION_INTRADAY,
+       STRAT_985_VOL_CONTRACTION_SWING,
+       STRAT_986_VOL_CONTRACTION_EXPANSION,
+       STRAT_987_VOL_CONTRACTION_CONTINUE,
+       STRAT_988_VOL_CONTRACTION_VOLATILE,
+       STRAT_989_VOL_CONTRACTION_POSITION,
+       STRAT_990_VOL_CONTRACTION_MAJOR,
+       STRAT_991_SWING_BREAK_MICRO,
+       STRAT_992_SWING_BREAK_FAST,
+       STRAT_993_SWING_BREAK_SHORT,
+       STRAT_994_SWING_BREAK_INTRADAY,
+       STRAT_995_SWING_BREAK_SWING,
+       STRAT_996_SWING_BREAK_EXPANSION,
+       STRAT_997_SWING_BREAK_CONTINUE,
+       STRAT_998_SWING_BREAK_VOLATILE,
+       STRAT_999_SWING_BREAK_POSITION,
+       STRAT_1000_SWING_BREAK_MAJOR
+    };
 
-   input group "Strategy Selection"
+    input group "Strategy Selection"
    input ENUM_STRATEGY_MODE StrategyMode = STRATEGY_ALL;
    input ENUM_NAMED_STRATEGY SelectedStrategy = STRAT_001_EMA_SCALP_CROSS; // Used when StrategyMode = STRATEGY_SINGLE
    input ENUM_SIGNAL_DIRECTION AllowedDirection = SIGNAL_BOTH;
@@ -662,7 +1162,7 @@
    input string ReceiverCopierKey = "client1";          // CopierKey matching PropfirmReceiverEA
    input int    ReceiverPollIntervalMs = 500;           // Milliseconds between receiver status file reads
 
-   #define PROP_STRATEGY_COUNT 500
+   #define PROP_STRATEGY_COUNT 1000
 
    struct PropVirtualPosition
    {
@@ -1163,22 +1663,72 @@
          case 46: result = MacdBandsSignal(8 + variant, 21 + variant * 2, 5 + variant, 14 + variant); break;
          case 47: result = StochAdxSignal(5 + variant, 3, 3, 14 + variant); break;
          case 48: result = AtrBreakoutSignal(14 + variant, 1.5 + variant * 0.2); break;
-         case 49: result = TrendMomentumSignal(20 + variant * 5, 10 + variant); break;
-      }
+          case 49: result = TrendMomentumSignal(20 + variant * 5, 10 + variant); break;
+          case 50: result = IchimokuSignal(9 + variant, 26 + variant * 2); break;
+          case 51: result = ChaikinSignal(3 + variant, 10 + variant * 3); break;
+          case 52: result = GatorSignal(13 + variant, 8 + variant, 5 + variant); break;
+          case 53: result = FractalSignal(5 + variant); break;
+          case 54: result = StdDevChannelSignal(14 + variant * 2, 1.5 + variant * 0.2); break;
+          case 55: result = BullsPowerSignal(8 + variant * 3); break;
+          case 56: result = BearsPowerSignal(8 + variant * 3); break;
+          case 57: result = CmoSignal(9 + variant * 2, 40.0 - variant * 2.0); break;
+          case 58: result = TemaSignal(5 + variant * 2, 15 + variant * 5); break;
+          case 59: result = TriXSignal(9 + variant * 2, 3 + variant); break;
+          case 60: result = VidyaSignal(9 + variant * 3, 9 + variant); break;
+          case 61: result = FrAmaSignal(5 + variant * 2, 20 + variant * 5); break;
+          case 62: result = UltimateOscSignal(7 + variant, 14 + variant * 2, 28 + variant * 4); break;
+          case 63: result = HeikenAshiSignal(variant); break;
+          case 64: result = AroonSignal(14 + variant * 3); break;
+          case 65: result = KstSignal(10 + variant, 15 + variant * 2, 20 + variant * 3, 30 + variant * 5); break;
+          case 66: result = VortexSignal(14 + variant * 2); break;
+          case 67: result = ConnorsRsiSignal(3 + variant, 2 + variant, 5 + variant * 2); break;
+          case 68: result = VwapSignal(1.0 + variant * 0.2); break;
+          case 69: result = PivotSignal(5 + variant * 2); break;
+          case 70: result = RegChannelSignal(14 + variant * 3, 1.0 + variant * 0.3); break;
+          case 71: result = MaEnvelopeSignal(14 + variant * 2, 0.5 + variant * 0.3); break;
+          case 72: result = RsiDivergenceSignal(7 + variant * 2, 10 + variant * 3); break;
+          case 73: result = MacdDivergenceSignal(8 + variant, 21 + variant * 2, 5 + variant); break;
+          case 74: result = CciDivergenceSignal(10 + variant * 3, 10 + variant * 3); break;
+          case 75: result = StochDivergenceSignal(5 + variant, 3, 3, 10 + variant * 3); break;
+          case 76: result = ObvDivergenceSignal(5 + variant * 2, 10 + variant * 3); break;
+          case 77: result = RsiBandsSignal(7 + variant * 2, 14 + variant, 1.5 + variant * 0.2); break;
+          case 78: result = MacdRsiSignal(8 + variant, 21 + variant * 2, 5 + variant, 7 + variant * 2); break;
+          case 79: result = AdxRsiSignal(14 + variant, 7 + variant * 2, 20.0 + variant * 2.0); break;
+          case 80: result = MaVolumeSignal(5 + variant * 2, 20 + variant * 5, 1.2 + variant * 0.2); break;
+          case 81: result = MaVolatilitySignal(5 + variant * 2, 20 + variant * 5, 0.5 + variant * 0.2); break;
+          case 82: result = TripleMaSignal(5 + variant * 2); break;
+          case 83: result = ImpulseSignal(8 + variant, 17 + variant, 5 + variant, 10 + variant * 2); break;
+          case 84: result = BreakoutPullbackSignal(10 + variant * 3, 0.2 + variant * 0.05); break;
+          case 85: result = TrendPullbackSignal(20 + variant * 5, 7 + variant * 2); break;
+          case 86: result = RsiMacdConfirmSignal(7 + variant * 2, 8 + variant, 21 + variant * 2, 5 + variant); break;
+          case 87: result = TrendFilterSignal(14 + variant, 5 + variant, 3, 3); break;
+          case 88: result = HaramiSignal(0.3 + variant * 0.05); break;
+          case 89: result = DojiStarSignal(0.1 + variant * 0.03, 1 + variant); break;
+          case 90: result = StarSignal(0.3 + variant * 0.05, 0.1 + variant * 0.03); break;
+          case 91: result = SoldiersCrowsSignal(0.3 + variant * 0.05, 0.2 + variant * 0.03); break;
+          case 92: result = MarubozuSignal(0.7 + variant * 0.03); break;
+          case 93: result = DoubleTopBottomSignal(5 + variant * 2, 0.1 + variant * 0.05); break;
+          case 94: result = FalseBreakSignal(10 + variant * 3, 2 + variant); break;
+          case 95: result = ExhaustionSignal(10 + variant * 3, 0.5 + variant * 0.05); break;
+          case 96: result = ClimaxSignal(1.5 + variant * 0.3, 1.5 + variant * 0.2); break;
+          case 97: result = RangeExpansionSignal(10 + variant * 3, 1.2 + variant * 0.2); break;
+          case 98: result = VolContractionSignal(14 + variant * 2, 0.6 - variant * 0.03); break;
+          case 99: result = SwingBreakSignal(5 + variant * 2, 7 + variant * 2); break;
+       }
 
-      if(result > 0)
-      {
-         signal.buyVotes++;
-         signal.details += StrategyName(id) + "=BUY;";
-      }
-      else if(result < 0)
-      {
-         signal.sellVotes++;
-         signal.details += StrategyName(id) + "=SELL;";
-      }
-   }
+       if(result > 0)
+       {
+          signal.buyVotes++;
+          signal.details += StrategyName(id) + "=BUY;";
+       }
+       else if(result < 0)
+       {
+          signal.sellVotes++;
+          signal.details += StrategyName(id) + "=SELL;";
+       }
+    }
 
-   string StrategyName(const int id)
+    string StrategyName(const int id)
    {
       switch(id)
       {
@@ -1681,12 +2231,512 @@
          case 497: return "497_TREND_MOM_CONTINUE";
          case 498: return "498_TREND_MOM_VOLATILE";
          case 499: return "499_TREND_MOM_POSITION";
-         case 500: return "500_TREND_MOM_MAJOR";
-      }
-      return "UNKNOWN_STRATEGY";
-   }
+          case 500: return "500_TREND_MOM_MAJOR";
+          case 501: return "501_ICHIMOKU_MICRO";
+          case 502: return "502_ICHIMOKU_FAST";
+          case 503: return "503_ICHIMOKU_SHORT";
+          case 504: return "504_ICHIMOKU_INTRADAY";
+          case 505: return "505_ICHIMOKU_SWING";
+          case 506: return "506_ICHIMOKU_EXPANSION";
+          case 507: return "507_ICHIMOKU_CONTINUE";
+          case 508: return "508_ICHIMOKU_VOLATILE";
+          case 509: return "509_ICHIMOKU_POSITION";
+          case 510: return "510_ICHIMOKU_MAJOR";
+          case 511: return "511_CHAIKIN_MICRO";
+          case 512: return "512_CHAIKIN_FAST";
+          case 513: return "513_CHAIKIN_SHORT";
+          case 514: return "514_CHAIKIN_INTRADAY";
+          case 515: return "515_CHAIKIN_SWING";
+          case 516: return "516_CHAIKIN_EXPANSION";
+          case 517: return "517_CHAIKIN_CONTINUE";
+          case 518: return "518_CHAIKIN_VOLATILE";
+          case 519: return "519_CHAIKIN_POSITION";
+          case 520: return "520_CHAIKIN_MAJOR";
+          case 521: return "521_GATOR_MICRO";
+          case 522: return "522_GATOR_FAST";
+          case 523: return "523_GATOR_SHORT";
+          case 524: return "524_GATOR_INTRADAY";
+          case 525: return "525_GATOR_SWING";
+          case 526: return "526_GATOR_EXPANSION";
+          case 527: return "527_GATOR_CONTINUE";
+          case 528: return "528_GATOR_VOLATILE";
+          case 529: return "529_GATOR_POSITION";
+          case 530: return "530_GATOR_MAJOR";
+          case 531: return "531_FRACTAL_MICRO";
+          case 532: return "532_FRACTAL_FAST";
+          case 533: return "533_FRACTAL_SHORT";
+          case 534: return "534_FRACTAL_INTRADAY";
+          case 535: return "535_FRACTAL_SWING";
+          case 536: return "536_FRACTAL_EXPANSION";
+          case 537: return "537_FRACTAL_CONTINUE";
+          case 538: return "538_FRACTAL_VOLATILE";
+          case 539: return "539_FRACTAL_POSITION";
+          case 540: return "540_FRACTAL_MAJOR";
+          case 541: return "541_STDDEV_CHANNEL_MICRO";
+          case 542: return "542_STDDEV_CHANNEL_FAST";
+          case 543: return "543_STDDEV_CHANNEL_SHORT";
+          case 544: return "544_STDDEV_CHANNEL_INTRADAY";
+          case 545: return "545_STDDEV_CHANNEL_SWING";
+          case 546: return "546_STDDEV_CHANNEL_EXPANSION";
+          case 547: return "547_STDDEV_CHANNEL_CONTINUE";
+          case 548: return "548_STDDEV_CHANNEL_VOLATILE";
+          case 549: return "549_STDDEV_CHANNEL_POSITION";
+          case 550: return "550_STDDEV_CHANNEL_MAJOR";
+          case 551: return "551_BULLS_POWER_MICRO";
+          case 552: return "552_BULLS_POWER_FAST";
+          case 553: return "553_BULLS_POWER_SHORT";
+          case 554: return "554_BULLS_POWER_INTRADAY";
+          case 555: return "555_BULLS_POWER_SWING";
+          case 556: return "556_BULLS_POWER_EXPANSION";
+          case 557: return "557_BULLS_POWER_CONTINUE";
+          case 558: return "558_BULLS_POWER_VOLATILE";
+          case 559: return "559_BULLS_POWER_POSITION";
+          case 560: return "560_BULLS_POWER_MAJOR";
+          case 561: return "561_BEARS_POWER_MICRO";
+          case 562: return "562_BEARS_POWER_FAST";
+          case 563: return "563_BEARS_POWER_SHORT";
+          case 564: return "564_BEARS_POWER_INTRADAY";
+          case 565: return "565_BEARS_POWER_SWING";
+          case 566: return "566_BEARS_POWER_EXPANSION";
+          case 567: return "567_BEARS_POWER_CONTINUE";
+          case 568: return "568_BEARS_POWER_VOLATILE";
+          case 569: return "569_BEARS_POWER_POSITION";
+          case 570: return "570_BEARS_POWER_MAJOR";
+          case 571: return "571_CMO_MICRO";
+          case 572: return "572_CMO_FAST";
+          case 573: return "573_CMO_SHORT";
+          case 574: return "574_CMO_INTRADAY";
+          case 575: return "575_CMO_SWING";
+          case 576: return "576_CMO_EXPANSION";
+          case 577: return "577_CMO_CONTINUE";
+          case 578: return "578_CMO_VOLATILE";
+          case 579: return "579_CMO_POSITION";
+          case 580: return "580_CMO_MAJOR";
+          case 581: return "581_TEMA_MICRO";
+          case 582: return "582_TEMA_FAST";
+          case 583: return "583_TEMA_SHORT";
+          case 584: return "584_TEMA_INTRADAY";
+          case 585: return "585_TEMA_SWING";
+          case 586: return "586_TEMA_EXPANSION";
+          case 587: return "587_TEMA_CONTINUE";
+          case 588: return "588_TEMA_VOLATILE";
+          case 589: return "589_TEMA_POSITION";
+          case 590: return "590_TEMA_MAJOR";
+          case 591: return "591_TRIX_MICRO";
+          case 592: return "592_TRIX_FAST";
+          case 593: return "593_TRIX_SHORT";
+          case 594: return "594_TRIX_INTRADAY";
+          case 595: return "595_TRIX_SWING";
+          case 596: return "596_TRIX_EXPANSION";
+          case 597: return "597_TRIX_CONTINUE";
+          case 598: return "598_TRIX_VOLATILE";
+          case 599: return "599_TRIX_POSITION";
+          case 600: return "600_TRIX_MAJOR";
+          case 601: return "601_VIDYA_MICRO";
+          case 602: return "602_VIDYA_FAST";
+          case 603: return "603_VIDYA_SHORT";
+          case 604: return "604_VIDYA_INTRADAY";
+          case 605: return "605_VIDYA_SWING";
+          case 606: return "606_VIDYA_EXPANSION";
+          case 607: return "607_VIDYA_CONTINUE";
+          case 608: return "608_VIDYA_VOLATILE";
+          case 609: return "609_VIDYA_POSITION";
+          case 610: return "610_VIDYA_MAJOR";
+          case 611: return "611_FRAMA_MICRO";
+          case 612: return "612_FRAMA_FAST";
+          case 613: return "613_FRAMA_SHORT";
+          case 614: return "614_FRAMA_INTRADAY";
+          case 615: return "615_FRAMA_SWING";
+          case 616: return "616_FRAMA_EXPANSION";
+          case 617: return "617_FRAMA_CONTINUE";
+          case 618: return "618_FRAMA_VOLATILE";
+          case 619: return "619_FRAMA_POSITION";
+          case 620: return "620_FRAMA_MAJOR";
+          case 621: return "621_ULTIMATE_OSC_MICRO";
+          case 622: return "622_ULTIMATE_OSC_FAST";
+          case 623: return "623_ULTIMATE_OSC_SHORT";
+          case 624: return "624_ULTIMATE_OSC_INTRADAY";
+          case 625: return "625_ULTIMATE_OSC_SWING";
+          case 626: return "626_ULTIMATE_OSC_EXPANSION";
+          case 627: return "627_ULTIMATE_OSC_CONTINUE";
+          case 628: return "628_ULTIMATE_OSC_VOLATILE";
+          case 629: return "629_ULTIMATE_OSC_POSITION";
+          case 630: return "630_ULTIMATE_OSC_MAJOR";
+          case 631: return "631_HEIKEN_ASHI_MICRO";
+          case 632: return "632_HEIKEN_ASHI_FAST";
+          case 633: return "633_HEIKEN_ASHI_SHORT";
+          case 634: return "634_HEIKEN_ASHI_INTRADAY";
+          case 635: return "635_HEIKEN_ASHI_SWING";
+          case 636: return "636_HEIKEN_ASHI_EXPANSION";
+          case 637: return "637_HEIKEN_ASHI_CONTINUE";
+          case 638: return "638_HEIKEN_ASHI_VOLATILE";
+          case 639: return "639_HEIKEN_ASHI_POSITION";
+          case 640: return "640_HEIKEN_ASHI_MAJOR";
+          case 641: return "641_AROON_MICRO";
+          case 642: return "642_AROON_FAST";
+          case 643: return "643_AROON_SHORT";
+          case 644: return "644_AROON_INTRADAY";
+          case 645: return "645_AROON_SWING";
+          case 646: return "646_AROON_EXPANSION";
+          case 647: return "647_AROON_CONTINUE";
+          case 648: return "648_AROON_VOLATILE";
+          case 649: return "649_AROON_POSITION";
+          case 650: return "650_AROON_MAJOR";
+          case 651: return "651_KST_MICRO";
+          case 652: return "652_KST_FAST";
+          case 653: return "653_KST_SHORT";
+          case 654: return "654_KST_INTRADAY";
+          case 655: return "655_KST_SWING";
+          case 656: return "656_KST_EXPANSION";
+          case 657: return "657_KST_CONTINUE";
+          case 658: return "658_KST_VOLATILE";
+          case 659: return "659_KST_POSITION";
+          case 660: return "660_KST_MAJOR";
+          case 661: return "661_VORTEX_MICRO";
+          case 662: return "662_VORTEX_FAST";
+          case 663: return "663_VORTEX_SHORT";
+          case 664: return "664_VORTEX_INTRADAY";
+          case 665: return "665_VORTEX_SWING";
+          case 666: return "666_VORTEX_EXPANSION";
+          case 667: return "667_VORTEX_CONTINUE";
+          case 668: return "668_VORTEX_VOLATILE";
+          case 669: return "669_VORTEX_POSITION";
+          case 670: return "670_VORTEX_MAJOR";
+          case 671: return "671_CONNORS_RSI_MICRO";
+          case 672: return "672_CONNORS_RSI_FAST";
+          case 673: return "673_CONNORS_RSI_SHORT";
+          case 674: return "674_CONNORS_RSI_INTRADAY";
+          case 675: return "675_CONNORS_RSI_SWING";
+          case 676: return "676_CONNORS_RSI_EXPANSION";
+          case 677: return "677_CONNORS_RSI_CONTINUE";
+          case 678: return "678_CONNORS_RSI_VOLATILE";
+          case 679: return "679_CONNORS_RSI_POSITION";
+          case 680: return "680_CONNORS_RSI_MAJOR";
+          case 681: return "681_VWAP_MICRO";
+          case 682: return "682_VWAP_FAST";
+          case 683: return "683_VWAP_SHORT";
+          case 684: return "684_VWAP_INTRADAY";
+          case 685: return "685_VWAP_SWING";
+          case 686: return "686_VWAP_EXPANSION";
+          case 687: return "687_VWAP_CONTINUE";
+          case 688: return "688_VWAP_VOLATILE";
+          case 689: return "689_VWAP_POSITION";
+          case 690: return "690_VWAP_MAJOR";
+          case 691: return "691_PIVOT_MICRO";
+          case 692: return "692_PIVOT_FAST";
+          case 693: return "693_PIVOT_SHORT";
+          case 694: return "694_PIVOT_INTRADAY";
+          case 695: return "695_PIVOT_SWING";
+          case 696: return "696_PIVOT_EXPANSION";
+          case 697: return "697_PIVOT_CONTINUE";
+          case 698: return "698_PIVOT_VOLATILE";
+          case 699: return "699_PIVOT_POSITION";
+          case 700: return "700_PIVOT_MAJOR";
+          case 701: return "701_REG_CHANNEL_MICRO";
+          case 702: return "702_REG_CHANNEL_FAST";
+          case 703: return "703_REG_CHANNEL_SHORT";
+          case 704: return "704_REG_CHANNEL_INTRADAY";
+          case 705: return "705_REG_CHANNEL_SWING";
+          case 706: return "706_REG_CHANNEL_EXPANSION";
+          case 707: return "707_REG_CHANNEL_CONTINUE";
+          case 708: return "708_REG_CHANNEL_VOLATILE";
+          case 709: return "709_REG_CHANNEL_POSITION";
+          case 710: return "710_REG_CHANNEL_MAJOR";
+          case 711: return "711_MA_ENVELOPE_MICRO";
+          case 712: return "712_MA_ENVELOPE_FAST";
+          case 713: return "713_MA_ENVELOPE_SHORT";
+          case 714: return "714_MA_ENVELOPE_INTRADAY";
+          case 715: return "715_MA_ENVELOPE_SWING";
+          case 716: return "716_MA_ENVELOPE_EXPANSION";
+          case 717: return "717_MA_ENVELOPE_CONTINUE";
+          case 718: return "718_MA_ENVELOPE_VOLATILE";
+          case 719: return "719_MA_ENVELOPE_POSITION";
+          case 720: return "720_MA_ENVELOPE_MAJOR";
+          case 721: return "721_RSI_DIVERGE_MICRO";
+          case 722: return "722_RSI_DIVERGE_FAST";
+          case 723: return "723_RSI_DIVERGE_SHORT";
+          case 724: return "724_RSI_DIVERGE_INTRADAY";
+          case 725: return "725_RSI_DIVERGE_SWING";
+          case 726: return "726_RSI_DIVERGE_EXPANSION";
+          case 727: return "727_RSI_DIVERGE_CONTINUE";
+          case 728: return "728_RSI_DIVERGE_VOLATILE";
+          case 729: return "729_RSI_DIVERGE_POSITION";
+          case 730: return "730_RSI_DIVERGE_MAJOR";
+          case 731: return "731_MACD_DIVERGE_MICRO";
+          case 732: return "732_MACD_DIVERGE_FAST";
+          case 733: return "733_MACD_DIVERGE_SHORT";
+          case 734: return "734_MACD_DIVERGE_INTRADAY";
+          case 735: return "735_MACD_DIVERGE_SWING";
+          case 736: return "736_MACD_DIVERGE_EXPANSION";
+          case 737: return "737_MACD_DIVERGE_CONTINUE";
+          case 738: return "738_MACD_DIVERGE_VOLATILE";
+          case 739: return "739_MACD_DIVERGE_POSITION";
+          case 740: return "740_MACD_DIVERGE_MAJOR";
+          case 741: return "741_CCI_DIVERGE_MICRO";
+          case 742: return "742_CCI_DIVERGE_FAST";
+          case 743: return "743_CCI_DIVERGE_SHORT";
+          case 744: return "744_CCI_DIVERGE_INTRADAY";
+          case 745: return "745_CCI_DIVERGE_SWING";
+          case 746: return "746_CCI_DIVERGE_EXPANSION";
+          case 747: return "747_CCI_DIVERGE_CONTINUE";
+          case 748: return "748_CCI_DIVERGE_VOLATILE";
+          case 749: return "749_CCI_DIVERGE_POSITION";
+          case 750: return "750_CCI_DIVERGE_MAJOR";
+          case 751: return "751_STOCH_DIVERGE_MICRO";
+          case 752: return "752_STOCH_DIVERGE_FAST";
+          case 753: return "753_STOCH_DIVERGE_SHORT";
+          case 754: return "754_STOCH_DIVERGE_INTRADAY";
+          case 755: return "755_STOCH_DIVERGE_SWING";
+          case 756: return "756_STOCH_DIVERGE_EXPANSION";
+          case 757: return "757_STOCH_DIVERGE_CONTINUE";
+          case 758: return "758_STOCH_DIVERGE_VOLATILE";
+          case 759: return "759_STOCH_DIVERGE_POSITION";
+          case 760: return "760_STOCH_DIVERGE_MAJOR";
+          case 761: return "761_OBV_DIVERGE_MICRO";
+          case 762: return "762_OBV_DIVERGE_FAST";
+          case 763: return "763_OBV_DIVERGE_SHORT";
+          case 764: return "764_OBV_DIVERGE_INTRADAY";
+          case 765: return "765_OBV_DIVERGE_SWING";
+          case 766: return "766_OBV_DIVERGE_EXPANSION";
+          case 767: return "767_OBV_DIVERGE_CONTINUE";
+          case 768: return "768_OBV_DIVERGE_VOLATILE";
+          case 769: return "769_OBV_DIVERGE_POSITION";
+          case 770: return "770_OBV_DIVERGE_MAJOR";
+          case 771: return "771_RSI_BANDS_MICRO";
+          case 772: return "772_RSI_BANDS_FAST";
+          case 773: return "773_RSI_BANDS_SHORT";
+          case 774: return "774_RSI_BANDS_INTRADAY";
+          case 775: return "775_RSI_BANDS_SWING";
+          case 776: return "776_RSI_BANDS_EXPANSION";
+          case 777: return "777_RSI_BANDS_CONTINUE";
+          case 778: return "778_RSI_BANDS_VOLATILE";
+          case 779: return "779_RSI_BANDS_POSITION";
+          case 780: return "780_RSI_BANDS_MAJOR";
+          case 781: return "781_MACD_RSI_MICRO";
+          case 782: return "782_MACD_RSI_FAST";
+          case 783: return "783_MACD_RSI_SHORT";
+          case 784: return "784_MACD_RSI_INTRADAY";
+          case 785: return "785_MACD_RSI_SWING";
+          case 786: return "786_MACD_RSI_EXPANSION";
+          case 787: return "787_MACD_RSI_CONTINUE";
+          case 788: return "788_MACD_RSI_VOLATILE";
+          case 789: return "789_MACD_RSI_POSITION";
+          case 790: return "790_MACD_RSI_MAJOR";
+          case 791: return "791_ADX_RSI_MICRO";
+          case 792: return "792_ADX_RSI_FAST";
+          case 793: return "793_ADX_RSI_SHORT";
+          case 794: return "794_ADX_RSI_INTRADAY";
+          case 795: return "795_ADX_RSI_SWING";
+          case 796: return "796_ADX_RSI_EXPANSION";
+          case 797: return "797_ADX_RSI_CONTINUE";
+          case 798: return "798_ADX_RSI_VOLATILE";
+          case 799: return "799_ADX_RSI_POSITION";
+          case 800: return "800_ADX_RSI_MAJOR";
+          case 801: return "801_MA_VOLUME_MICRO";
+          case 802: return "802_MA_VOLUME_FAST";
+          case 803: return "803_MA_VOLUME_SHORT";
+          case 804: return "804_MA_VOLUME_INTRADAY";
+          case 805: return "805_MA_VOLUME_SWING";
+          case 806: return "806_MA_VOLUME_EXPANSION";
+          case 807: return "807_MA_VOLUME_CONTINUE";
+          case 808: return "808_MA_VOLUME_VOLATILE";
+          case 809: return "809_MA_VOLUME_POSITION";
+          case 810: return "810_MA_VOLUME_MAJOR";
+          case 811: return "811_MA_VOLATILITY_MICRO";
+          case 812: return "812_MA_VOLATILITY_FAST";
+          case 813: return "813_MA_VOLATILITY_SHORT";
+          case 814: return "814_MA_VOLATILITY_INTRADAY";
+          case 815: return "815_MA_VOLATILITY_SWING";
+          case 816: return "816_MA_VOLATILITY_EXPANSION";
+          case 817: return "817_MA_VOLATILITY_CONTINUE";
+          case 818: return "818_MA_VOLATILITY_VOLATILE";
+          case 819: return "819_MA_VOLATILITY_POSITION";
+          case 820: return "820_MA_VOLATILITY_MAJOR";
+          case 821: return "821_TRIPLE_MA_MICRO";
+          case 822: return "822_TRIPLE_MA_FAST";
+          case 823: return "823_TRIPLE_MA_SHORT";
+          case 824: return "824_TRIPLE_MA_INTRADAY";
+          case 825: return "825_TRIPLE_MA_SWING";
+          case 826: return "826_TRIPLE_MA_EXPANSION";
+          case 827: return "827_TRIPLE_MA_CONTINUE";
+          case 828: return "828_TRIPLE_MA_VOLATILE";
+          case 829: return "829_TRIPLE_MA_POSITION";
+          case 830: return "830_TRIPLE_MA_MAJOR";
+          case 831: return "831_IMPULSE_MICRO";
+          case 832: return "832_IMPULSE_FAST";
+          case 833: return "833_IMPULSE_SHORT";
+          case 834: return "834_IMPULSE_INTRADAY";
+          case 835: return "835_IMPULSE_SWING";
+          case 836: return "836_IMPULSE_EXPANSION";
+          case 837: return "837_IMPULSE_CONTINUE";
+          case 838: return "838_IMPULSE_VOLATILE";
+          case 839: return "839_IMPULSE_POSITION";
+          case 840: return "840_IMPULSE_MAJOR";
+          case 841: return "841_BREAKOUT_PULLBACK_MICRO";
+          case 842: return "842_BREAKOUT_PULLBACK_FAST";
+          case 843: return "843_BREAKOUT_PULLBACK_SHORT";
+          case 844: return "844_BREAKOUT_PULLBACK_INTRADAY";
+          case 845: return "845_BREAKOUT_PULLBACK_SWING";
+          case 846: return "846_BREAKOUT_PULLBACK_EXPANSION";
+          case 847: return "847_BREAKOUT_PULLBACK_CONTINUE";
+          case 848: return "848_BREAKOUT_PULLBACK_VOLATILE";
+          case 849: return "849_BREAKOUT_PULLBACK_POSITION";
+          case 850: return "850_BREAKOUT_PULLBACK_MAJOR";
+          case 851: return "851_TREND_PULLBACK_MICRO";
+          case 852: return "852_TREND_PULLBACK_FAST";
+          case 853: return "853_TREND_PULLBACK_SHORT";
+          case 854: return "854_TREND_PULLBACK_INTRADAY";
+          case 855: return "855_TREND_PULLBACK_SWING";
+          case 856: return "856_TREND_PULLBACK_EXPANSION";
+          case 857: return "857_TREND_PULLBACK_CONTINUE";
+          case 858: return "858_TREND_PULLBACK_VOLATILE";
+          case 859: return "859_TREND_PULLBACK_POSITION";
+          case 860: return "860_TREND_PULLBACK_MAJOR";
+          case 861: return "861_RSI_MACD_CONFIRM_MICRO";
+          case 862: return "862_RSI_MACD_CONFIRM_FAST";
+          case 863: return "863_RSI_MACD_CONFIRM_SHORT";
+          case 864: return "864_RSI_MACD_CONFIRM_INTRADAY";
+          case 865: return "865_RSI_MACD_CONFIRM_SWING";
+          case 866: return "866_RSI_MACD_CONFIRM_EXPANSION";
+          case 867: return "867_RSI_MACD_CONFIRM_CONTINUE";
+          case 868: return "868_RSI_MACD_CONFIRM_VOLATILE";
+          case 869: return "869_RSI_MACD_CONFIRM_POSITION";
+          case 870: return "870_RSI_MACD_CONFIRM_MAJOR";
+          case 871: return "871_TREND_FILTER_MICRO";
+          case 872: return "872_TREND_FILTER_FAST";
+          case 873: return "873_TREND_FILTER_SHORT";
+          case 874: return "874_TREND_FILTER_INTRADAY";
+          case 875: return "875_TREND_FILTER_SWING";
+          case 876: return "876_TREND_FILTER_EXPANSION";
+          case 877: return "877_TREND_FILTER_CONTINUE";
+          case 878: return "878_TREND_FILTER_VOLATILE";
+          case 879: return "879_TREND_FILTER_POSITION";
+          case 880: return "880_TREND_FILTER_MAJOR";
+          case 881: return "881_HARAMI_MICRO";
+          case 882: return "882_HARAMI_FAST";
+          case 883: return "883_HARAMI_SHORT";
+          case 884: return "884_HARAMI_INTRADAY";
+          case 885: return "885_HARAMI_SWING";
+          case 886: return "886_HARAMI_EXPANSION";
+          case 887: return "887_HARAMI_CONTINUE";
+          case 888: return "888_HARAMI_VOLATILE";
+          case 889: return "889_HARAMI_POSITION";
+          case 890: return "890_HARAMI_MAJOR";
+          case 891: return "891_DOJI_STAR_MICRO";
+          case 892: return "892_DOJI_STAR_FAST";
+          case 893: return "893_DOJI_STAR_SHORT";
+          case 894: return "894_DOJI_STAR_INTRADAY";
+          case 895: return "895_DOJI_STAR_SWING";
+          case 896: return "896_DOJI_STAR_EXPANSION";
+          case 897: return "897_DOJI_STAR_CONTINUE";
+          case 898: return "898_DOJI_STAR_VOLATILE";
+          case 899: return "899_DOJI_STAR_POSITION";
+          case 900: return "900_DOJI_STAR_MAJOR";
+          case 901: return "901_STAR_MICRO";
+          case 902: return "902_STAR_FAST";
+          case 903: return "903_STAR_SHORT";
+          case 904: return "904_STAR_INTRADAY";
+          case 905: return "905_STAR_SWING";
+          case 906: return "906_STAR_EXPANSION";
+          case 907: return "907_STAR_CONTINUE";
+          case 908: return "908_STAR_VOLATILE";
+          case 909: return "909_STAR_POSITION";
+          case 910: return "910_STAR_MAJOR";
+          case 911: return "911_SOLDIERS_CROWS_MICRO";
+          case 912: return "912_SOLDIERS_CROWS_FAST";
+          case 913: return "913_SOLDIERS_CROWS_SHORT";
+          case 914: return "914_SOLDIERS_CROWS_INTRADAY";
+          case 915: return "915_SOLDIERS_CROWS_SWING";
+          case 916: return "916_SOLDIERS_CROWS_EXPANSION";
+          case 917: return "917_SOLDIERS_CROWS_CONTINUE";
+          case 918: return "918_SOLDIERS_CROWS_VOLATILE";
+          case 919: return "919_SOLDIERS_CROWS_POSITION";
+          case 920: return "920_SOLDIERS_CROWS_MAJOR";
+          case 921: return "921_MARUBOZU_MICRO";
+          case 922: return "922_MARUBOZU_FAST";
+          case 923: return "923_MARUBOZU_SHORT";
+          case 924: return "924_MARUBOZU_INTRADAY";
+          case 925: return "925_MARUBOZU_SWING";
+          case 926: return "926_MARUBOZU_EXPANSION";
+          case 927: return "927_MARUBOZU_CONTINUE";
+          case 928: return "928_MARUBOZU_VOLATILE";
+          case 929: return "929_MARUBOZU_POSITION";
+          case 930: return "930_MARUBOZU_MAJOR";
+          case 931: return "931_DOUBLE_TOP_BOTTOM_MICRO";
+          case 932: return "932_DOUBLE_TOP_BOTTOM_FAST";
+          case 933: return "933_DOUBLE_TOP_BOTTOM_SHORT";
+          case 934: return "934_DOUBLE_TOP_BOTTOM_INTRADAY";
+          case 935: return "935_DOUBLE_TOP_BOTTOM_SWING";
+          case 936: return "936_DOUBLE_TOP_BOTTOM_EXPANSION";
+          case 937: return "937_DOUBLE_TOP_BOTTOM_CONTINUE";
+          case 938: return "938_DOUBLE_TOP_BOTTOM_VOLATILE";
+          case 939: return "939_DOUBLE_TOP_BOTTOM_POSITION";
+          case 940: return "940_DOUBLE_TOP_BOTTOM_MAJOR";
+          case 941: return "941_FALSE_BREAK_MICRO";
+          case 942: return "942_FALSE_BREAK_FAST";
+          case 943: return "943_FALSE_BREAK_SHORT";
+          case 944: return "944_FALSE_BREAK_INTRADAY";
+          case 945: return "945_FALSE_BREAK_SWING";
+          case 946: return "946_FALSE_BREAK_EXPANSION";
+          case 947: return "947_FALSE_BREAK_CONTINUE";
+          case 948: return "948_FALSE_BREAK_VOLATILE";
+          case 949: return "949_FALSE_BREAK_POSITION";
+          case 950: return "950_FALSE_BREAK_MAJOR";
+          case 951: return "951_EXHAUSTION_MICRO";
+          case 952: return "952_EXHAUSTION_FAST";
+          case 953: return "953_EXHAUSTION_SHORT";
+          case 954: return "954_EXHAUSTION_INTRADAY";
+          case 955: return "955_EXHAUSTION_SWING";
+          case 956: return "956_EXHAUSTION_EXPANSION";
+          case 957: return "957_EXHAUSTION_CONTINUE";
+          case 958: return "958_EXHAUSTION_VOLATILE";
+          case 959: return "959_EXHAUSTION_POSITION";
+          case 960: return "960_EXHAUSTION_MAJOR";
+          case 961: return "961_CLIMAX_MICRO";
+          case 962: return "962_CLIMAX_FAST";
+          case 963: return "963_CLIMAX_SHORT";
+          case 964: return "964_CLIMAX_INTRADAY";
+          case 965: return "965_CLIMAX_SWING";
+          case 966: return "966_CLIMAX_EXPANSION";
+          case 967: return "967_CLIMAX_CONTINUE";
+          case 968: return "968_CLIMAX_VOLATILE";
+          case 969: return "969_CLIMAX_POSITION";
+          case 970: return "970_CLIMAX_MAJOR";
+          case 971: return "971_RANGE_EXPANSION_MICRO";
+          case 972: return "972_RANGE_EXPANSION_FAST";
+          case 973: return "973_RANGE_EXPANSION_SHORT";
+          case 974: return "974_RANGE_EXPANSION_INTRADAY";
+          case 975: return "975_RANGE_EXPANSION_SWING";
+          case 976: return "976_RANGE_EXPANSION_EXPANSION";
+          case 977: return "977_RANGE_EXPANSION_CONTINUE";
+          case 978: return "978_RANGE_EXPANSION_VOLATILE";
+          case 979: return "979_RANGE_EXPANSION_POSITION";
+          case 980: return "980_RANGE_EXPANSION_MAJOR";
+          case 981: return "981_VOL_CONTRACTION_MICRO";
+          case 982: return "982_VOL_CONTRACTION_FAST";
+          case 983: return "983_VOL_CONTRACTION_SHORT";
+          case 984: return "984_VOL_CONTRACTION_INTRADAY";
+          case 985: return "985_VOL_CONTRACTION_SWING";
+          case 986: return "986_VOL_CONTRACTION_EXPANSION";
+          case 987: return "987_VOL_CONTRACTION_CONTINUE";
+          case 988: return "988_VOL_CONTRACTION_VOLATILE";
+          case 989: return "989_VOL_CONTRACTION_POSITION";
+          case 990: return "990_VOL_CONTRACTION_MAJOR";
+          case 991: return "991_SWING_BREAK_MICRO";
+          case 992: return "992_SWING_BREAK_FAST";
+          case 993: return "993_SWING_BREAK_SHORT";
+          case 994: return "994_SWING_BREAK_INTRADAY";
+          case 995: return "995_SWING_BREAK_SWING";
+          case 996: return "996_SWING_BREAK_EXPANSION";
+          case 997: return "997_SWING_BREAK_CONTINUE";
+          case 998: return "998_SWING_BREAK_VOLATILE";
+          case 999: return "999_SWING_BREAK_POSITION";
+          case 1000: return "1000_SWING_BREAK_MAJOR";
+       }
+       return "UNKNOWN_STRATEGY";
+    }
 
-   int MaTrendSignal(const int fast, const int slow)
+    int MaTrendSignal(const int fast, const int slow)
    {
       double f1 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 1);
       double f2 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 2);
@@ -2279,10 +3329,1059 @@
       return 0;
    }
 
-   double IndicatorValue(const int handle, const int shift)
-   {
-      return BufferValue(handle, 0, shift);
-   }
+    int IchimokuSignal(const int tenkan, const int kijun)
+    {
+       int h = iIchimoku(_Symbol, _Period, tenkan, kijun, kijun * 2);
+       if(h == INVALID_HANDLE) return 0;
+       double tk1 = BufferValue(h, 0, 1);
+       double tk2 = BufferValue(h, 0, 2);
+       double kj1 = BufferValue(h, 1, 1);
+       double kj2 = BufferValue(h, 1, 2);
+       double cloud1 = BufferValue(h, 2, 1);
+       double close1 = iClose(_Symbol, _Period, 1);
+       if(tk2 <= kj2 && tk1 > kj1 && close1 > cloud1) return 1;
+       if(tk2 >= kj2 && tk1 < kj1 && close1 < cloud1) return -1;
+       return 0;
+    }
+
+    int ChaikinSignal(const int fast, const int slow)
+    {
+       int h = iChaikin(_Symbol, _Period, fast, slow, MODE_EMA, VOLUME_TICK);
+       if(h == INVALID_HANDLE) return 0;
+       double c1 = BufferValue(h, 0, 1);
+       double c2 = BufferValue(h, 0, 2);
+       if(c2 <= 0.0 && c1 > 0.0) return 1;
+       if(c2 >= 0.0 && c1 < 0.0) return -1;
+       return 0;
+    }
+
+    int GatorSignal(const int jaw, const int teeth, const int lips)
+    {
+        int h = iGator(_Symbol, _Period, jaw, 0, teeth, 0, lips, 0, MODE_SMMA, PRICE_CLOSE);
+       if(h == INVALID_HANDLE) return 0;
+       double up1 = BufferValue(h, 0, 1);
+       double up2 = BufferValue(h, 0, 2);
+       double dn1 = BufferValue(h, 1, 1);
+       double dn2 = BufferValue(h, 1, 2);
+       if(up2 <= 0.0 && up1 > 0.0 && dn2 <= 0.0 && dn1 > 0.0) return 1;
+       if(up2 >= 0.0 && up1 < 0.0 && dn2 >= 0.0 && dn1 < 0.0) return -1;
+       if(up1 > up2 && dn1 > dn2) return 1;
+       if(up1 < up2 && dn1 < dn2) return -1;
+       return 0;
+    }
+
+    int FractalSignal(const int lookback)
+    {
+       int h = iFractals(_Symbol, _Period);
+       if(h == INVALID_HANDLE) return 0;
+       double up = BufferValue(h, 0, 2);
+       double dn = BufferValue(h, 1, 2);
+       double close1 = iClose(_Symbol, _Period, 1);
+       if(up > 0.0 && close1 < up && close1 > iClose(_Symbol, _Period, lookback)) return -1;
+       if(dn > 0.0 && close1 > dn && close1 < iClose(_Symbol, _Period, lookback)) return 1;
+       return 0;
+    }
+
+    int StdDevChannelSignal(const int period, const double dev)
+    {
+       double ma = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_SMA, PRICE_CLOSE), 1);
+       double sd = IndicatorValue(iStdDev(_Symbol, _Period, period, 0, MODE_SMA, PRICE_CLOSE), 1);
+       if(sd <= 0.0) return 0;
+       double upper = ma + sd * dev;
+       double lower = ma - sd * dev;
+       double close1 = iClose(_Symbol, _Period, 1);
+       double close2 = iClose(_Symbol, _Period, 2);
+       if(close2 >= lower && close1 < lower) return -1;
+       if(close2 <= upper && close1 > upper) return 1;
+       if(close2 < lower && close1 > lower) return 1;
+       if(close2 > upper && close1 < upper) return -1;
+       return 0;
+    }
+
+    int BullsPowerSignal(const int period)
+    {
+       double bp1 = IndicatorValue(iBullsPower(_Symbol, _Period, period), 1);
+       double bp2 = IndicatorValue(iBullsPower(_Symbol, _Period, period), 2);
+       if(bp2 < 0.0 && bp1 >= 0.0) return 1;
+       if(bp2 > 0.0 && bp1 <= 0.0) return -1;
+       return 0;
+    }
+
+    int BearsPowerSignal(const int period)
+    {
+       double bp1 = IndicatorValue(iBearsPower(_Symbol, _Period, period), 1);
+       double bp2 = IndicatorValue(iBearsPower(_Symbol, _Period, period), 2);
+       if(bp2 > 0.0 && bp1 <= 0.0) return -1;
+       if(bp2 < 0.0 && bp1 >= 0.0) return 1;
+       return 0;
+    }
+
+    double CmoValue(const int period, const int shift)
+    {
+       double close[];
+       ArraySetAsSeries(close, true);
+       if(CopyClose(_Symbol, _Period, shift, period + 1, close) < period + 1)
+          return 0.0;
+       double gains = 0.0, losses = 0.0;
+       for(int i = 0; i < period; i++)
+       {
+          double diff = close[i] - close[i + 1];
+          if(diff > 0.0) gains += diff;
+          else losses -= diff;
+       }
+       double sum = gains + losses;
+       return (sum > 0.0) ? (gains - losses) / sum * 100.0 : 0.0;
+    }
+
+    int CmoSignal(const int period, const double level)
+    {
+       double cmo1 = CmoValue(period, 1);
+       double cmo2 = CmoValue(period, 2);
+       if(cmo2 < -level && cmo1 >= -level) return 1;
+       if(cmo2 > level && cmo1 <= level) return -1;
+       return 0;
+    }
+
+    int TemaSignal(const int fast, const int slow)
+    {
+       double f1 = IndicatorValue(iTEMA(_Symbol, _Period, fast, 0, PRICE_CLOSE), 1);
+       double f2 = IndicatorValue(iTEMA(_Symbol, _Period, fast, 0, PRICE_CLOSE), 2);
+       double s1 = IndicatorValue(iTEMA(_Symbol, _Period, slow, 0, PRICE_CLOSE), 1);
+       double s2 = IndicatorValue(iTEMA(_Symbol, _Period, slow, 0, PRICE_CLOSE), 2);
+       if(f2 <= s2 && f1 > s1) return 1;
+       if(f2 >= s2 && f1 < s1) return -1;
+       return 0;
+    }
+
+    int TriXSignal(const int period, const int signal)
+    {
+       int h = iTriX(_Symbol, _Period, period, PRICE_CLOSE);
+       if(h == INVALID_HANDLE) return 0;
+       double t1 = BufferValue(h, 0, 1);
+       double t2 = BufferValue(h, 0, 2);
+       double s1 = BufferValue(h, 1, 1);
+       double s2 = BufferValue(h, 1, 2);
+       if(t2 <= s2 && t1 > s1) return 1;
+       if(t2 >= s2 && t1 < s1) return -1;
+       if(s2 <= 0.0 && s1 > 0.0) return 1;
+       if(s2 >= 0.0 && s1 < 0.0) return -1;
+       return 0;
+    }
+
+    double VidyaValue(const int period, const int cmoPeriod)
+    {
+       double close[];
+       ArraySetAsSeries(close, true);
+       int total = period + cmoPeriod + 1;
+       if(CopyClose(_Symbol, _Period, 0, total + 1, close) < total + 1)
+          return 0.0;
+       double vidya = 0.0;
+       for(int i = 0; i < period; i++)
+          vidya += close[total - i];
+       vidya /= period;
+       for(int i = total - period; i >= 1; i--)
+       {
+          double gains = 0.0, losses = 0.0;
+          for(int j = i + cmoPeriod - 1; j >= i; j--)
+          {
+             double diff = close[j] - close[j + 1];
+             if(diff > 0.0) gains += diff;
+             else losses -= diff;
+          }
+          double sum = gains + losses;
+          double k = (sum > 0.0) ? 0.5 * MathAbs((gains - losses) / sum) : 0.01;
+          if(k < 0.01) k = 0.01;
+          vidya = close[i] * k + vidya * (1.0 - k);
+       }
+       return vidya;
+    }
+
+    int VidyaSignal(const int period, const int cmo)
+    {
+       double v1 = VidyaValue(period, cmo);
+       double close1 = iClose(_Symbol, _Period, 1);
+       if(close1 > v1) return 1;
+       if(close1 < v1) return -1;
+       return 0;
+    }
+
+    int FrAmaSignal(const int fast, const int slow)
+    {
+       double f1 = IndicatorValue(iFrAMA(_Symbol, _Period, fast, 0, PRICE_CLOSE), 1);
+       double f2 = IndicatorValue(iFrAMA(_Symbol, _Period, fast, 0, PRICE_CLOSE), 2);
+       double s1 = IndicatorValue(iFrAMA(_Symbol, _Period, slow, 0, PRICE_CLOSE), 1);
+       double s2 = IndicatorValue(iFrAMA(_Symbol, _Period, slow, 0, PRICE_CLOSE), 2);
+       if(f2 <= s2 && f1 > s1) return 1;
+       if(f2 >= s2 && f1 < s1) return -1;
+       return 0;
+    }
+
+    int UltimateOscSignal(const int c1, const int c2, const int c3)
+    {
+       double bp1 = 0.0, tr1 = 0.0, bp2 = 0.0, tr2 = 0.0, bp3 = 0.0, tr3 = 0.0;
+       for(int i = 1; i <= c1; i++)
+       {
+          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double bp = c - MathMin(l, c);
+          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          bp1 += bp; tr1 += tr;
+       }
+       for(int i = 1; i <= c2; i++)
+       {
+          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double bp = c - MathMin(l, c);
+          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          bp2 += bp; tr2 += tr;
+       }
+       for(int i = 1; i <= c3; i++)
+       {
+          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double bp = c - MathMin(l, c);
+          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          bp3 += bp; tr3 += tr;
+       }
+       double avg1 = (tr1 > 0.0) ? bp1 / tr1 : 0.0;
+       double avg2 = (tr2 > 0.0) ? bp2 / tr2 : 0.0;
+       double avg3 = (tr3 > 0.0) ? bp3 / tr3 : 0.0;
+       double uo = (avg1 * 4.0 + avg2 * 2.0 + avg3 * 1.0) / 7.0 * 100.0;
+       double bp1p = 0.0, tr1p = 0.0, bp2p = 0.0, tr2p = 0.0, bp3p = 0.0, tr3p = 0.0;
+       for(int i = 2; i <= c1 + 1; i++)
+       {
+          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double bp = c - MathMin(l, c);
+          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          bp1p += bp; tr1p += tr;
+       }
+       for(int i = 2; i <= c2 + 1; i++)
+       {
+          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double bp = c - MathMin(l, c);
+          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          bp2p += bp; tr2p += tr;
+       }
+       for(int i = 2; i <= c3 + 1; i++)
+       {
+          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double bp = c - MathMin(l, c);
+          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          bp3p += bp; tr3p += tr;
+       }
+       double avg1p = (tr1p > 0.0) ? bp1p / tr1p : 0.0;
+       double avg2p = (tr2p > 0.0) ? bp2p / tr2p : 0.0;
+       double avg3p = (tr3p > 0.0) ? bp3p / tr3p : 0.0;
+       double uop = (avg1p * 4.0 + avg2p * 2.0 + avg3p * 1.0) / 7.0 * 100.0;
+       if(uop < 30.0 && uo >= 30.0) return 1;
+       if(uop > 70.0 && uo <= 70.0) return -1;
+       return 0;
+    }
+
+    int HeikenAshiSignal(const int smoothing)
+    {
+       double haOpen1, haClose1, haHigh1, haLow1;
+       double haOpen2, haClose2;
+       double o1 = iOpen(_Symbol, _Period, 1), c1 = iClose(_Symbol, _Period, 1);
+       double h1 = iHigh(_Symbol, _Period, 1), l1 = iLow(_Symbol, _Period, 1);
+       double o2 = iOpen(_Symbol, _Period, 2), c2 = iClose(_Symbol, _Period, 2);
+       double o3 = iOpen(_Symbol, _Period, 3), c3 = iClose(_Symbol, _Period, 3);
+       haClose1 = (o1 + h1 + l1 + c1) / 4.0;
+       haClose2 = (o2 + h1 + l1 + c2) / 4.0;
+       haOpen1 = (o2 + c2) / 2.0;
+       haOpen2 = (o3 + c3) / 2.0;
+       if(smoothing > 0)
+       {
+          haClose1 = IndicatorValue(iMA(_Symbol, _Period, smoothing, 0, MODE_SMA, PRICE_CLOSE), 1);
+          haClose2 = IndicatorValue(iMA(_Symbol, _Period, smoothing, 0, MODE_SMA, PRICE_CLOSE), 2);
+       }
+       if(haOpen2 > haClose2 && haOpen1 <= haClose1) return 1;
+       if(haOpen2 < haClose2 && haOpen1 >= haClose1) return -1;
+       return 0;
+    }
+
+    int AroonSignal(const int period)
+    {
+       double aroonUp = 0.0, aroonDn = 0.0;
+       int hiBar = iHighest(_Symbol, _Period, MODE_HIGH, period, 1);
+       int loBar = iLowest(_Symbol, _Period, MODE_LOW, period, 1);
+       if(hiBar >= 0) aroonUp = (double)(period - hiBar + 1) / period * 100.0;
+       if(loBar >= 0) aroonDn = (double)(period - loBar + 1) / period * 100.0;
+       int hiBar2 = iHighest(_Symbol, _Period, MODE_HIGH, period, 2);
+       int loBar2 = iLowest(_Symbol, _Period, MODE_LOW, period, 2);
+       double aroonUp2 = 0.0, aroonDn2 = 0.0;
+       if(hiBar2 >= 0) aroonUp2 = (double)(period - hiBar2 + 1) / period * 100.0;
+       if(loBar2 >= 0) aroonDn2 = (double)(period - loBar2 + 1) / period * 100.0;
+       if(aroonUp2 <= aroonDn2 && aroonUp > aroonDn && aroonUp > 50.0) return 1;
+       if(aroonUp2 >= aroonDn2 && aroonUp < aroonDn && aroonDn > 50.0) return -1;
+       return 0;
+    }
+
+    int KstSignal(const int roc1, const int roc2, const int roc3, const int roc4)
+    {
+       double r1 = IndicatorValue(iMomentum(_Symbol, _Period, roc1, PRICE_CLOSE), 1) - 100.0;
+       double r2 = IndicatorValue(iMomentum(_Symbol, _Period, roc2, PRICE_CLOSE), 1) - 100.0;
+       double r3 = IndicatorValue(iMomentum(_Symbol, _Period, roc3, PRICE_CLOSE), 1) - 100.0;
+       double r4 = IndicatorValue(iMomentum(_Symbol, _Period, roc4, PRICE_CLOSE), 1) - 100.0;
+       double kst1 = r1 * 1.0 + r2 * 2.0 + r3 * 3.0 + r4 * 4.0;
+       double r1p = IndicatorValue(iMomentum(_Symbol, _Period, roc1, PRICE_CLOSE), 2) - 100.0;
+       double r2p = IndicatorValue(iMomentum(_Symbol, _Period, roc2, PRICE_CLOSE), 2) - 100.0;
+       double r3p = IndicatorValue(iMomentum(_Symbol, _Period, roc3, PRICE_CLOSE), 2) - 100.0;
+       double r4p = IndicatorValue(iMomentum(_Symbol, _Period, roc4, PRICE_CLOSE), 2) - 100.0;
+       double kst2 = r1p * 1.0 + r2p * 2.0 + r3p * 3.0 + r4p * 4.0;
+       if(kst2 <= 0.0 && kst1 > 0.0) return 1;
+       if(kst2 >= 0.0 && kst1 < 0.0) return -1;
+       return 0;
+    }
+
+    int VortexSignal(const int period)
+    {
+       double vmSumPos1 = 0.0, vmSumNeg1 = 0.0, trSum1 = 0.0;
+       for(int i = 1; i <= period; i++)
+       {
+          double hh = iHigh(_Symbol, _Period, i);
+          double ll = iLow(_Symbol, _Period, i);
+          double hc = iHigh(_Symbol, _Period, i + 1);
+          double lc = iLow(_Symbol, _Period, i + 1);
+          double oc = iClose(_Symbol, _Period, i + 1);
+          double vmPos = MathAbs(hh - lc);
+          double vmNeg = MathAbs(ll - hc);
+          double tr = MathMax(hh - ll, MathMax(MathAbs(hh - oc), MathAbs(ll - oc)));
+          vmSumPos1 += vmPos;
+          vmSumNeg1 += vmNeg;
+          trSum1 += tr;
+       }
+       if(trSum1 <= 0.0) return 0;
+       double vp1 = vmSumPos1 / trSum1;
+       double vn1 = vmSumNeg1 / trSum1;
+       double vmSumPos2 = 0.0, vmSumNeg2 = 0.0, trSum2 = 0.0;
+       for(int i = 2; i <= period + 1; i++)
+       {
+          double hh = iHigh(_Symbol, _Period, i);
+          double ll = iLow(_Symbol, _Period, i);
+          double hc = iHigh(_Symbol, _Period, i + 1);
+          double lc = iLow(_Symbol, _Period, i + 1);
+          double oc = iClose(_Symbol, _Period, i + 1);
+          double vmPos = MathAbs(hh - lc);
+          double vmNeg = MathAbs(ll - hc);
+          double tr = MathMax(hh - ll, MathMax(MathAbs(hh - oc), MathAbs(ll - oc)));
+          vmSumPos2 += vmPos;
+          vmSumNeg2 += vmNeg;
+          trSum2 += tr;
+       }
+       if(trSum2 <= 0.0) return 0;
+       double vp2 = vmSumPos2 / trSum2;
+       double vn2 = vmSumNeg2 / trSum2;
+       if(vp2 <= vn2 && vp1 > vn1) return 1;
+       if(vp2 >= vn2 && vp1 < vn1) return -1;
+       return 0;
+    }
+
+    int ConnorsRsiSignal(const int rsiPeriod, const int streak, const int magLookback)
+    {
+       double rsi = IndicatorValue(iRSI(_Symbol, _Period, rsiPeriod, PRICE_CLOSE), 1);
+       int streakVal = 0;
+       double prevClose = 0.0;
+       for(int i = 1; i <= streak + 2; i++)
+       {
+          double c = iClose(_Symbol, _Period, i);
+          if(i == 1) { prevClose = c; continue; }
+          if(c > prevClose && streakVal >= 0) streakVal++;
+          else if(c < prevClose && streakVal <= 0) streakVal--;
+          else break;
+          prevClose = c;
+       }
+       int upDays = 0;
+       for(int i = 1; i <= magLookback; i++)
+       {
+          if(iClose(_Symbol, _Period, i) > iClose(_Symbol, _Period, i + 1))
+             upDays++;
+       }
+       double mag = (magLookback > 0) ? (double)upDays / magLookback * 100.0 : 50.0;
+       double crsi = (rsi + (double)streakVal + mag) / 3.0;
+       if(crsi < 30.0) return 1;
+       if(crsi > 70.0) return -1;
+       return 0;
+    }
+
+    int VwapSignal(const double dev)
+    {
+       double sumPV = 0.0, sumV = 0.0;
+       for(int i = 1; i <= 20; i++)
+       {
+          double tp = (iHigh(_Symbol, _Period, i) + iLow(_Symbol, _Period, i) + iClose(_Symbol, _Period, i)) / 3.0;
+          double vol = (double)iVolume(_Symbol, _Period, i);
+          sumPV += tp * vol;
+          sumV += vol;
+       }
+       if(sumV <= 0.0) return 0;
+       double vwap = sumPV / sumV;
+       double sqSum = 0.0;
+       for(int i = 1; i <= 20; i++)
+       {
+          double tp = (iHigh(_Symbol, _Period, i) + iLow(_Symbol, _Period, i) + iClose(_Symbol, _Period, i)) / 3.0;
+          sqSum += (tp - vwap) * (tp - vwap);
+       }
+       double std = MathSqrt(sqSum / 20.0);
+       double upper = vwap + std * dev;
+       double lower = vwap - std * dev;
+       double close1 = iClose(_Symbol, _Period, 1);
+       double close2 = iClose(_Symbol, _Period, 2);
+       if(close2 < lower && close1 > lower) return 1;
+       if(close2 > upper && close1 < upper) return -1;
+       return 0;
+    }
+
+    int PivotSignal(const int lookback)
+    {
+       int hiBar = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
+       int loBar = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
+       if(hiBar < 0 || loBar < 0) return 0;
+       double pivotH = iHigh(_Symbol, _Period, hiBar);
+       double pivotL = iLow(_Symbol, _Period, loBar);
+       double pp = (pivotH + pivotL + iClose(_Symbol, _Period, hiBar)) / 3.0;
+       double r1 = 2.0 * pp - pivotL;
+       double s1 = 2.0 * pp - pivotH;
+       double close1 = iClose(_Symbol, _Period, 1);
+       double close2 = iClose(_Symbol, _Period, 2);
+       if(close2 <= r1 && close1 > r1) return 1;
+       if(close2 >= s1 && close1 < s1) return -1;
+       if(close1 > r1) return 1;
+       if(close1 < s1) return -1;
+       return 0;
+    }
+
+    int RegChannelSignal(const int period, const double dev)
+    {
+       double sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumX2 = 0.0;
+       int n = period;
+       for(int i = 1; i <= n; i++)
+       {
+          double y = iClose(_Symbol, _Period, i);
+          sumX += i;
+          sumY += y;
+          sumXY += i * y;
+          sumX2 += i * i;
+       }
+       double slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+       double intercept = (sumY - slope * sumX) / n;
+       double reg1 = slope * 1 + intercept;
+       double close1 = iClose(_Symbol, _Period, 1);
+       double errSum = 0.0;
+       for(int i = 1; i <= n; i++)
+       {
+          double yhat = slope * i + intercept;
+          errSum += (iClose(_Symbol, _Period, i) - yhat) * (iClose(_Symbol, _Period, i) - yhat);
+       }
+       double stderr = MathSqrt(errSum / n);
+       double upper = reg1 + stderr * dev;
+       double lower = reg1 - stderr * dev;
+       if(close1 > upper) return -1;
+       if(close1 < lower) return 1;
+       if(slope > 0.0 && close1 > reg1) return 1;
+       if(slope < 0.0 && close1 < reg1) return -1;
+       return 0;
+    }
+
+    int MaEnvelopeSignal(const int period, const double pct)
+    {
+       double ma = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_SMA, PRICE_CLOSE), 1);
+       double upper = ma * (1.0 + pct / 100.0);
+       double lower = ma * (1.0 - pct / 100.0);
+       double close1 = iClose(_Symbol, _Period, 1);
+       double close2 = iClose(_Symbol, _Period, 2);
+       if(close2 < lower && close1 > lower) return 1;
+       if(close2 > upper && close1 < upper) return -1;
+       if(close2 <= ma && close1 > ma) return 1;
+       if(close2 >= ma && close1 < ma) return -1;
+       return 0;
+    }
+
+    bool DetectBullDivergence(const double &price[], const double &ind[], const int lookback)
+    {
+       int ph1 = 0, ph2 = 0;
+       double maxP = -1.0, maxI = -1.0;
+       for(int i = 1; i <= lookback; i++)
+       {
+          bool isHigh = true;
+          for(int j = -1; j <= 1; j++)
+          {
+             if(i + j < 1 || i + j > lookback) continue;
+             if(price[i + j - 1] > price[i - 1]) { isHigh = false; break; }
+          }
+          if(isHigh)
+          {
+             if(ph1 == 0) { ph1 = i; maxP = price[i - 1]; maxI = ind[i - 1]; }
+             else { ph2 = ph1; ph1 = i; }
+          }
+       }
+       if(ph1 > 0 && ph2 > 0 && ph1 != ph2)
+       {
+          double p1 = price[ph2 - 1], p2 = price[ph1 - 1];
+          double i1 = ind[ph2 - 1], i2 = ind[ph1 - 1];
+          if(p1 <= p2 && i1 > i2) return true;
+          if(p1 >= p2 && i1 < i2) return true;
+       }
+       return false;
+    }
+
+    bool DetectBearDivergence(const double &price[], const double &ind[], const int lookback)
+    {
+       int pl1 = 0, pl2 = 0;
+       double minP = 999999.0, minI = 999999.0;
+       for(int i = 1; i <= lookback; i++)
+       {
+          bool isLow = true;
+          for(int j = -1; j <= 1; j++)
+          {
+             if(i + j < 1 || i + j > lookback) continue;
+             if(price[i + j - 1] < price[i - 1]) { isLow = false; break; }
+          }
+          if(isLow)
+          {
+             if(pl1 == 0) { pl1 = i; minP = price[i - 1]; minI = ind[i - 1]; }
+             else { pl2 = pl1; pl1 = i; }
+          }
+       }
+       if(pl1 > 0 && pl2 > 0 && pl1 != pl2)
+       {
+          double p1 = price[pl2 - 1], p2 = price[pl1 - 1];
+          double i1 = ind[pl2 - 1], i2 = ind[pl1 - 1];
+          if(p1 >= p2 && i1 < i2) return true;
+          if(p1 <= p2 && i1 > i2) return true;
+       }
+       return false;
+    }
+
+    int RsiDivergenceSignal(const int rsiPeriod, const int lookback)
+    {
+       double price[], rsi[];
+       ArrayResize(price, lookback);
+       ArrayResize(rsi, lookback);
+       int h = iRSI(_Symbol, _Period, rsiPeriod, PRICE_CLOSE);
+       if(h == INVALID_HANDLE) return 0;
+       for(int i = 0; i < lookback; i++)
+       {
+          price[i] = iClose(_Symbol, _Period, i + 1);
+          rsi[i] = BufferValue(h, 0, i + 1);
+       }
+       if(DetectBullDivergence(price, rsi, lookback)) return 1;
+       if(DetectBearDivergence(price, rsi, lookback)) return -1;
+       return 0;
+    }
+
+    int MacdDivergenceSignal(const int fast, const int slow, const int signal)
+    {
+       int h = iMACD(_Symbol, _Period, fast, slow, signal, PRICE_CLOSE);
+       if(h == INVALID_HANDLE) return 0;
+       double price[], macd[];
+       int lookback = 20;
+       ArrayResize(price, lookback);
+       ArrayResize(macd, lookback);
+       for(int i = 0; i < lookback; i++)
+       {
+          price[i] = iClose(_Symbol, _Period, i + 1);
+          macd[i] = BufferValue(h, 0, i + 1);
+       }
+       if(DetectBullDivergence(price, macd, lookback)) return 1;
+       if(DetectBearDivergence(price, macd, lookback)) return -1;
+       return 0;
+    }
+
+    int CciDivergenceSignal(const int cciPeriod, const int lookback)
+    {
+       double price[], cci[];
+       ArrayResize(price, lookback);
+       ArrayResize(cci, lookback);
+       int h = iCCI(_Symbol, _Period, cciPeriod, PRICE_CLOSE);
+       if(h == INVALID_HANDLE) return 0;
+       for(int i = 0; i < lookback; i++)
+       {
+          price[i] = iClose(_Symbol, _Period, i + 1);
+          cci[i] = BufferValue(h, 0, i + 1);
+       }
+       if(DetectBullDivergence(price, cci, lookback)) return 1;
+       if(DetectBearDivergence(price, cci, lookback)) return -1;
+       return 0;
+    }
+
+    int StochDivergenceSignal(const int k, const int d, const int slowing, const int lookback)
+    {
+       double price[], stoch[];
+       ArrayResize(price, lookback);
+       ArrayResize(stoch, lookback);
+       int h = iStochastic(_Symbol, _Period, k, d, slowing, MODE_SMA, STO_CLOSECLOSE);
+       if(h == INVALID_HANDLE) return 0;
+       for(int i = 0; i < lookback; i++)
+       {
+          price[i] = iClose(_Symbol, _Period, i + 1);
+          stoch[i] = BufferValue(h, 0, i + 1);
+       }
+       if(DetectBullDivergence(price, stoch, lookback)) return 1;
+       if(DetectBearDivergence(price, stoch, lookback)) return -1;
+       return 0;
+    }
+
+    int ObvDivergenceSignal(const int smaPeriod, const int lookback)
+    {
+       double price[], obv[];
+       ArrayResize(price, lookback);
+       ArrayResize(obv, lookback);
+        int h = iOBV(_Symbol, _Period, VOLUME_TICK);
+       if(h == INVALID_HANDLE) return 0;
+       for(int i = 0; i < lookback; i++)
+       {
+          price[i] = iClose(_Symbol, _Period, i + 1);
+          obv[i] = BufferValue(h, 0, i + 1);
+       }
+       if(DetectBullDivergence(price, obv, lookback)) return 1;
+       if(DetectBearDivergence(price, obv, lookback)) return -1;
+       return 0;
+    }
+
+    int RsiBandsSignal(const int rsiPeriod, const int bbPeriod, const double bbDev)
+    {
+       int hRsi = iRSI(_Symbol, _Period, rsiPeriod, PRICE_CLOSE);
+       if(hRsi == INVALID_HANDLE) return 0;
+       double rsiBuf[];
+       ArrayResize(rsiBuf, bbPeriod + 2);
+       for(int i = 1; i <= bbPeriod + 1; i++)
+          rsiBuf[i - 1] = BufferValue(hRsi, 0, i);
+       double sum = 0.0;
+       for(int i = 0; i < bbPeriod; i++) sum += rsiBuf[i];
+       double ma = sum / bbPeriod;
+       double sqSum = 0.0;
+       for(int i = 0; i < bbPeriod; i++) sqSum += (rsiBuf[i] - ma) * (rsiBuf[i] - ma);
+       double sd = MathSqrt(sqSum / bbPeriod);
+       double upper = ma + sd * bbDev;
+       double lower = ma - sd * bbDev;
+       double rsi1 = rsiBuf[0];
+       double rsi2 = rsiBuf[1];
+       if(rsi2 < lower && rsi1 >= lower) return 1;
+       if(rsi2 > upper && rsi1 <= upper) return -1;
+       if(rsi1 < 30.0) return 1;
+       if(rsi1 > 70.0) return -1;
+       return 0;
+    }
+
+    int MacdRsiSignal(const int macdFast, const int macdSlow, const int macdSignal, const int rsiPeriod)
+    {
+       int hMacd = iMACD(_Symbol, _Period, macdFast, macdSlow, macdSignal, PRICE_CLOSE);
+       int hRsi = iRSI(_Symbol, _Period, rsiPeriod, PRICE_CLOSE);
+       if(hMacd == INVALID_HANDLE || hRsi == INVALID_HANDLE) return 0;
+       double macd1 = BufferValue(hMacd, 0, 1);
+       double macd2 = BufferValue(hMacd, 0, 2);
+       double rsi1 = BufferValue(hRsi, 0, 1);
+       if(macd2 <= 0.0 && macd1 > 0.0 && rsi1 > 50.0) return 1;
+       if(macd2 >= 0.0 && macd1 < 0.0 && rsi1 < 50.0) return -1;
+       if(macd2 < macd1 && rsi1 > 50.0) return 1;
+       if(macd2 > macd1 && rsi1 < 50.0) return -1;
+       return 0;
+    }
+
+    int AdxRsiSignal(const int adxPeriod, const int rsiPeriod, const double adxLevel)
+    {
+       int hAdx = iADX(_Symbol, _Period, adxPeriod);
+       int hRsi = iRSI(_Symbol, _Period, rsiPeriod, PRICE_CLOSE);
+       if(hAdx == INVALID_HANDLE || hRsi == INVALID_HANDLE) return 0;
+       double adx1 = BufferValue(hAdx, 0, 1);
+       double pdi1 = BufferValue(hAdx, 1, 1);
+       double ndi1 = BufferValue(hAdx, 2, 1);
+       double rsi1 = BufferValue(hRsi, 0, 1);
+       if(adx1 > adxLevel && pdi1 > ndi1 && rsi1 > 50.0) return 1;
+       if(adx1 > adxLevel && ndi1 > pdi1 && rsi1 < 50.0) return -1;
+       return 0;
+    }
+
+    int MaVolumeSignal(const int fast, const int slow, const double volMult)
+    {
+       double f1 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 1);
+       double f2 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 2);
+       double s1 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 1);
+       double s2 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 2);
+       double vol1 = (double)iVolume(_Symbol, _Period, 1);
+       double avgVol = 0.0;
+       for(int i = 1; i <= 20; i++) avgVol += (double)iVolume(_Symbol, _Period, i);
+       avgVol /= 20.0;
+       if(avgVol <= 0.0) return 0;
+       if(f2 <= s2 && f1 > s1 && vol1 > avgVol * volMult) return 1;
+       if(f2 >= s2 && f1 < s1 && vol1 > avgVol * volMult) return -1;
+       return 0;
+    }
+
+    int MaVolatilitySignal(const int fast, const int slow, const double atrMult)
+    {
+       double f1 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 1);
+       double f2 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 2);
+       double s1 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 1);
+       double s2 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 2);
+       double atr = IndicatorValue(iATR(_Symbol, _Period, 14), 1);
+       double close1 = iClose(_Symbol, _Period, 1);
+       double range1 = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
+       if(atr <= 0.0) return 0;
+       if(f2 <= s2 && f1 > s1 && range1 > atr * atrMult) return 1;
+       if(f2 >= s2 && f1 < s1 && range1 > atr * atrMult) return -1;
+       return 0;
+    }
+
+    int TripleMaSignal(const int step)
+    {
+       int f = step, m = step * 2, s = step * 4;
+       double f1 = IndicatorValue(iMA(_Symbol, _Period, f, 0, MODE_EMA, PRICE_CLOSE), 1);
+       double m1 = IndicatorValue(iMA(_Symbol, _Period, m, 0, MODE_EMA, PRICE_CLOSE), 1);
+       double s1 = IndicatorValue(iMA(_Symbol, _Period, s, 0, MODE_EMA, PRICE_CLOSE), 1);
+       double close1 = iClose(_Symbol, _Period, 1);
+       if(f1 > m1 && m1 > s1 && close1 > f1) return 1;
+       if(f1 < m1 && m1 < s1 && close1 < f1) return -1;
+       return 0;
+    }
+
+    int ImpulseSignal(const int macdFast, const int macdSlow, const int macdSignal, const int forcePeriod)
+    {
+       int hMacd = iMACD(_Symbol, _Period, macdFast, macdSlow, macdSignal, PRICE_CLOSE);
+       int hForce = iForce(_Symbol, _Period, forcePeriod, MODE_SMA, VOLUME_TICK);
+       if(hMacd == INVALID_HANDLE || hForce == INVALID_HANDLE) return 0;
+       double macd1 = BufferValue(hMacd, 0, 1);
+       double macd2 = BufferValue(hMacd, 0, 2);
+       double sig1 = BufferValue(hMacd, 1, 1);
+       double sig2 = BufferValue(hMacd, 1, 2);
+       double force1 = BufferValue(hForce, 0, 1);
+       double force2 = BufferValue(hForce, 0, 2);
+       bool macdBull = (macd1 > sig1 && macd2 <= sig2) || (macd1 > sig1 && macd2 > sig1);
+       bool macdBear = (macd1 < sig1 && macd2 >= sig2) || (macd1 < sig1 && macd2 < sig1);
+       bool forceBull = (force1 > 0.0 && force2 <= 0.0) || (force1 > 0.0 && force2 > 0.0);
+       bool forceBear = (force1 < 0.0 && force2 >= 0.0) || (force1 < 0.0 && force2 < 0.0);
+       if(macdBull && forceBull) return 1;
+       if(macdBear && forceBear) return -1;
+       return 0;
+    }
+
+    int BreakoutPullbackSignal(const int lookback, const double pullbackPct)
+    {
+       int hiBar = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
+       int loBar = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
+       if(hiBar < 0 || loBar < 0) return 0;
+       double rangeHigh = iHigh(_Symbol, _Period, hiBar);
+       double rangeLow = iLow(_Symbol, _Period, loBar);
+       double range = rangeHigh - rangeLow;
+       double breakoutLevel = rangeHigh;
+       double pullbackTarget = rangeHigh - range * pullbackPct;
+       double close1 = iClose(_Symbol, _Period, 1);
+       double close2 = iClose(_Symbol, _Period, 2);
+       double high1 = iHigh(_Symbol, _Period, 1);
+       if(close2 <= breakoutLevel && high1 > breakoutLevel && close1 >= pullbackTarget) return 1;
+       double bearBreakout = rangeLow;
+       double bearPullback = rangeLow + range * pullbackPct;
+       if(close2 >= bearBreakout && iLow(_Symbol, _Period, 1) < bearBreakout && close1 <= bearPullback) return -1;
+       return 0;
+    }
+
+    int TrendPullbackSignal(const int maPeriod, const int oscLookback)
+    {
+       double ma = IndicatorValue(iMA(_Symbol, _Period, maPeriod, 0, MODE_EMA, PRICE_CLOSE), 1);
+       double close1 = iClose(_Symbol, _Period, 1);
+       double atr = IndicatorValue(iATR(_Symbol, _Period, 14), 1);
+       double highest = iHigh(_Symbol, _Period, iHighest(_Symbol, _Period, MODE_HIGH, oscLookback, 2));
+       double lowest = iLow(_Symbol, _Period, iLowest(_Symbol, _Period, MODE_LOW, oscLookback, 2));
+       if(atr <= 0.0) return 0;
+        double stoch = IndicatorValue(iStochastic(_Symbol, _Period, 5, 3, 3, MODE_SMA, STO_CLOSECLOSE), 1);
+       if(close1 > ma && close1 >= highest - atr * 0.5 && stoch < 30.0) return 1;
+       if(close1 < ma && close1 <= lowest + atr * 0.5 && stoch > 70.0) return -1;
+       return 0;
+    }
+
+    int RsiMacdConfirmSignal(const int rsiPeriod, const int macdFast, const int macdSlow, const int macdSignal)
+    {
+       int hRsi = iRSI(_Symbol, _Period, rsiPeriod, PRICE_CLOSE);
+       int hMacd = iMACD(_Symbol, _Period, macdFast, macdSlow, macdSignal, PRICE_CLOSE);
+       if(hRsi == INVALID_HANDLE || hMacd == INVALID_HANDLE) return 0;
+       double rsi1 = BufferValue(hRsi, 0, 1);
+       double rsi2 = BufferValue(hRsi, 0, 2);
+       double macdHist1 = BufferValue(hMacd, 0, 1) - BufferValue(hMacd, 1, 1);
+       double macdHist2 = BufferValue(hMacd, 0, 2) - BufferValue(hMacd, 1, 2);
+       if(rsi2 < 30.0 && rsi1 >= 30.0 && macdHist2 < 0.0 && macdHist1 > 0.0) return 1;
+       if(rsi2 > 70.0 && rsi1 <= 70.0 && macdHist2 > 0.0 && macdHist1 < 0.0) return -1;
+       if(rsi1 < 30.0 && macdHist1 > 0.0 && macdHist2 <= 0.0) return 1;
+       if(rsi1 > 70.0 && macdHist1 < 0.0 && macdHist2 >= 0.0) return -1;
+       return 0;
+    }
+
+    int TrendFilterSignal(const int adxPeriod, const int stochK, const int stochD, const int stochSlowing)
+    {
+       int hAdx = iADX(_Symbol, _Period, adxPeriod);
+       int hStoch = iStochastic(_Symbol, _Period, stochK, stochD, stochSlowing, MODE_SMA, STO_CLOSECLOSE);
+       if(hAdx == INVALID_HANDLE || hStoch == INVALID_HANDLE) return 0;
+       double adx = BufferValue(hAdx, 0, 1);
+       double pdi = BufferValue(hAdx, 1, 1);
+       double ndi = BufferValue(hAdx, 2, 1);
+       double stoch = BufferValue(hStoch, 0, 1);
+       double stochPrev = BufferValue(hStoch, 0, 2);
+       if(adx > 25.0 && pdi > ndi && stochPrev < 30.0 && stoch >= 30.0) return 1;
+       if(adx > 25.0 && ndi > pdi && stochPrev > 70.0 && stoch <= 70.0) return -1;
+       if(adx > 25.0 && pdi > ndi && stoch < 50.0) return 1;
+       if(adx > 25.0 && ndi > pdi && stoch > 50.0) return -1;
+       return 0;
+    }
+
+    int HaramiSignal(const double bodyRatio)
+    {
+       double o1 = iOpen(_Symbol, _Period, 1), c1 = iClose(_Symbol, _Period, 1);
+       double o2 = iOpen(_Symbol, _Period, 2), c2 = iClose(_Symbol, _Period, 2);
+       double body1 = MathAbs(c1 - o1), body2 = MathAbs(c2 - o2);
+       double range1 = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
+       double range2 = iHigh(_Symbol, _Period, 2) - iLow(_Symbol, _Period, 2);
+       if(range2 <= 0.0 || range1 <= 0.0) return 0;
+       double bodyPct1 = body1 / range1, bodyPct2 = body2 / range2;
+       if(c2 < o2 && c1 > o1 && bodyPct2 > bodyRatio && bodyPct1 < bodyRatio && body1 < body2 * 0.5) return 1;
+       if(c2 > o2 && c1 < o1 && bodyPct2 > bodyRatio && bodyPct1 < bodyRatio && body1 < body2 * 0.5) return -1;
+       return 0;
+    }
+
+    int DojiStarSignal(const double dojiBodyRatio, const int confirmBars)
+    {
+       double o1 = iOpen(_Symbol, _Period, 1), c1 = iClose(_Symbol, _Period, 1);
+       double o2 = iOpen(_Symbol, _Period, 2), c2 = iClose(_Symbol, _Period, 2);
+       double o3 = iOpen(_Symbol, _Period, 3), c3 = iClose(_Symbol, _Period, 3);
+       double body2 = MathAbs(c2 - o2), range2 = iHigh(_Symbol, _Period, 2) - iLow(_Symbol, _Period, 2);
+       if(range2 <= 0.0) return 0;
+       bool doji = (body2 / range2) < dojiBodyRatio;
+       if(!doji) return 0;
+       bool bullStar = (c3 < o3) && (c1 > o1) && (confirmBars >= 1);
+       bool bearStar = (c3 > o3) && (c1 < o1) && (confirmBars >= 1);
+       if(bullStar) return 1;
+       if(bearStar) return -1;
+       return 0;
+    }
+
+    int StarSignal(const double bodyMin, const double gapMin)
+    {
+       double o1 = iOpen(_Symbol, _Period, 1), c1 = iClose(_Symbol, _Period, 1);
+       double o2 = iOpen(_Symbol, _Period, 2), c2 = iClose(_Symbol, _Period, 2);
+       double o3 = iOpen(_Symbol, _Period, 3), c3 = iClose(_Symbol, _Period, 3);
+       double body1 = MathAbs(c1 - o1), body2 = MathAbs(c2 - o2), body3 = MathAbs(c3 - o3);
+       double range1 = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
+       double range2 = iHigh(_Symbol, _Period, 2) - iLow(_Symbol, _Period, 2);
+       double range3 = iHigh(_Symbol, _Period, 3) - iLow(_Symbol, _Period, 3);
+       if(range1 <= 0.0 || range2 <= 0.0 || range3 <= 0.0) return 0;
+       double pct1 = body1 / range1, pct2 = body2 / range2, pct3 = body3 / range3;
+       bool morning = (c3 < o3) && pct3 > bodyMin && (c2 < o2) && pct2 < bodyMin && (c1 > o1) && pct1 > bodyMin;
+       morning = morning && (MathAbs(o2 - c3) > range3 * gapMin);
+       bool evening = (c3 > o3) && pct3 > bodyMin && (c2 > o2) && pct2 < bodyMin && (c1 < o1) && pct1 > bodyMin;
+       evening = evening && (MathAbs(o2 - c3) > range3 * gapMin);
+       if(morning) return 1;
+       if(evening) return -1;
+       return 0;
+    }
+
+    int SoldiersCrowsSignal(const double bodyMin, const double wickMax)
+    {
+       int bullCount = 0, bearCount = 0;
+       for(int i = 1; i <= 3; i++)
+       {
+          double o = iOpen(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i);
+          double h = iHigh(_Symbol, _Period, i), l = iLow(_Symbol, _Period, i);
+          double body = MathAbs(c - o), range = h - l;
+          if(range <= 0.0) return 0;
+          double upWick = h - MathMax(o, c);
+          double dnWick = MathMin(o, c) - l;
+          if(c > o && body / range >= bodyMin && upWick / range <= wickMax && dnWick / range <= wickMax) bullCount++;
+          else if(c < o && body / range >= bodyMin && upWick / range <= wickMax && dnWick / range <= wickMax) bearCount++;
+          else { bullCount = 0; bearCount = 0; break; }
+       }
+       if(bullCount == 3)
+       {
+          double c1 = iClose(_Symbol, _Period, 1), c2 = iClose(_Symbol, _Period, 2), c3 = iClose(_Symbol, _Period, 3);
+          if(c1 > c2 && c2 > c3) return 1;
+       }
+       if(bearCount == 3)
+       {
+          double c1 = iClose(_Symbol, _Period, 1), c2 = iClose(_Symbol, _Period, 2), c3 = iClose(_Symbol, _Period, 3);
+          if(c1 < c2 && c2 < c3) return -1;
+       }
+       return 0;
+    }
+
+    int MarubozuSignal(const double bodyRatio)
+    {
+       double o1 = iOpen(_Symbol, _Period, 1), c1 = iClose(_Symbol, _Period, 1);
+       double h1 = iHigh(_Symbol, _Period, 1), l1 = iLow(_Symbol, _Period, 1);
+       double body = MathAbs(c1 - o1), range = h1 - l1;
+       if(range <= 0.0) return 0;
+       double upWick = h1 - MathMax(o1, c1);
+       double dnWick = MathMin(o1, c1) - l1;
+       if(body / range >= bodyRatio && upWick / range <= 0.05 && dnWick / range <= 0.05)
+       {
+          if(c1 > o1) return 1;
+          if(c1 < o1) return -1;
+       }
+       double o2 = iOpen(_Symbol, _Period, 2), c2 = iClose(_Symbol, _Period, 2);
+       double o3 = iOpen(_Symbol, _Period, 3), c3 = iClose(_Symbol, _Period, 3);
+       double body2 = MathAbs(c2 - o2), range2 = iHigh(_Symbol, _Period, 2) - iLow(_Symbol, _Period, 2);
+       if(range2 <= 0.0) return 0;
+       double upWick2 = iHigh(_Symbol, _Period, 2) - MathMax(o2, c2);
+       double dnWick2 = MathMin(o2, c2) - iLow(_Symbol, _Period, 2);
+       if(body2 / range2 >= bodyRatio && upWick2 / range2 <= 0.05 && dnWick2 / range2 <= 0.05)
+       {
+          if(c2 > o2 && c1 > c2) return 1;
+          if(c2 < o2 && c1 < c2) return -1;
+       }
+       return 0;
+    }
+
+    int DoubleTopBottomSignal(const int swingLookback, const double tolerance)
+    {
+       int hi1 = iHighest(_Symbol, _Period, MODE_HIGH, swingLookback, 2);
+       int lo1 = iLowest(_Symbol, _Period, MODE_LOW, swingLookback, 2);
+       if(hi1 < 0 || lo1 < 0) return 0;
+       double top1 = iHigh(_Symbol, _Period, hi1);
+       double top1Pos = (double)hi1;
+       double bottom1 = iLow(_Symbol, _Period, lo1);
+       double bottom1Pos = (double)lo1;
+        int hi2 = iHighest(_Symbol, _Period, MODE_HIGH, swingLookback * 2, swingLookback / 2 + 1);
+        int lo2 = iLowest(_Symbol, _Period, MODE_LOW, swingLookback * 2, swingLookback / 2 + 1);
+       if(hi2 < 0 || lo2 < 0) return 0;
+       double top2 = iHigh(_Symbol, _Period, hi2);
+       double bottom2 = iLow(_Symbol, _Period, lo2);
+       if(MathAbs(top1 - top2) / (top1 + top2) * 200.0 < tolerance && (top1Pos - hi2) > swingLookback / 2 && iClose(_Symbol, _Period, 1) < (top1 + top2) / 2.0 - IndicatorValue(iATR(_Symbol, _Period, 14), 1) * 0.5)
+          return -1;
+       if(MathAbs(bottom1 - bottom2) / (bottom1 + bottom2) * 200.0 < tolerance && (lo1 - bottom1Pos) > swingLookback / 2 && iClose(_Symbol, _Period, 1) > (bottom1 + bottom2) / 2.0 + IndicatorValue(iATR(_Symbol, _Period, 14), 1) * 0.5)
+          return 1;
+       return 0;
+    }
+
+    int FalseBreakSignal(const int lookback, const int reversalBars)
+    {
+       int hiBar = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
+       int loBar = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
+       if(hiBar < 0 || loBar < 0) return 0;
+       double rangeHigh = iHigh(_Symbol, _Period, hiBar);
+       double rangeLow = iLow(_Symbol, _Period, loBar);
+       double close1 = iClose(_Symbol, _Period, 1);
+       double close2 = iClose(_Symbol, _Period, 2);
+       if(close2 > rangeHigh && close1 <= rangeHigh) return -1;
+       if(close2 < rangeLow && close1 >= rangeLow) return 1;
+       for(int i = 3; i <= reversalBars + 2; i++)
+       {
+          double ci = iClose(_Symbol, _Period, i);
+          if(ci > rangeHigh)
+          {
+             for(int j = i - 1; j >= 1 && j >= i - reversalBars; j--)
+                if(iClose(_Symbol, _Period, j) <= rangeHigh)
+                   return -1;
+          }
+          if(ci < rangeLow)
+          {
+             for(int j = i - 1; j >= 1 && j >= i - reversalBars; j--)
+                if(iClose(_Symbol, _Period, j) >= rangeLow)
+                   return 1;
+          }
+       }
+       return 0;
+    }
+
+    int ExhaustionSignal(const int lookback, const double rangeRatio)
+    {
+       double avgRange = 0.0;
+       for(int i = 1; i <= lookback; i++)
+          avgRange += iHigh(_Symbol, _Period, i) - iLow(_Symbol, _Period, i);
+       avgRange /= lookback;
+       if(avgRange <= 0.0) return 0;
+       double curRange = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
+       double mom = IndicatorValue(iMomentum(_Symbol, _Period, 5, PRICE_CLOSE), 1);
+       double mom2 = IndicatorValue(iMomentum(_Symbol, _Period, 5, PRICE_CLOSE), lookback);
+       double close1 = iClose(_Symbol, _Period, 1);
+       double closeLook = iClose(_Symbol, _Period, lookback + 1);
+       bool trendUp = close1 > closeLook && mom2 > 100.0;
+       bool trendDn = close1 < closeLook && mom2 < 100.0;
+       if(trendUp && curRange < avgRange * rangeRatio && mom < mom2) return -1;
+       if(trendDn && curRange < avgRange * rangeRatio && mom > mom2) return 1;
+       return 0;
+    }
+
+    int ClimaxSignal(const double volMult, const double rangeMult)
+    {
+       double curVol = (double)iVolume(_Symbol, _Period, 1);
+       double curRange = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
+       double avgVol = 0.0, avgRange = 0.0;
+       for(int i = 2; i <= 21; i++)
+       {
+          avgVol += (double)iVolume(_Symbol, _Period, i);
+          avgRange += iHigh(_Symbol, _Period, i) - iLow(_Symbol, _Period, i);
+       }
+       avgVol /= 20.0;
+       avgRange /= 20.0;
+       if(avgVol <= 0.0 || avgRange <= 0.0) return 0;
+       double close1 = iClose(_Symbol, _Period, 1);
+       double open1 = iOpen(_Symbol, _Period, 1);
+       double close2 = iClose(_Symbol, _Period, 2);
+       if(curVol > avgVol * volMult && curRange > avgRange * rangeMult)
+       {
+          if(close1 < open1 && close1 < close2) return -1;
+          if(close1 > open1 && close1 > close2) return 1;
+       }
+       return 0;
+    }
+
+    int RangeExpansionSignal(const int lookback, const double mult)
+    {
+       double avgRange = 0.0;
+       for(int i = 1; i <= lookback; i++)
+          avgRange += iHigh(_Symbol, _Period, i) - iLow(_Symbol, _Period, i);
+       avgRange /= lookback;
+       if(avgRange <= 0.0) return 0;
+       double curRange = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
+       double close1 = iClose(_Symbol, _Period, 1);
+       double open1 = iOpen(_Symbol, _Period, 1);
+       if(curRange > avgRange * mult && close1 > open1 && MathAbs(close1 - open1) > curRange * 0.6) return 1;
+       if(curRange > avgRange * mult && close1 < open1 && MathAbs(close1 - open1) > curRange * 0.6) return -1;
+       return 0;
+    }
+
+    int VolContractionSignal(const int lookback, const double contractionRatio)
+    {
+       double avgRange = 0.0;
+       for(int i = 1; i <= lookback; i++)
+          avgRange += iHigh(_Symbol, _Period, i) - iLow(_Symbol, _Period, i);
+       avgRange /= lookback;
+       if(avgRange <= 0.0) return 0;
+       double curRange = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
+       double curVol = (double)iVolume(_Symbol, _Period, 1);
+       double avgVol = 0.0;
+       for(int i = 1; i <= lookback; i++)
+          avgVol += (double)iVolume(_Symbol, _Period, i);
+       avgVol /= lookback;
+       if(curRange < avgRange * contractionRatio && curVol < avgVol * 0.8)
+       {
+          double nextRange = iHigh(_Symbol, _Period, 0) - iLow(_Symbol, _Period, 0);
+          double nextVol = (double)iVolume(_Symbol, _Period, 0);
+          if(nextRange > avgRange && nextVol > avgVol)
+          {
+             double close0 = iClose(_Symbol, _Period, 0);
+             double open0 = iOpen(_Symbol, _Period, 0);
+             if(close0 > open0) return 1;
+             if(close0 < open0) return -1;
+          }
+       }
+       return 0;
+    }
+
+    int SwingBreakSignal(const int swingLookback, const int momPeriod)
+    {
+       int hiBar = iHighest(_Symbol, _Period, MODE_HIGH, swingLookback, 2);
+       int loBar = iLowest(_Symbol, _Period, MODE_LOW, swingLookback, 2);
+       if(hiBar < 0 || loBar < 0) return 0;
+       double swingHigh = iHigh(_Symbol, _Period, hiBar);
+       double swingLow = iLow(_Symbol, _Period, loBar);
+       double close1 = iClose(_Symbol, _Period, 1);
+       double close2 = iClose(_Symbol, _Period, 2);
+       double mom1 = IndicatorValue(iMomentum(_Symbol, _Period, momPeriod, PRICE_CLOSE), 1);
+       double mom2 = IndicatorValue(iMomentum(_Symbol, _Period, momPeriod, PRICE_CLOSE), 2);
+       if(close2 <= swingHigh && close1 > swingHigh && mom1 > mom2) return 1;
+       if(close2 >= swingLow && close1 < swingLow && mom1 < mom2) return -1;
+       return 0;
+    }
+
+    double IndicatorValue(const int handle, const int shift)
+    {
+       return BufferValue(handle, 0, shift);
+    }
 
    double BufferValue(const int handle, const int buffer, const int shift)
    {
@@ -3546,13 +5645,13 @@
    void ExportPropfirmRollingReport()
    {
       int totalRuns = ArraySize(propRuns);
-      int aggStarts[500], aggPassed[500], aggBlown[500], aggActive[500];
-      int aggWins[500], aggLosses[500], aggTrades[500], aggDaysToTarget[500];
-      double aggNetSum[500], aggBestNet[500], aggWorstNet[500], aggWinRateSum[500];
-      double aggGrossProfit[500], aggGrossLoss[500];
-      double aggDuration[500];
-      int aggWinRateCount[500];
-      double aggRecencyWeightSum[500], aggRecencyPassedWeight[500];
+      int aggStarts[PROP_STRATEGY_COUNT], aggPassed[PROP_STRATEGY_COUNT], aggBlown[PROP_STRATEGY_COUNT], aggActive[PROP_STRATEGY_COUNT];
+      int aggWins[PROP_STRATEGY_COUNT], aggLosses[PROP_STRATEGY_COUNT], aggTrades[PROP_STRATEGY_COUNT], aggDaysToTarget[PROP_STRATEGY_COUNT];
+      double aggNetSum[PROP_STRATEGY_COUNT], aggBestNet[PROP_STRATEGY_COUNT], aggWorstNet[PROP_STRATEGY_COUNT], aggWinRateSum[PROP_STRATEGY_COUNT];
+      double aggGrossProfit[PROP_STRATEGY_COUNT], aggGrossLoss[PROP_STRATEGY_COUNT];
+      double aggDuration[PROP_STRATEGY_COUNT];
+      int aggWinRateCount[PROP_STRATEGY_COUNT];
+      double aggRecencyWeightSum[PROP_STRATEGY_COUNT], aggRecencyPassedWeight[PROP_STRATEGY_COUNT];
       datetime testStart = 0;
 
       ArrayInitialize(aggStarts, 0);
@@ -3581,7 +5680,7 @@
       for(int i = 0; i < totalRuns; i++)
       {
          int sid = propRuns[i].strategyId - 1;
-         if(sid < 0 || sid >= 500) continue;
+         if(sid < 0 || sid >= PROP_STRATEGY_COUNT) continue;
 
          aggStarts[sid]++;
          if(propRuns[i].passed) aggPassed[sid]++;
@@ -3635,8 +5734,8 @@
          }
       }
 
-      int sortOrder[500];
-      for(int i = 0; i < 500; i++) sortOrder[i] = i;
+      int sortOrder[PROP_STRATEGY_COUNT];
+      for(int i = 0; i < PROP_STRATEGY_COUNT; i++) sortOrder[i] = i;
       bool useRecency = (PropRecencyHalfLifeDays > 0.0);
       double testSpanDays = (testStart > 0) ? (double)(testEndTime - testStart) / 86400.0 : 0.0;
       bool recencyIneffective = useRecency && testSpanDays > 0.0 && PropRecencyHalfLifeDays > testSpanDays * 3.0;
@@ -3674,26 +5773,24 @@
       }
       if(trendDayCount > 90) trendDayCount = 90;
 
-         int trendPass[500][90];
-         int trendBreach[500][90];
-         int trendHasData[500][90];
-         double trendCumulative[500][90];
-         double trendLatestCumulative[500];
-         for(int s = 0; s < 500; s++)
-         {
-            for(int d = 0; d < 90; d++)
-            {
-               trendPass[s][d] = 0;
-               trendBreach[s][d] = 0;
-               trendHasData[s][d] = 0;
-               trendCumulative[s][d] = 0.0;
-            }
-            trendLatestCumulative[s] = 0.0;
-         }
+         int trendPass[][90];
+         int trendBreach[][90];
+         int trendHasData[][90];
+         double trendCumulative[][90];
+         double trendLatestCumulative[PROP_STRATEGY_COUNT];
+         ArrayResize(trendPass, PROP_STRATEGY_COUNT);
+         ArrayResize(trendBreach, PROP_STRATEGY_COUNT);
+         ArrayResize(trendHasData, PROP_STRATEGY_COUNT);
+         ArrayResize(trendCumulative, PROP_STRATEGY_COUNT);
+         ArrayInitialize(trendPass, 0);
+         ArrayInitialize(trendBreach, 0);
+         ArrayInitialize(trendHasData, 0);
+         ArrayInitialize(trendCumulative, 0.0);
+         ArrayInitialize(trendLatestCumulative, 0.0);
          for(int i = 0; i < totalRuns; i++)
          {
             int sid = propRuns[i].strategyId - 1;
-            if(sid < 0 || sid >= 500) continue;
+            if(sid < 0 || sid >= PROP_STRATEGY_COUNT) continue;
             long raw = (long)propRuns[i].startDay;
             datetime bucket = (datetime)(raw - (raw % 86400));
             int dayIdx = -1;
@@ -3709,7 +5806,7 @@
             else
                trendBreach[sid][dayIdx]++;
          }
-         for(int s = 0; s < 500; s++)
+         for(int s = 0; s < PROP_STRATEGY_COUNT; s++)
          {
             double cumulative = 0.0;
             for(int d = 0; d < trendDayCount; d++)
@@ -3722,16 +5819,17 @@
             }
          }
 
-         int rankHistory[500][90];
-         for(int s = 0; s < 500; s++)
+         int rankHistory[][90];
+         ArrayResize(rankHistory, PROP_STRATEGY_COUNT);
+         for(int s = 0; s < PROP_STRATEGY_COUNT; s++)
             for(int d = 0; d < 90; d++)
                rankHistory[s][d] = 0;
 
          for(int d = 0; d < trendDayCount; d++)
          {
-            int candList[500];
+            int candList[PROP_STRATEGY_COUNT];
             int candCount = 0;
-            for(int s = 0; s < 500; s++)
+            for(int s = 0; s < PROP_STRATEGY_COUNT; s++)
             {
                if(trendHasData[s][d])
                   candList[candCount++] = s;
@@ -3759,7 +5857,7 @@
          }
 
          int numRankedStrats = 0;
-         for(int s = 0; s < 500; s++)
+         for(int s = 0; s < PROP_STRATEGY_COUNT; s++)
          {
             for(int d = 0; d < trendDayCount; d++)
             {
@@ -3767,13 +5865,13 @@
             }
          }
 
-         double persistenceScore[500];
-         double persistTop10[500];
-         double persistAvgRank[500];
-         double persistStability[500];
-         double persistMomentum[500];
-         bool persistHasData[500];
-         for(int s = 0; s < 500; s++)
+         double persistenceScore[PROP_STRATEGY_COUNT];
+         double persistTop10[PROP_STRATEGY_COUNT];
+         double persistAvgRank[PROP_STRATEGY_COUNT];
+         double persistStability[PROP_STRATEGY_COUNT];
+         double persistMomentum[PROP_STRATEGY_COUNT];
+         bool persistHasData[PROP_STRATEGY_COUNT];
+         for(int s = 0; s < PROP_STRATEGY_COUNT; s++)
          {
             persistHasData[s] = false;
             persistenceScore[s] = 0.0;
@@ -3782,7 +5880,7 @@
             persistStability[s] = 0.0;
             persistMomentum[s] = 0.0;
          }
-         for(int s = 0; s < 500; s++)
+         for(int s = 0; s < PROP_STRATEGY_COUNT; s++)
          {
             int daysWithData = 0, daysTop10 = 0, comparablePairs = 0;
             double sumAbsChange = 0.0;
@@ -3855,7 +5953,7 @@
 
          string bestPersistStratName = "";
          double bestPersistScore = -999.0;
-         for(int s = 0; s < 500; s++)
+         for(int s = 0; s < PROP_STRATEGY_COUNT; s++)
          {
             if(persistHasData[s] && persistenceScore[s] > bestPersistScore)
             {
@@ -3866,7 +5964,7 @@
 
          for(int i = 0; i < 499; i++)
       {
-         for(int j = i + 1; j < 500; j++)
+         for(int j = i + 1; j < PROP_STRATEGY_COUNT; j++)
          {
             int a = sortOrder[i], b = sortOrder[j];
             double rateA = (aggStarts[a] > 0) ? (double)aggPassed[a] / (double)aggStarts[a] : 0.0;
@@ -3902,7 +6000,7 @@
       string bestRecentStratName = "";
       double bestRecentStratScore = -1.0;
       double bestRecentAllTimeRate = 0.0;
-      for(int i = 0; i < 500; i++)
+      for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
       {
          totalPassed += aggPassed[i];
          totalBlown += aggBlown[i];
@@ -3988,7 +6086,7 @@
          "<th data-type=\"num\">Avg Days->Target</th>\n</tr></thead>\n<tbody>\n");
 
       int rankOut = 0;
-      for(int rank = 0; rank < 500; rank++)
+      for(int rank = 0; rank < PROP_STRATEGY_COUNT; rank++)
       {
          int sid = sortOrder[rank];
          if(PropStrategyMode == PROP_STRATEGY_CUSTOM && !PropIsCustomStrategy(sid + 1))
@@ -4182,7 +6280,7 @@
       FileWriteString(handle, "];</script>\n");
 
          FileWriteString(handle, "<script>var trendData=[");
-         for(int s = 0; s < 500; s++)
+         for(int s = 0; s < PROP_STRATEGY_COUNT; s++)
          {
             string arr = "[";
             for(int d = 0; d < trendDayCount; d++)
