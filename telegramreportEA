@@ -52,7 +52,27 @@ input group "Performance Alerts"
 input bool InpEnableAlerts = false;                 // Enable performance alerts
 input bool InpAlertOnEquityTarget = false;          // Alert when equity hits target level
 input ENUM_EQUITY_ALERT_MODE InpEquityAlertMode = EQUITY_ALERT_EVERY_TIME; // Equity alert mode
-input string InpEquityTargetLevels = "";            // Equity levels with text: "level:text;level:text" e.g. "1000:Target Reached;3000:StopLoss Hit"
+
+input group "Equity Level 1"
+input double InpEquityLevel1 = 0.0;                 // Target value (0 = disabled)
+input string InpEquityText1 = "";                   // Custom alert text
+
+input group "Equity Level 2"
+input double InpEquityLevel2 = 0.0;                 // Target value (0 = disabled)
+input string InpEquityText2 = "";                   // Custom alert text
+
+input group "Equity Level 3"
+input double InpEquityLevel3 = 0.0;                 // Target value (0 = disabled)
+input string InpEquityText3 = "";                   // Custom alert text
+
+input group "Equity Level 4"
+input double InpEquityLevel4 = 0.0;                 // Target value (0 = disabled)
+input string InpEquityText4 = "";                   // Custom alert text
+
+input group "Equity Level 5"
+input double InpEquityLevel5 = 0.0;                 // Target value (0 = disabled)
+input string InpEquityText5 = "";                   // Custom alert text
+
 input bool InpAlertOnConsecutiveTrades = false;     // Alert on consecutive wins/losses
 input int InpAlertWinStreakCount = 5;               // Consecutive wins threshold
 input int InpAlertLossStreakCount = 3;              // Consecutive losses threshold
@@ -1658,7 +1678,7 @@ void CheckAlerts()
    if(!InpEnableAlerts)
       return;
 
-   if(InpAlertOnEquityTarget && CleanInput(InpEquityTargetLevels) != "")
+   if(InpAlertOnEquityTarget)
       CheckEquityTargetAlert();
 
    if(InpAlertOnConsecutiveTrades)
@@ -1668,99 +1688,48 @@ void CheckAlerts()
 void CheckEquityTargetAlert()
 {
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   string levels_str = CleanInput(InpEquityTargetLevels);
-   if(levels_str == "")
-      return;
 
-   double levels[];
-   string texts[];
-   int count = ParseEquityTargetEntries(levels_str, levels, texts);
-   if(count == 0)
-      return;
-
-   for(int i = 0; i < count; i++)
-   {
-      double target = levels[i];
-      if(target <= 0.0)
-         continue;
-
-      bool already_triggered = IsEquityLevelTriggered(target);
-
-      if(equity >= target)
-      {
-         if(!already_triggered)
-         {
-            string custom = CleanInput(texts[i]);
-            string msg = "<b>🚨 Equity Alert</b>\n";
-            msg += "Account: <b>" + EscapeHtml(AccountInfoString(ACCOUNT_NAME)) + "</b>\n";
-            msg += "Login: <code>" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "</code>\n";
-            msg += "Server: " + EscapeHtml(AccountInfoString(ACCOUNT_SERVER)) + "\n";
-            msg += "Currency: " + EscapeHtml(AccountInfoString(ACCOUNT_CURRENCY)) + "\n";
-            msg += "Current equity: <b>" + MoneyAmountText(equity) + "</b>\n";
-            msg += "Target level: <b>" + MoneyAmountText(target) + "</b>\n";
-            if(custom != "")
-               msg += "\n" + EscapeHtml(custom) + "\n";
-            SendTelegram(msg);
-            AddEquityTriggeredLevel(target);
-            Log("Equity target alert sent. equity=" + DoubleToString(equity, 2) + " target=" + DoubleToString(target, 2) + " text=" + custom);
-         }
-      }
-      else
-      {
-         if(already_triggered && InpEquityAlertMode == EQUITY_ALERT_EVERY_TIME)
-         {
-            RemoveEquityTriggeredLevel(target);
-            Log("Equity dropped below target " + DoubleToString(target, 2) + ", alert flag reset.");
-         }
-      }
-   }
+   CheckSingleEquityLevel(equity, InpEquityLevel1, InpEquityText1);
+   CheckSingleEquityLevel(equity, InpEquityLevel2, InpEquityText2);
+   CheckSingleEquityLevel(equity, InpEquityLevel3, InpEquityText3);
+   CheckSingleEquityLevel(equity, InpEquityLevel4, InpEquityText4);
+   CheckSingleEquityLevel(equity, InpEquityLevel5, InpEquityText5);
 }
 
-int ParseEquityTargetEntries(string text, double &levels[], string &texts[])
+void CheckSingleEquityLevel(double equity, double target, string custom_text)
 {
-   ArrayResize(levels, 0);
-   ArrayResize(texts, 0);
-   text = CleanInput(text);
-   if(text == "")
-      return 0;
+   if(target <= 0.0)
+      return;
 
-   int count = 0;
-   int len = StringLen(text);
-   int start = 0;
-   for(int pos = 0; pos <= len; pos++)
+   bool already_triggered = IsEquityLevelTriggered(target);
+
+   if(equity >= target)
    {
-      if(pos == len || StringGetCharacter(text, pos) == ';')
+      if(!already_triggered)
       {
-         string entry = CleanInput(StringSubstr(text, start, pos - start));
-         if(entry != "")
-         {
-            int colon = StringFind(entry, ":");
-            double level = 0.0;
-            string entry_text = "";
-            if(colon > 0)
-            {
-               level = StringToDouble(CleanInput(StringSubstr(entry, 0, colon)));
-               entry_text = CleanInput(StringSubstr(entry, colon + 1));
-            }
-            else
-            {
-               level = StringToDouble(entry);
-            }
-
-            if(level > 0.0)
-            {
-               count++;
-               ArrayResize(levels, count);
-               ArrayResize(texts, count);
-               levels[count - 1] = level;
-               texts[count - 1] = entry_text;
-            }
-         }
-         start = pos + 1;
+         string custom = CleanInput(custom_text);
+         string msg = "<b>🚨 Equity Alert</b>\n";
+         msg += "Account: <b>" + EscapeHtml(AccountInfoString(ACCOUNT_NAME)) + "</b>\n";
+         msg += "Login: <code>" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "</code>\n";
+         msg += "Server: " + EscapeHtml(AccountInfoString(ACCOUNT_SERVER)) + "\n";
+         msg += "Currency: " + EscapeHtml(AccountInfoString(ACCOUNT_CURRENCY)) + "\n";
+         msg += "Current equity: <b>" + MoneyAmountText(equity) + "</b>\n";
+         msg += "Target level: <b>" + MoneyAmountText(target) + "</b>\n";
+         if(custom != "")
+            msg += "\n" + EscapeHtml(custom) + "\n";
+         SendTelegram(msg);
+         AddEquityTriggeredLevel(target);
+         Log("Equity target alert sent. equity=" + DoubleToString(equity, 2) + " target=" + DoubleToString(target, 2) + " text=" + custom);
       }
    }
-
-   return count;
+   else
+   {
+      if(already_triggered && InpEquityAlertMode == EQUITY_ALERT_EVERY_TIME)
+      {
+         RemoveEquityTriggeredLevel(target);
+         Log("Equity dropped below target " + DoubleToString(target, 2) + ", alert flag reset.");
+      }
+   }
 }
 
 bool IsEquityLevelTriggered(double level)
