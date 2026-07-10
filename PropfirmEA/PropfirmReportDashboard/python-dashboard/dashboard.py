@@ -25,6 +25,24 @@ def extract_card(html, cls, label):
     )
     return m.group(1).strip() if m else ""
 
+def extract_section_cards(html, section_title):
+    start = html.find("<h2>" + section_title + "</h2>")
+    if start < 0:
+        return {}
+    section_html = html[start:]
+    return {
+        "T5Passed": extract_card(section_html, "pass", "Passed Runs"),
+        "T5Blown": extract_card(section_html, "blow", "Blown Runs"),
+        "T5Active": extract_card(section_html, "act", "Active Runs"),
+        "T5ActiveProfit": extract_card(section_html, "profit", "Active in Profit"),
+        "T5ActiveLoss": extract_card(section_html, "loss", "Active in Drawdown"),
+        "T5PassRate": extract_card(section_html, "rate", "Overall Pass Rate"),
+        "T5CompletedPass": extract_card(section_html, "done", "Completed Pass Rate"),
+        "T5Trades": extract_card(section_html, "tot", "Total Trades"),
+        "T5Signals": extract_card(section_html, "sig", "Total Signals"),
+        "T5Runs": extract_card(section_html, "avg", "Total Runs"),
+    }
+
 def scan_reports():
     results = []
     files = sorted(
@@ -114,6 +132,13 @@ def scan_reports():
             best_strat = m.group(1).strip()
             best_rate = m.group(2).strip()
 
+        top5_data = extract_section_cards(content, "Top 5 Strategies Summary")
+
+        t5_names = ""
+        m = re.search(r'<div class="note">Top 5 strategies: <b>([^<]+)</b></div>', content)
+        if m:
+            t5_names = m.group(1).strip()
+
         top5_codes = []
         table_start = content.find('<table id="strat">')
         if table_start >= 0:
@@ -141,6 +166,7 @@ def scan_reports():
             "Blown": blown,
             "Active": active,
             "ActiveProfit": active_profit,
+            "PassRate": pass_rate,
             "ActiveLoss": active_loss,
             "Trades": trades,
             "Signals": signals,
@@ -156,6 +182,17 @@ def scan_reports():
             "BestRate": best_rate,
             "Top5Codes": top5_codes,
             "IsForwardTest": is_forward,
+            "T5Passed": top5_data.get("T5Passed", ""),
+            "T5Blown": top5_data.get("T5Blown", ""),
+            "T5Active": top5_data.get("T5Active", ""),
+            "T5ActiveProfit": top5_data.get("T5ActiveProfit", ""),
+            "T5ActiveLoss": top5_data.get("T5ActiveLoss", ""),
+            "T5PassRate": top5_data.get("T5PassRate", ""),
+            "T5CompletedPass": top5_data.get("T5CompletedPass", ""),
+            "T5Trades": top5_data.get("T5Trades", ""),
+            "T5Signals": top5_data.get("T5Signals", ""),
+            "T5Runs": top5_data.get("T5Runs", ""),
+            "T5Names": t5_names,
         })
     return results
 
@@ -296,6 +333,14 @@ function fmtRange(startStr,endStr){
     var sm=parseInt(ps[2]),sd=parseInt(ps[3]),em=parseInt(pe[2]),ed=parseInt(pe[3]);
     return sd+' '+MONTHS[sm-1]+' &rarr; '+ed+' '+MONTHS[em-1];
 }
+function fmtGenerated(ft){
+    if(!ft)return'';
+    var p=ft.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/);
+    if(!p)return ft;
+    var h=parseInt(p[4]),m=p[5],ampm=h>=12?'PM':'AM';
+    if(h>12)h-=12;if(h===0)h=12;
+    return parseInt(p[3])+' '+MONTHS[parseInt(p[2])-1]+' '+h+':'+m+' '+ampm;
+}
 function periodLabel(p){if(!p)return'';return p.replace('PERIOD_','')}
 function spawnLabel(s){if(!s)return'';return s.replace('every ','')}
 function rollingLabel(m){return m==='true'?'Rolling':m==='false'?'Single':m}
@@ -358,7 +403,8 @@ function render(){
             var c1=document.createElement('td');c1.textContent=idx+1;tr.appendChild(c1);
             var c2=document.createElement('td');c2.className='col-date';
             c2.innerHTML='<div class="date-range">'+dateRange+'</div>'+
-                '<div class="meta">'+escapeHtml(report.Symbol)+' <span>'+escapeHtml(periodShort)+'</span> '+tag+' '+escapeHtml(totalStrats)+' &middot; '+escapeHtml(rollLabel)+(spawnShort?' <span class="spawn-badge">'+escapeHtml(spawnShort)+'</span>':'')+(report.PropMode?' <span class="prop">'+escapeHtml(report.PropMode)+'</span>':'')+(report.IsForwardTest?' <span class="fwd-label">&#10132;&#10132; forward test</span>':'')+'</div>';
+                '<div class="meta">'+escapeHtml(report.Symbol)+' <span>'+escapeHtml(periodShort)+'</span> '+tag+' '+escapeHtml(totalStrats)+' &middot; '+escapeHtml(rollLabel)+(spawnShort?' <span class="spawn-badge">'+escapeHtml(spawnShort)+'</span>':'')+(report.PropMode?' <span class="prop">'+escapeHtml(report.PropMode)+'</span>':'')+(report.IsForwardTest?' <span class="fwd-label">&#10132;&#10132; forward test</span>':'')+'</div>'+
+                '<div class="gen-time" style="font-size:13px;color:#9ca3af;margin:2px 0 1px">Generated: '+fmtGenerated(report.FileTime)+'</div>';
             tr.appendChild(c2);
             var c3=document.createElement('td');c3.className='col-stats';
             c3.innerHTML='<div class="stat-row">'+
@@ -387,7 +433,19 @@ function render(){
                 var cstr='';for(var ci=0;ci<codes.length;ci++){if(ci>0)cstr+=',';cstr+=('000'+codes[ci]).slice(-3)}
                 h+='<button class="btn-copy" data-codes="'+escapeHtml(cstr)+'" onclick="copyCodes(this)">Copy</button></div>';
                 return h;
-            }(report.Top5Codes):'');
+            }(report.Top5Codes):'')+
+                (report.T5Names?'<div class="stat-row" style="margin-top:6px;padding-top:6px;border-top:1px solid #e5e7eb">'+
+                '<span class="lbl" style="font-size:13px;color:#7c3aed;font-weight:700">&#9733; Top 5</span>'+
+                '<span class="stat-item"><span class="num pass">'+escapeHtml(report.T5Passed)+'</span> pass</span>'+
+                '<span class="stat-item"><span class="num blow">'+escapeHtml(report.T5Blown)+'</span> blown</span>'+
+                '<span class="stat-item"><span class="num act">'+escapeHtml(report.T5Active)+'</span> act'+
+                (report.T5ActiveProfit?' <span style="font-size:12px;color:#059669">'+escapeHtml(report.T5ActiveProfit)+' profit</span>':'')+
+                (report.T5ActiveLoss?' <span style="font-size:12px;color:#dc2626">'+escapeHtml(report.T5ActiveLoss)+' DD</span>':'')+
+                '</span>'+
+                '<span class="stat-item"><span class="num rate">'+escapeHtml(report.T5PassRate)+'</span> rate</span>'+
+                '<span class="stat-item"><span class="num purple">'+escapeHtml(report.T5CompletedPass)+'</span> compl</span>'+
+                '</div>'+
+                '<div style="font-size:13px;color:#6b7280;margin-top:2px">'+escapeHtml(report.T5Names)+'</div>':'');
             tr.appendChild(c3);
             var c4=document.createElement('td');c4.className='col-action';
             c4.innerHTML='<a href="/report/'+escapeHtml(report.FilePath)+'" class="btn-open" target="_blank">Open</a>';
