@@ -5647,6 +5647,7 @@
       int totalRuns = ArraySize(propRuns);
       int aggStarts[PROP_STRATEGY_COUNT], aggPassed[PROP_STRATEGY_COUNT], aggBlown[PROP_STRATEGY_COUNT], aggActive[PROP_STRATEGY_COUNT];
       int aggWins[PROP_STRATEGY_COUNT], aggLosses[PROP_STRATEGY_COUNT], aggTrades[PROP_STRATEGY_COUNT], aggDaysToTarget[PROP_STRATEGY_COUNT];
+      int aggActiveProfit[PROP_STRATEGY_COUNT], aggActiveDD[PROP_STRATEGY_COUNT];
       double aggNetSum[PROP_STRATEGY_COUNT], aggBestNet[PROP_STRATEGY_COUNT], aggWorstNet[PROP_STRATEGY_COUNT], aggWinRateSum[PROP_STRATEGY_COUNT];
       double aggGrossProfit[PROP_STRATEGY_COUNT], aggGrossLoss[PROP_STRATEGY_COUNT];
       double aggDuration[PROP_STRATEGY_COUNT];
@@ -5662,6 +5663,8 @@
       ArrayInitialize(aggLosses, 0);
       ArrayInitialize(aggTrades, 0);
       ArrayInitialize(aggDaysToTarget, 0);
+      ArrayInitialize(aggActiveProfit, 0);
+      ArrayInitialize(aggActiveDD, 0);
       ArrayInitialize(aggWinRateSum, 0.0);
       ArrayInitialize(aggWinRateCount, 0);
       ArrayInitialize(aggNetSum, 0.0);
@@ -5689,9 +5692,15 @@
          {
             aggActive[sid]++;
             if(propRuns[i].equity >= propRuns[i].startingBalance)
+            {
                activeProfit++;
+               aggActiveProfit[sid]++;
+            }
             else
+            {
                activeDD++;
+               aggActiveDD[sid]++;
+            }
          }
 
          aggWins[sid] += propRuns[i].wins;
@@ -6061,7 +6070,44 @@
          (bestPersistStratName != "" ?
             "<div class=\"card persist\"><div class=\"label\">Top Strategy (Persistence)</div><div class=\"value\" style=\"font-size:13px;line-height:1.3\">" + bestPersistStratName + "</div><div class=\"sub\">Score: " + DoubleToString(bestPersistScore, 1) + "</div></div>\n" :
             "") +
-         "</div>\n</div>\n");
+          "</div>\n</div>\n");
+
+      int topN = 5;
+      int t5Passed = 0, t5Blown = 0, t5Active = 0, t5ActiveProfit = 0, t5ActiveDD = 0;
+      long t5Trades = 0, t5Signals = 0, t5Runs = 0;
+      string t5Names = "";
+      for(int ti = 0; ti < topN && ti < PROP_STRATEGY_COUNT; ti++)
+      {
+         int sid = sortOrder[ti];
+         if(aggStarts[sid] == 0) break;
+         t5Passed += aggPassed[sid];
+         t5Blown += aggBlown[sid];
+         t5Active += aggActive[sid];
+         t5ActiveProfit += aggActiveProfit[sid];
+         t5ActiveDD += aggActiveDD[sid];
+         t5Trades += aggTrades[sid];
+         t5Signals += propSignalCounts[sid];
+         t5Runs += aggStarts[sid];
+         if(ti > 0) t5Names += ", ";
+         t5Names += StrategyName(sid + 1);
+      }
+      double t5OverallPassRate = (t5Runs > 0) ? (double)t5Passed / (double)t5Runs * 100.0 : 0.0;
+      double t5CompletedPassRate = (t5Passed + t5Blown > 0) ? (double)t5Passed / (double)(t5Passed + t5Blown) * 100.0 : 0.0;
+      string top5html = "<div class=\"section\">\n<h2>Top 5 Strategies Summary</h2>\n<div class=\"cards\">\n" +
+         "<div class=\"card pass\"><div class=\"label\">Passed Runs</div><div class=\"value\">" + IntegerToString(t5Passed) + "</div><div class=\"sub\">target hit</div></div>\n" +
+         "<div class=\"card blow\"><div class=\"label\">Blown Runs</div><div class=\"value\">" + IntegerToString(t5Blown) + "</div><div class=\"sub\">rule breach</div></div>\n" +
+         "<div class=\"card act\"><div class=\"label\">Active Runs</div><div class=\"value\">" + IntegerToString(t5Active) + "</div><div class=\"sub\">still running at end</div></div>\n" +
+         (t5Active > 0 ?
+            "<div class=\"card profit\"><div class=\"label\">Active in Profit</div><div class=\"value\">" + DoubleToString((double)t5ActiveProfit / t5Active * 100.0, 1) + "%</div><div class=\"sub\">" + IntegerToString(t5ActiveProfit) + " of " + IntegerToString(t5Active) + "</div></div>\n" +
+            "<div class=\"card loss\"><div class=\"label\">Active in Drawdown</div><div class=\"value\">" + DoubleToString((double)t5ActiveDD / t5Active * 100.0, 1) + "%</div><div class=\"sub\">" + IntegerToString(t5ActiveDD) + " of " + IntegerToString(t5Active) + "</div></div>\n" :
+            "") +
+         "<div class=\"card rate\"><div class=\"label\">Overall Pass Rate</div><div class=\"value\">" + DoubleToString(t5OverallPassRate, 1) + "%</div><div class=\"sub\">passed / total runs</div></div>\n" +
+         "<div class=\"card done\"><div class=\"label\">Completed Pass Rate</div><div class=\"value\">" + DoubleToString(t5CompletedPassRate, 1) + "%</div><div class=\"sub\">passed / (passed+blown)</div></div>\n" +
+         "<div class=\"card tot\"><div class=\"label\">Total Trades</div><div class=\"value\">" + IntegerToString(t5Trades) + "</div><div class=\"sub\">virtual positions</div></div>\n" +
+         "<div class=\"card sig\"><div class=\"label\">Total Signals</div><div class=\"value\">" + IntegerToString(t5Signals) + "</div><div class=\"sub\">strategy triggers</div></div>\n" +
+         "<div class=\"card avg\"><div class=\"label\">Total Runs</div><div class=\"value\">" + IntegerToString(t5Runs) + "</div><div class=\"sub\">top 5 by " + (useRecency ? "recency score" : "pass rate") + "</div></div>\n" +
+         "</div>\n<div class=\"note\">Top 5 strategies: <b>" + t5Names + "</b></div>\n</div>\n";
+      FileWriteString(handle, top5html);
 
       FileWriteString(handle,
          "<div class=\"section\">\n<h2>Strategy Ranking (" + (useRecency ? "by recency score" : "by pass rate across start-days") + ")</h2>\n" +
@@ -6480,8 +6526,15 @@
          ".pagination .page-info{font-size:12px;color:#64748b;font-weight:600}\n" +
          ".pagination .btn.disabled{opacity:.4;cursor:default}\n" +
          ".card.rec::before{background:#6366f1}\n" +
-         ".card.persist::before{background:#10b981}\n" +
-         ".footer{color:#94a3b8;font-size:12px;text-align:center;margin-top:22px;padding:14px}\n" +
+          ".card.persist::before{background:#10b981}\n" +
+          ".top5-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}\n" +
+          ".top5-card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.05);border-top:3px solid #6366f1}\n" +
+          ".top5-card .tk{color:#64748b;font-size:10px;text-transform:uppercase;letter-spacing:.6px}\n" +
+          ".top5-card .tv{color:#1e293b;font-size:18px;font-weight:700}\n" +
+          ".top5-card .sn{color:#1e293b;font-size:12px;font-weight:700;margin:4px 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n" +
+          ".top5-card .sr{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px;font-size:11px;color:#64748b;margin-top:4px}\n" +
+          ".top5-card .sr b{color:#1e293b}\n" +
+          ".footer{color:#94a3b8;font-size:12px;text-align:center;margin-top:22px;padding:14px}\n" +
          ".footer code{background:#f1f5f9;padding:2px 8px;border-radius:4px;color:#64748b}\n" +
          "</style>\n<script>(function(){var s=document.createElement('style');var c='';for(var i=0;i<=100;i++){c+='.b'+i+'{width:'+i+'%}';}s.textContent=c;document.head.appendChild(s);})();</script>\n</head>\n<body>\n<div class=\"wrap\">\n");
    }
