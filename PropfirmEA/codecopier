@@ -1624,7 +1624,7 @@ void CreateReportButtons()
    ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_XDISTANCE, base_x);
    ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_YDISTANCE, base_y);
    ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_XSIZE, panel_w);
-   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_YSIZE, 530);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_YSIZE, 445);
    ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_BORDER_TYPE, BORDER_FLAT);
    ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_COLOR, clrGray);
    ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_BGCOLOR, clrDarkSlateGray);
@@ -1632,92 +1632,92 @@ void CreateReportButtons()
    ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_HIDDEN, true);
 
-   int y = 14;
+   int y = 10;
 
    // Title
    CreateDashboardLabel(DASHBOARD_LBL_TITLE, "Telegram Trade Reporter", y, x_lbl, 10, clrWhite);
-   y += 18;
+   y += 14;
 
    // Status
    CreateDashboardLabel(DASHBOARD_LBL_STATUS, "", y, x_lbl, 8, clrWhite);
-   y += 14;
+   y += 10;
 
    // Info line (magic + alerts)
    CreateDashboardLabel(DASHBOARD_LBL_INFO, "", y, x_lbl, 8, clrWhite);
-   y += 14;
+   y += 10;
 
    // Custom from/to
    CreateDashboardLabel(DASHBOARD_LBL_CUSTOM, "", y, x_lbl, 8, clrWhite);
-   y += 14;
+   y += 10;
 
    // Schedule
    CreateDashboardLabel(DASHBOARD_LBL_SCHEDULE, "", y, x_lbl, 8, clrWhite);
-   y += 14;
+   y += 10;
 
    // Next report
    CreateDashboardLabel(DASHBOARD_LBL_NEXT, "", y, x_lbl, 8, clrWhite);
-   y += 18;
+   y += 12;
 
    // Separator 1
    CreateSeparatorLine(DASHBOARD_SEP1, y, x_lbl, panel_w - 2 * x_lbl);
-   y += 8;
+   y += 4;
 
    // Report buttons
-   CreateReportButton(SEND_NOW_BUTTON_NAME, "Send Hourly Now", y, clrSeaGreen, clrDarkGreen, x_btn, btn_w);
-   y += 26;
-   CreateReportButton(SEND_TODAY_BUTTON_NAME, "Send Today", y, clrDarkOliveGreen, clrDarkGreen, x_btn, btn_w);
-   y += 26;
-   CreateReportButton(SEND_WEEKLY_BUTTON_NAME, "Send Weekly", y, clrSteelBlue, clrMidnightBlue, x_btn, btn_w);
-   y += 26;
-   CreateReportButton(SEND_MONTHLY_BUTTON_NAME, "Send Monthly", y, clrDarkSlateGray, clrBlack, x_btn, btn_w);
-   y += 26;
-   CreateReportButton(SEND_OVERALL_BUTTON_NAME, "Send Overall", y, clrSaddleBrown, clrMaroon, x_btn, btn_w);
-   y += 30;
+   CreateReportButton(SEND_NOW_BUTTON_NAME, "Hourly", y, clrSeaGreen, clrDarkGreen, x_btn, btn_w);
+   y += 24;
+   CreateReportButton(SEND_TODAY_BUTTON_NAME, "Today", y, clrDarkOliveGreen, clrDarkGreen, x_btn, btn_w);
+   y += 24;
+   CreateReportButton(SEND_WEEKLY_BUTTON_NAME, "Weekly", y, clrSteelBlue, clrMidnightBlue, x_btn, btn_w);
+   y += 24;
+   CreateReportButton(SEND_MONTHLY_BUTTON_NAME, "Monthly", y, clrDarkSlateGray, clrBlack, x_btn, btn_w);
+   y += 24;
+   CreateReportButton(SEND_OVERALL_BUTTON_NAME, "Overall", y, clrSaddleBrown, clrMaroon, x_btn, btn_w);
+   y += 24;
 
    // Separator 2
    CreateSeparatorLine(DASHBOARD_SEP2, y, x_lbl, panel_w - 2 * x_lbl);
-   y += 8;
+   y += 4;
 
    // Custom section
    CreateDashboardLabel(CUSTOM_FROM_LABEL_NAME, "From", y, x_lbl, 8, clrWhite);
    CreateReportEdit(CUSTOM_FROM_EDIT_NAME, TimeToString(TimeCurrent() - MathMax(1, InpLookbackHours) * 3600, TIME_DATE | TIME_SECONDS), y - 2, x_edt);
-   y += 24;
+   y += 22;
 
    CreateDashboardLabel(CUSTOM_TO_LABEL_NAME, "To", y, x_lbl, 8, clrWhite);
    CreateReportEdit(CUSTOM_TO_EDIT_NAME, "now", y - 2, x_edt);
-   y += 24;
+   y += 22;
 
    CreateReportButton(SET_TO_LATEST_BUTTON_NAME, "Use Latest Trade", y, clrDimGray, clrBlack, x_btn, btn_w);
-   y += 26;
+   y += 24;
 
    CreateDashboardLabel(CUSTOM_MAGIC_LABEL_NAME, "Magic", y, x_lbl, 8, clrWhite);
    CreateReportEdit(CUSTOM_MAGIC_EDIT_NAME, InpUseMagicNumberFilter ? (string)InpMagicNumberFilter : "all", y - 2, x_edt);
-   y += 24;
+   y += 22;
 
    CreateReportButton(SEND_CUSTOM_BUTTON_NAME, "Send Custom", y, clrDarkCyan, clrTeal, x_btn, btn_w);
-   y += 30;
+   y += 24;
 
    // Separator 3
    CreateSeparatorLine(DASHBOARD_SEP3, y, x_lbl, panel_w - 2 * x_lbl);
-   y += 8;
+   y += 4;
 
    // Equity section
    CreateDashboardLabel(DASHBOARD_LBL_EQUITY_TITLE, "", y, x_lbl, 9, clrWhite);
-   y += 18;
+   y += 14;
 
    CreateDashboardLabel(DASHBOARD_LBL_EQ1, "", y, x_lbl, 8, clrWhite);
-   y += 16;
+   y += 12;
    CreateDashboardLabel(DASHBOARD_LBL_EQ2, "", y, x_lbl, 8, clrWhite);
-   y += 16;
+   y += 12;
    CreateDashboardLabel(DASHBOARD_LBL_EQ3, "", y, x_lbl, 8, clrWhite);
-   y += 16;
+   y += 12;
    CreateDashboardLabel(DASHBOARD_LBL_EQ4, "", y, x_lbl, 8, clrWhite);
-   y += 16;
+   y += 12;
    CreateDashboardLabel(DASHBOARD_LBL_EQ5, "", y, x_lbl, 8, clrWhite);
-   y += 20;
+   y += 14;
 
-   CreateReportButton(RESET_EQUITY_BUTTON_NAME, "Reset Equity Alerts", y, clrDarkRed, clrMaroon, x_btn, btn_w);
-   y += 28;
+   CreateReportButton(RESET_EQUITY_BUTTON_NAME, "Reset All", y, clrDarkRed, clrMaroon, x_btn, btn_w);
+   y += 24;
 
    // Error label
    CreateDashboardLabel(DASHBOARD_LBL_ERROR, "", y, x_lbl, 8, clrRed);
