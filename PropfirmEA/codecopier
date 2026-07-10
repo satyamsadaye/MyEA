@@ -140,11 +140,13 @@ long g_effective_magic_filter = 0;
 string g_equity_target_levels_triggered = "";
 int g_last_alerted_win_streak = 0;
 int g_last_alerted_loss_streak = 0;
+double g_previous_equity = -1;
 
 int OnInit()
 {
    EventSetTimer(1);
    g_next_report_time = ComputeNextAutoReportTime(TimeCurrent());
+   g_previous_equity = -1;
    CreateReportButtons();
    RefreshEffectiveMagicFilterFromChart();
    Log("EA initialized. Buttons=" + (InpShowSendNowButton ? "on" : "off") +
@@ -155,9 +157,6 @@ int OnInit()
       SendTelegram("MT5 Telegram trade reporter started for account " + (string)AccountInfoInteger(ACCOUNT_LOGIN) + ".");
 
    UpdateStatus();
-
-   if(InpEnableAlerts && InpAlertOnEquityTarget)
-      InitializeEquityTriggeredStates();
 
    return INIT_SUCCEEDED;
 }
@@ -1890,21 +1889,30 @@ void CheckEquityTargetAlert()
 {
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
 
-   CheckSingleEquityLevel(equity, InpEquityLevel1, InpEquityText1);
-   CheckSingleEquityLevel(equity, InpEquityLevel2, InpEquityText2);
-   CheckSingleEquityLevel(equity, InpEquityLevel3, InpEquityText3);
-   CheckSingleEquityLevel(equity, InpEquityLevel4, InpEquityText4);
-   CheckSingleEquityLevel(equity, InpEquityLevel5, InpEquityText5);
+   if(g_previous_equity < 0)
+   {
+      g_previous_equity = equity;
+      return;
+   }
+
+   CheckSingleEquityLevel(g_previous_equity, equity, InpEquityLevel1, InpEquityText1);
+   CheckSingleEquityLevel(g_previous_equity, equity, InpEquityLevel2, InpEquityText2);
+   CheckSingleEquityLevel(g_previous_equity, equity, InpEquityLevel3, InpEquityText3);
+   CheckSingleEquityLevel(g_previous_equity, equity, InpEquityLevel4, InpEquityText4);
+   CheckSingleEquityLevel(g_previous_equity, equity, InpEquityLevel5, InpEquityText5);
+
+   g_previous_equity = equity;
 }
 
-void CheckSingleEquityLevel(double equity, double target, string custom_text)
+void CheckSingleEquityLevel(double prev_equity, double equity, double target, string custom_text)
 {
    if(target <= 0.0)
       return;
 
    bool already_triggered = IsEquityLevelTriggered(target);
+   bool crossed_above = (prev_equity < target && equity >= target);
 
-   if(equity >= target)
+   if(crossed_above)
    {
       if(!already_triggered)
       {
@@ -1923,7 +1931,7 @@ void CheckSingleEquityLevel(double equity, double target, string custom_text)
          Log("Equity target alert sent. equity=" + DoubleToString(equity, 2) + " target=" + DoubleToString(target, 2) + " text=" + custom);
       }
    }
-   else
+   else if(equity < target)
    {
       if(already_triggered && InpEquityAlertMode == EQUITY_ALERT_EVERY_TIME)
       {
@@ -1982,8 +1990,6 @@ void ResetEquityAlerts()
    g_last_alerted_loss_streak = 0;
    g_last_status = "Equity alerts reset";
    Log("Equity alerts reset by user.");
-   if(InpEnableAlerts && InpAlertOnEquityTarget)
-      InitializeEquityTriggeredStates();
    UpdateStatus();
 }
 
