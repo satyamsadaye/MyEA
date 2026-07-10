@@ -1982,6 +1982,8 @@ void ResetEquityAlerts()
    g_last_alerted_loss_streak = 0;
    g_last_status = "Equity alerts reset";
    Log("Equity alerts reset by user.");
+   if(InpEnableAlerts && InpAlertOnEquityTarget)
+      InitializeEquityTriggeredStates();
    UpdateStatus();
 }
 
