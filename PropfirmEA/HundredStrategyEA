@@ -1130,8 +1130,9 @@
    input double PropStartingBalance = 5000.0;
    input double PropMaxTotalDrawdownPercent = 6.0;
    input double PropProfitTargetPercent = 10.0;
-   input double PropDailyDrawdownPercent = 4.0;
-   input double PropDailyProtectionBufferPercent = 1.0; // Example: 4% daily DD with 1% buffer protects at 3%
+    input bool PropEnableDailyDrawdown = true;
+    input double PropDailyDrawdownPercent = 4.0;
+    input double PropDailyProtectionBufferPercent = 1.0; // Example: 4% daily DD with 1% buffer protects at 3%
    input int PropDailyResetHourUTC = 0;
    input int PropDailyResetMinuteUTC = 0;
    input int PropPauseSignalsHourUTC = 18;
@@ -4928,34 +4929,34 @@
          double dailyProtectionMoney = propResults[i].dayStartReference * protectedDailyPercent / 100.0;
          double dailyBreachMoney = propResults[i].dayStartReference * PropDailyDrawdownPercent / 100.0;
 
-         if(dailyProtectionMoney > 0.0 && dailyDrawdown >= dailyProtectionMoney && propResults[i].pos.open && !propResults[i].protectionTriggeredToday)
-         {
-            propResults[i].equityProtectionTriggers++;
-            propResults[i].protectionTriggeredToday = true;
-            PropCloseVirtualPosition(i);
-         }
+          if(PropEnableDailyDrawdown && dailyProtectionMoney > 0.0 && dailyDrawdown >= dailyProtectionMoney && propResults[i].pos.open && !propResults[i].protectionTriggeredToday)
+          {
+             propResults[i].equityProtectionTriggers++;
+             propResults[i].protectionTriggeredToday = true;
+             PropCloseVirtualPosition(i);
+          }
 
-         if(propResults[i].equity - PropStartingBalance >= targetMoney)
-         {
-            propResults[i].passed = true;
-            propResults[i].ended = now;
-            propResults[i].daysToTarget = (int)((now - propResults[i].started) / 86400) + 1;
-            propResults[i].breachReason = "Target hit";
-            PropCloseVirtualPosition(i);
-         }
-         else if(totalDrawdown >= maxDrawdownMoney || dailyDrawdown >= dailyBreachMoney)
-         {
-            propResults[i].breached = true;
-            propResults[i].ended = now;
-            propResults[i].daysToBreach = (int)((now - propResults[i].started) / 86400) + 1;
-            if(totalDrawdown >= maxDrawdownMoney && dailyDrawdown >= dailyBreachMoney)
-               propResults[i].breachReason = "Total + Daily DD";
-            else if(totalDrawdown >= maxDrawdownMoney)
-               propResults[i].breachReason = "Total DD";
-            else
-               propResults[i].breachReason = "Daily DD";
-            PropCloseVirtualPosition(i);
-         }
+          if(propResults[i].equity - PropStartingBalance >= targetMoney)
+          {
+             propResults[i].passed = true;
+             propResults[i].ended = now;
+             propResults[i].daysToTarget = (int)((now - propResults[i].started) / 86400) + 1;
+             propResults[i].breachReason = "Target hit";
+             PropCloseVirtualPosition(i);
+          }
+          else if(totalDrawdown >= maxDrawdownMoney || (PropEnableDailyDrawdown && dailyDrawdown >= dailyBreachMoney))
+          {
+             propResults[i].breached = true;
+             propResults[i].ended = now;
+             propResults[i].daysToBreach = (int)((now - propResults[i].started) / 86400) + 1;
+             if(PropEnableDailyDrawdown && totalDrawdown >= maxDrawdownMoney && dailyDrawdown >= dailyBreachMoney)
+                propResults[i].breachReason = "Total + Daily DD";
+             else if(totalDrawdown >= maxDrawdownMoney)
+                propResults[i].breachReason = "Total DD";
+             else
+                propResults[i].breachReason = "Daily DD";
+             PropCloseVirtualPosition(i);
+          }
       }
    }
 
@@ -5381,37 +5382,37 @@
 
          bool finished = false;
 
-         if(dailyProtectionMoney > 0.0 && dailyDrawdown >= dailyProtectionMoney && propRuns[i].pos.open && !propRuns[i].protectionTriggeredToday)
-         {
-            propRuns[i].equityProtectionTriggers++;
-            propRuns[i].protectionTriggeredToday = true;
-            PropRollingCloseVirtualPosition(i);
-            propRuns[i].equity = propRuns[i].balance;
-         }
+          if(PropEnableDailyDrawdown && dailyProtectionMoney > 0.0 && dailyDrawdown >= dailyProtectionMoney && propRuns[i].pos.open && !propRuns[i].protectionTriggeredToday)
+          {
+             propRuns[i].equityProtectionTriggers++;
+             propRuns[i].protectionTriggeredToday = true;
+             PropRollingCloseVirtualPosition(i);
+             propRuns[i].equity = propRuns[i].balance;
+          }
 
-         if(propRuns[i].equity - propRuns[i].startingBalance >= targetMoney)
-         {
-            propRuns[i].passed = true;
-            propRuns[i].ended = now;
-            propRuns[i].daysToTarget = (int)((now - propRuns[i].startDay) / 86400) + 1;
-            propRuns[i].breachReason = "Target hit";
-            PropRollingCloseVirtualPosition(i);
-            finished = true;
-         }
-         else if(totalDrawdown >= maxDrawdownMoney || dailyDrawdown >= dailyBreachMoney)
-         {
-            propRuns[i].breached = true;
-            propRuns[i].ended = now;
-            propRuns[i].daysToBreach = (int)((now - propRuns[i].startDay) / 86400) + 1;
-            if(totalDrawdown >= maxDrawdownMoney && dailyDrawdown >= dailyBreachMoney)
-               propRuns[i].breachReason = "Total + Daily DD";
-            else if(totalDrawdown >= maxDrawdownMoney)
-               propRuns[i].breachReason = "Total DD";
-            else
-               propRuns[i].breachReason = "Daily DD";
-            PropRollingCloseVirtualPosition(i);
-            finished = true;
-         }
+          if(propRuns[i].equity - propRuns[i].startingBalance >= targetMoney)
+          {
+             propRuns[i].passed = true;
+             propRuns[i].ended = now;
+             propRuns[i].daysToTarget = (int)((now - propRuns[i].startDay) / 86400) + 1;
+             propRuns[i].breachReason = "Target hit";
+             PropRollingCloseVirtualPosition(i);
+             finished = true;
+          }
+          else if(totalDrawdown >= maxDrawdownMoney || (PropEnableDailyDrawdown && dailyDrawdown >= dailyBreachMoney))
+          {
+             propRuns[i].breached = true;
+             propRuns[i].ended = now;
+             propRuns[i].daysToBreach = (int)((now - propRuns[i].startDay) / 86400) + 1;
+             if(PropEnableDailyDrawdown && totalDrawdown >= maxDrawdownMoney && dailyDrawdown >= dailyBreachMoney)
+                propRuns[i].breachReason = "Total + Daily DD";
+             else if(totalDrawdown >= maxDrawdownMoney)
+                propRuns[i].breachReason = "Total DD";
+             else
+                propRuns[i].breachReason = "Daily DD";
+             PropRollingCloseVirtualPosition(i);
+             finished = true;
+          }
 
          if(finished)
          {
@@ -5648,6 +5649,7 @@
       int aggStarts[PROP_STRATEGY_COUNT], aggPassed[PROP_STRATEGY_COUNT], aggBlown[PROP_STRATEGY_COUNT], aggActive[PROP_STRATEGY_COUNT];
       int aggWins[PROP_STRATEGY_COUNT], aggLosses[PROP_STRATEGY_COUNT], aggTrades[PROP_STRATEGY_COUNT], aggDaysToTarget[PROP_STRATEGY_COUNT];
       int aggActiveProfit[PROP_STRATEGY_COUNT], aggActiveDD[PROP_STRATEGY_COUNT];
+      double aggActiveProfitDepth[PROP_STRATEGY_COUNT], aggActiveDDDepth[PROP_STRATEGY_COUNT];
       double aggNetSum[PROP_STRATEGY_COUNT], aggBestNet[PROP_STRATEGY_COUNT], aggWorstNet[PROP_STRATEGY_COUNT], aggWinRateSum[PROP_STRATEGY_COUNT];
       double aggGrossProfit[PROP_STRATEGY_COUNT], aggGrossLoss[PROP_STRATEGY_COUNT];
       double aggDuration[PROP_STRATEGY_COUNT];
@@ -5665,6 +5667,8 @@
       ArrayInitialize(aggDaysToTarget, 0);
       ArrayInitialize(aggActiveProfit, 0);
       ArrayInitialize(aggActiveDD, 0);
+      ArrayInitialize(aggActiveProfitDepth, 0.0);
+      ArrayInitialize(aggActiveDDDepth, 0.0);
       ArrayInitialize(aggWinRateSum, 0.0);
       ArrayInitialize(aggWinRateCount, 0);
       ArrayInitialize(aggNetSum, 0.0);
@@ -5679,6 +5683,7 @@
       datetime testEndTime = TimeCurrent();
       if(g_testEndTime > 0) testEndTime = g_testEndTime;
       int activeProfit = 0, activeDD = 0;
+      double activeProfitDepthSum = 0.0, activeDDDepthSum = 0.0;
 
       for(int i = 0; i < totalRuns; i++)
       {
@@ -5691,15 +5696,20 @@
          else
          {
             aggActive[sid]++;
+            double equityPct = (propRuns[i].equity - propRuns[i].startingBalance) / propRuns[i].startingBalance * 100.0;
             if(propRuns[i].equity >= propRuns[i].startingBalance)
             {
                activeProfit++;
                aggActiveProfit[sid]++;
+               activeProfitDepthSum += equityPct;
+               aggActiveProfitDepth[sid] += equityPct;
             }
             else
             {
                activeDD++;
                aggActiveDD[sid]++;
+               activeDDDepthSum += equityPct;
+               aggActiveDDDepth[sid] += equityPct;
             }
          }
 
@@ -6055,9 +6065,9 @@
          "<div class=\"card pass\"><div class=\"label\">Passed Runs</div><div class=\"value\">" + IntegerToString(totalPassed) + "</div><div class=\"sub\">target hit</div></div>\n" +
          "<div class=\"card blow\"><div class=\"label\">Blown Runs</div><div class=\"value\">" + IntegerToString(totalBlown) + "</div><div class=\"sub\">rule breach</div></div>\n" +
          "<div class=\"card act\"><div class=\"label\">Active Runs</div><div class=\"value\">" + IntegerToString(totalActive) + "</div><div class=\"sub\">still running at end</div></div>\n" +
-         (totalActive > 0 ?
-            "<div class=\"card profit\"><div class=\"label\">Active in Profit</div><div class=\"value\">" + DoubleToString((double)activeProfit / totalActive * 100.0, 1) + "%</div><div class=\"sub\">" + IntegerToString(activeProfit) + " of " + IntegerToString(totalActive) + "</div></div>\n" +
-            "<div class=\"card loss\"><div class=\"label\">Active in Drawdown</div><div class=\"value\">" + DoubleToString((double)activeDD / totalActive * 100.0, 1) + "%</div><div class=\"sub\">" + IntegerToString(activeDD) + " of " + IntegerToString(totalActive) + "</div></div>\n" :
+          (totalActive > 0 ?
+             "<div class=\"card profit\"><div class=\"label\">Active in Profit</div><div class=\"value\">" + DoubleToString((double)activeProfit / totalActive * 100.0, 1) + "%</div><div class=\"sub\">" + IntegerToString(activeProfit) + " of " + IntegerToString(totalActive) + (activeProfit > 0 ? " &middot; avg +" + DoubleToString(activeProfitDepthSum / activeProfit, 1) + "%" : "") + "</div></div>\n" +
+             "<div class=\"card loss\"><div class=\"label\">Active in Drawdown</div><div class=\"value\">" + DoubleToString((double)activeDD / totalActive * 100.0, 1) + "%</div><div class=\"sub\">" + IntegerToString(activeDD) + " of " + IntegerToString(totalActive) + (activeDD > 0 ? " &middot; avg " + DoubleToString(activeDDDepthSum / activeDD, 1) + "%" : "") + "</div></div>\n" :
             "") +
          "<div class=\"card rate\"><div class=\"label\">Overall Pass Rate</div><div class=\"value\">" + DoubleToString(overallPassRate, 1) + "%</div><div class=\"sub\">passed / total runs</div></div>\n" +
          "<div class=\"card done\"><div class=\"label\">Completed Pass Rate</div><div class=\"value\">" + DoubleToString(completedPassRate, 1) + "%</div><div class=\"sub\">passed / (passed+blown)</div></div>\n" +
@@ -6074,6 +6084,7 @@
 
       int topN = 5;
       int t5Passed = 0, t5Blown = 0, t5Active = 0, t5ActiveProfit = 0, t5ActiveDD = 0;
+      double t5ActiveProfitDepthSum = 0.0, t5ActiveDDDepthSum = 0.0;
       long t5Trades = 0, t5Signals = 0, t5Runs = 0;
       string t5Names = "";
       for(int ti = 0; ti < topN && ti < PROP_STRATEGY_COUNT; ti++)
@@ -6085,6 +6096,8 @@
          t5Active += aggActive[sid];
          t5ActiveProfit += aggActiveProfit[sid];
          t5ActiveDD += aggActiveDD[sid];
+         t5ActiveProfitDepthSum += aggActiveProfitDepth[sid];
+         t5ActiveDDDepthSum += aggActiveDDDepth[sid];
          t5Trades += aggTrades[sid];
          t5Signals += propSignalCounts[sid];
          t5Runs += aggStarts[sid];
@@ -6098,8 +6111,8 @@
          "<div class=\"card blow\"><div class=\"label\">Blown Runs</div><div class=\"value\">" + IntegerToString(t5Blown) + "</div><div class=\"sub\">rule breach</div></div>\n" +
          "<div class=\"card act\"><div class=\"label\">Active Runs</div><div class=\"value\">" + IntegerToString(t5Active) + "</div><div class=\"sub\">still running at end</div></div>\n" +
          (t5Active > 0 ?
-            "<div class=\"card profit\"><div class=\"label\">Active in Profit</div><div class=\"value\">" + DoubleToString((double)t5ActiveProfit / t5Active * 100.0, 1) + "%</div><div class=\"sub\">" + IntegerToString(t5ActiveProfit) + " of " + IntegerToString(t5Active) + "</div></div>\n" +
-            "<div class=\"card loss\"><div class=\"label\">Active in Drawdown</div><div class=\"value\">" + DoubleToString((double)t5ActiveDD / t5Active * 100.0, 1) + "%</div><div class=\"sub\">" + IntegerToString(t5ActiveDD) + " of " + IntegerToString(t5Active) + "</div></div>\n" :
+            "<div class=\"card profit\"><div class=\"label\">Active in Profit</div><div class=\"value\">" + DoubleToString((double)t5ActiveProfit / t5Active * 100.0, 1) + "%</div><div class=\"sub\">" + IntegerToString(t5ActiveProfit) + " of " + IntegerToString(t5Active) + (t5ActiveProfit > 0 ? " &middot; avg +" + DoubleToString(t5ActiveProfitDepthSum / t5ActiveProfit, 1) + "%" : "") + "</div></div>\n" +
+            "<div class=\"card loss\"><div class=\"label\">Active in Drawdown</div><div class=\"value\">" + DoubleToString((double)t5ActiveDD / t5Active * 100.0, 1) + "%</div><div class=\"sub\">" + IntegerToString(t5ActiveDD) + " of " + IntegerToString(t5Active) + (t5ActiveDD > 0 ? " &middot; avg " + DoubleToString(t5ActiveDDDepthSum / t5ActiveDD, 1) + "%" : "") + "</div></div>\n" :
             "") +
          "<div class=\"card rate\"><div class=\"label\">Overall Pass Rate</div><div class=\"value\">" + DoubleToString(t5OverallPassRate, 1) + "%</div><div class=\"sub\">passed / total runs</div></div>\n" +
          "<div class=\"card done\"><div class=\"label\">Completed Pass Rate</div><div class=\"value\">" + DoubleToString(t5CompletedPassRate, 1) + "%</div><div class=\"sub\">passed / (passed+blown)</div></div>\n" +
@@ -6477,8 +6490,8 @@
          ".toolbar input:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.15)}\n" +
          ".btn{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;padding:8px 14px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:600}\n" +
          ".btn:hover{background:#e2e8f0;color:#1e293b}\n.btn.active{background:#6366f1;border-color:#818cf8;color:#fff}\n" +
-         ".table-scroll{overflow-x:auto;border:1px solid #e2e8f0;border-radius:10px;max-width:100%}\n" +
-         ".table-scroll.has-top{border-top:none;border-radius:0 0 10px 10px}\n" +
+          ".table-scroll{overflow-x:auto;border:1px solid #e2e8f0;border-radius:10px;max-width:100%}\n" +
+          ".table-scroll.has-top{border-top:none;border-radius:0 0 10px 10px}\n" +
          ".scroll-top{overflow-x:auto;overflow-y:hidden;height:16px;border:1px solid #e2e8f0;border-bottom:none;border-radius:10px 10px 0 0;background:#f8fafc}\n" +
          ".scroll-top>div{height:1px;min-width:1px}\n" +
          "table{border-collapse:collapse;font-size:12.5px;width:max-content;min-width:100%}\n" +
@@ -6487,7 +6500,7 @@
          "thead th.sticky-col:nth-child(1){left:0;background:#4f46e5;min-width:50px}\n" +
          "thead th.sticky-col:nth-child(2){left:50px;background:#4f46e5;min-width:180px}\n" +
          "thead th:hover{background:#5457e5}\n" +
-         "th[data-type]{position:relative}\n" +
+          "th[data-type]{}\n" +
          "th[data-type]::after{content:\"\";position:absolute;right:8px;top:50%;transform:translateY(-50%);width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid rgba(255,255,255,.4);opacity:.7}\n" +
          "th.sort-asc::after{border-top:0;border-bottom:5px solid #fbbf24;border-left:4px solid transparent;border-right:4px solid transparent;opacity:1}\n" +
          "th.sort-desc::after{border-top:5px solid #fbbf24;opacity:1}\n" +
@@ -6535,7 +6548,10 @@
           ".top5-card .sr{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 10px;font-size:11px;color:#64748b;margin-top:4px}\n" +
           ".top5-card .sr b{color:#1e293b}\n" +
           ".footer{color:#94a3b8;font-size:12px;text-align:center;margin-top:22px;padding:14px}\n" +
-         ".footer code{background:#f1f5f9;padding:2px 8px;border-radius:4px;color:#64748b}\n" +
+          ".footer code{background:#f1f5f9;padding:2px 8px;border-radius:4px;color:#64748b}\n" +
+          ".gotop{position:fixed;bottom:24px;right:24px;z-index:999;background:#6366f1;color:#fff;border:none;border-radius:10px;padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 4px 12px rgba(99,102,241,.4);transition:opacity .2s,transform .2s;opacity:0;pointer-events:none}\n" +
+          ".gotop.show{opacity:1;pointer-events:auto}\n" +
+          ".gotop:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(99,102,241,.5)}\n" +
          "</style>\n<script>(function(){var s=document.createElement('style');var c='';for(var i=0;i<=100;i++){c+='.b'+i+'{width:'+i+'%}';}s.textContent=c;document.head.appendChild(s);})();</script>\n</head>\n<body>\n<div class=\"wrap\">\n");
    }
 
@@ -6621,6 +6637,14 @@
       FileWriteString(handle,
          "<div class=\"m-item\">\n<h3>Ranking / Sort Order</h3>\n" +
          "<p>Strategies are sorted by <b>recency score</b> when enabled (then all-time pass rate, then average net P/L as tiebreakers); otherwise by all-time pass rate then average net P/L. Click any column header to re-sort the table.</p>\n</div>\n");
+      FileWriteString(handle,
+         "<div class=\"m-item\">\n<h3>Active Runs &mdash; How to Read</h3>\n" +
+         "<p><b>Active Runs</b> are strategies still running at the end of the test period &mdash; they neither passed (hit profit target) nor blew (breached a rule). They remain unresolved.</p>\n" +
+         "<ul>\n" +
+         "<li><b>Active in Profit / Active in Drawdown</b> &mdash; the split of active runs by whether their current equity is above (<span style=\"color:#059669\">profit</span>) or below (<span style=\"color:#dc2626\">drawdown</span>) the starting balance. E.g. &ldquo;72.9% of 85 active runs are in profit&rdquo;.</li>\n" +
+         "<li><b>Avg +2.2% / Avg -2.2%</b> &mdash; the <i>average equity change</i> of those active runs. &ldquo;Avg +2.2%&rdquo; means the profit-side runs are on average 2.2% above start; &ldquo;Avg -2.2%&rdquo; means the drawdown-side runs are on average 2.2% below start. This tells you <i>how deep</i> the active profit/drawdown is, not just how many runs are in each group.</li>\n" +
+         "<li><b>Why it matters:</b> A high percentage of active runs in drawdown sounds alarming, but if the average depth is only -1%, those runs are barely underwater. Conversely, a small fraction in drawdown at -10% depth is a bigger concern. Always pair the percentage with the depth.</li>\n" +
+         "</ul>\n</div>\n");
       FileWriteString(handle, "</div>\n</div>\n");
    }
 
@@ -6643,6 +6667,7 @@
    void PropWriteFooter(const int handle, const string tableId)
    {
       FileWriteString(handle,
+         "<button class=\"gotop\" id=\"gotopBtn\" onclick=\"window.scrollTo({top:0,behavior:'smooth'})\" title=\"Back to top\">&#8593; Top</button>\n" +
          "<div class=\"footer\">Generated by <code>HundredStrategyEA</code> propfirm backtest mode. This is a virtual simulation - no real trades were placed.</div>\n" +
          "<script>\n" +
          "(function(){\n" +
@@ -6658,6 +6683,8 @@
          "  for(var b=0;b<btns.length;b++){btns[b].addEventListener('click',function(){for(var k=0;k<btns.length;k++)btns[k].classList.remove('active');this.classList.add('active');filter=this.getAttribute('data-f');clearTimeout(dtimer);dtimer=setTimeout(apply,200);});}\n" +
          "  var heads=document.querySelectorAll('#'+tableId+' thead th[data-type]');\n" +
          "  for(var h=0;h<heads.length;h++){heads[h].addEventListener('click',function(){var th=this;var idx=0;var ths=th.parentNode.children;for(var c=0;c<ths.length;c++){if(ths[c]===th){idx=c;break;}}var type=th.getAttribute('data-type')||'str';var asc=true;if(th.classList.contains('sort-asc'))asc=false;for(var j=0;j<heads.length;j++){heads[j].classList.remove('sort-asc');heads[j].classList.remove('sort-desc');}th.classList.add(asc?'sort-asc':'sort-desc');var rowsArr=[];var trs=tbody.querySelectorAll('tr');for(var i=0;i<trs.length;i++)rowsArr.push(trs[i]);rowsArr.sort(function(a,b){var aCell=a.cells[idx];var bCell=b.cells[idx];var av=aCell.getAttribute('data-sort');var bv=bCell.getAttribute('data-sort');if(av===null)av=aCell.textContent.trim();if(bv===null)bv=bCell.textContent.trim();if(type==='num'){av=parseFloat(av)||0;bv=parseFloat(bv)||0;return asc?av-bv:bv-av;}return asc?a.localeCompare(b):b.localeCompare(a);});for(var i=0;i<rowsArr.length;i++)tbody.appendChild(rowsArr[i]);});}\n" +
+         "  var gotop=document.getElementById('gotopBtn');\n" +
+         "  if(gotop){window.addEventListener('scroll',function(){if(window.scrollY>300){gotop.classList.add('show');}else{gotop.classList.remove('show');}});}\n" +
          "})();\n" +
          "</script>\n");
       FileWriteString(handle,
