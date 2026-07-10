@@ -1,0 +1,2074 @@
+#property strict
+#property version   "1.00"
+#property description "Sends closed-trade history reports and summary stats to Telegram on a timer."
+
+enum ENUM_REPORT_PERIOD
+{
+   REPORT_HOURLY = 0,
+   REPORT_TODAY = 1,
+   REPORT_WEEKLY = 2,
+   REPORT_MONTHLY = 3,
+   REPORT_OVERALL = 4
+};
+
+input group "Telegram"
+input string InpBotToken = "";                 // Telegram bot token
+input string InpChatId = "";                   // Telegram chat/channel ID
+input bool InpAutoDetectChatId = true;         // Auto-detect chat ID from getUpdates if empty
+input bool InpSendStartupTest = false;         // Send a test message on EA start
+
+input group "Report"
+input int InpLookbackHours = 1;                // Closed trades to include per report
+input bool InpOnlyCurrentSymbol = false;       // Report only this chart symbol
+input bool InpUseMagicNumberFilter = false;    // Only report this magic number
+input long InpMagicNumberFilter = 26052601;    // Magic number to report
+input bool InpIncludeOpenPositions = true;     // Include open-position snapshot
+
+enum ENUM_AUTO_REPORT_MODE
+{
+   AUTO_REPORT_EVERY_MINUTES = 0,              // Send every X minutes
+   AUTO_REPORT_DAILY_IST_TIME = 1              // Send once daily at IST time
+};
+
+input group "Auto Send Schedule"
+input ENUM_AUTO_REPORT_MODE InpAutoReportMode = AUTO_REPORT_EVERY_MINUTES; // Auto report schedule
+input ENUM_REPORT_PERIOD InpAutoReportPeriod = REPORT_HOURLY; // Which report auto-send uses
+input int InpReportEveryMinutes = 60;          // Every-minutes interval
+input int InpDailyIstHour = 23;                // Daily IST hour, 0-23
+input int InpDailyIstMinute = 59;              // Daily IST minute, 0-59
+
+input group "Display"
+input bool InpShowChartStatus = true;          // Show reporter status on chart
+input bool InpShowSendNowButton = true;        // Show Send Report Now button
+input bool InpPrintDebugLogs = true;           // Print report debug logs in Experts tab
+
+enum ENUM_EQUITY_ALERT_MODE
+{
+   EQUITY_ALERT_EVERY_TIME = 0,                     // Alert every time equity reaches target
+   EQUITY_ALERT_ONCE = 1                            // Alert only once
+};
+
+input group "Performance Alerts"
+input bool InpEnableAlerts = false;                 // Enable performance alerts
+input bool InpAlertOnEquityTarget = false;          // Alert when equity hits target level
+input ENUM_EQUITY_ALERT_MODE InpEquityAlertMode = EQUITY_ALERT_EVERY_TIME; // Equity alert mode
+
+input group "Equity Level 1"
+input double InpEquityLevel1 = 0.0;                 // Target value (0 = disabled)
+input string InpEquityText1 = "";                   // Custom alert text
+
+input group "Equity Level 2"
+input double InpEquityLevel2 = 0.0;                 // Target value (0 = disabled)
+input string InpEquityText2 = "";                   // Custom alert text
+
+input group "Equity Level 3"
+input double InpEquityLevel3 = 0.0;                 // Target value (0 = disabled)
+input string InpEquityText3 = "";                   // Custom alert text
+
+input group "Equity Level 4"
+input double InpEquityLevel4 = 0.0;                 // Target value (0 = disabled)
+input string InpEquityText4 = "";                   // Custom alert text
+
+input group "Equity Level 5"
+input double InpEquityLevel5 = 0.0;                 // Target value (0 = disabled)
+input string InpEquityText5 = "";                   // Custom alert text
+
+input bool InpAlertOnConsecutiveTrades = false;     // Alert on consecutive wins/losses
+input int InpAlertWinStreakCount = 5;               // Consecutive wins threshold
+input int InpAlertLossStreakCount = 3;              // Consecutive losses threshold
+
+#define SEND_NOW_BUTTON_NAME "TTR_SEND_REPORT_NOW"
+#define SEND_TODAY_BUTTON_NAME "TTR_SEND_TODAY_REPORT"
+#define SEND_WEEKLY_BUTTON_NAME "TTR_SEND_WEEKLY_REPORT"
+#define SEND_MONTHLY_BUTTON_NAME "TTR_SEND_MONTHLY_REPORT"
+#define SEND_OVERALL_BUTTON_NAME "TTR_SEND_OVERALL_REPORT"
+#define SEND_CUSTOM_BUTTON_NAME "TTR_SEND_CUSTOM_REPORT"
+#define SET_TO_LATEST_BUTTON_NAME "TTR_SET_TO_LATEST_TRADE"
+#define CUSTOM_FROM_EDIT_NAME "TTR_CUSTOM_FROM_EDIT"
+#define CUSTOM_TO_EDIT_NAME "TTR_CUSTOM_TO_EDIT"
+#define CUSTOM_MAGIC_EDIT_NAME "TTR_CUSTOM_MAGIC_EDIT"
+#define CUSTOM_FROM_LABEL_NAME "TTR_CUSTOM_FROM_LABEL"
+#define CUSTOM_TO_LABEL_NAME "TTR_CUSTOM_TO_LABEL"
+#define CUSTOM_MAGIC_LABEL_NAME "TTR_CUSTOM_MAGIC_LABEL"
+#define RESET_EQUITY_BUTTON_NAME "TTR_RESET_EQUITY"
+
+#define DASHBOARD_BG_NAME "TTR_DASHBOARD_BG"
+#define DASHBOARD_LBL_TITLE "TTR_LBL_TITLE"
+#define DASHBOARD_LBL_STATUS "TTR_LBL_STATUS"
+#define DASHBOARD_LBL_INFO "TTR_LBL_INFO"
+#define DASHBOARD_LBL_CUSTOM "TTR_LBL_CUSTOM"
+#define DASHBOARD_LBL_SCHEDULE "TTR_LBL_SCHEDULE"
+#define DASHBOARD_LBL_NEXT "TTR_LBL_NEXT"
+#define DASHBOARD_LBL_EQUITY_TITLE "TTR_LBL_EQ_TITLE"
+#define DASHBOARD_LBL_EQ1 "TTR_LBL_EQ1"
+#define DASHBOARD_LBL_EQ2 "TTR_LBL_EQ2"
+#define DASHBOARD_LBL_EQ3 "TTR_LBL_EQ3"
+#define DASHBOARD_LBL_EQ4 "TTR_LBL_EQ4"
+#define DASHBOARD_LBL_EQ5 "TTR_LBL_EQ5"
+#define DASHBOARD_LBL_ERROR "TTR_LBL_ERROR"
+#define DASHBOARD_SEP1 "TTR_SEP1"
+#define DASHBOARD_SEP2 "TTR_SEP2"
+#define DASHBOARD_SEP3 "TTR_SEP3"
+
+struct ClosedTrade
+{
+   ulong position_id;
+   datetime open_time;
+   datetime close_time;
+   string symbol;
+   long type;
+   long magic;
+   double volume;
+   double open_price;
+   double close_price;
+   double entry_sl;
+   double profit;
+   double commission;
+   double swap;
+   double net;
+   double risk_money;
+   double rr;
+};
+
+datetime g_next_report_time = 0;
+string g_last_status = "Waiting";
+string g_last_error = "";
+string g_detected_chat_id = "";
+bool g_effective_magic_filter_enabled = false;
+long g_effective_magic_filter = 0;
+
+string g_equity_target_levels_triggered = "";
+int g_last_alerted_win_streak = 0;
+int g_last_alerted_loss_streak = 0;
+
+int OnInit()
+{
+   EventSetTimer(1);
+   g_next_report_time = ComputeNextAutoReportTime(TimeCurrent());
+   CreateReportButtons();
+   RefreshEffectiveMagicFilterFromChart();
+   Log("EA initialized. Buttons=" + (InpShowSendNowButton ? "on" : "off") +
+       ", next auto report=" + TimeToString(g_next_report_time, TIME_DATE | TIME_SECONDS) +
+       ", schedule=" + AutoScheduleText());
+
+   if(InpSendStartupTest)
+      SendTelegram("MT5 Telegram trade reporter started for account " + (string)AccountInfoInteger(ACCOUNT_LOGIN) + ".");
+
+   UpdateStatus();
+
+   if(InpEnableAlerts && InpAlertOnEquityTarget)
+      InitializeEquityTriggeredStates();
+
+   return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason)
+{
+   Log("EA deinitialized. reason=" + (string)reason);
+   EventKillTimer();
+   DeleteReportButtons();
+   Comment("");
+}
+
+void OnChartEvent(const int id,
+                  const long &lparam,
+                  const double &dparam,
+                  const string &sparam)
+{
+   if(id == CHARTEVENT_OBJECT_CLICK)
+      Log("Chart object clicked: " + sparam);
+
+   if(id != CHARTEVENT_OBJECT_CLICK)
+      return;
+
+   if(sparam == SEND_NOW_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_NOW_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Hourly report button accepted.");
+      SendReport(REPORT_HOURLY);
+   }
+   else if(sparam == SEND_TODAY_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_TODAY_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Today report button accepted.");
+      SendReport(REPORT_TODAY);
+   }
+   else if(sparam == SEND_WEEKLY_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_WEEKLY_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Weekly report button accepted.");
+      SendReport(REPORT_WEEKLY);
+   }
+   else if(sparam == SEND_MONTHLY_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_MONTHLY_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Monthly report button accepted.");
+      SendReport(REPORT_MONTHLY);
+   }
+   else if(sparam == SEND_OVERALL_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_OVERALL_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Overall report button accepted.");
+      SendReport(REPORT_OVERALL);
+   }
+   else if(sparam == SEND_CUSTOM_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SEND_CUSTOM_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Custom report button accepted.");
+      SendCustomReport();
+   }
+   else if(sparam == SET_TO_LATEST_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, SET_TO_LATEST_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Latest trade button accepted.");
+      SetCustomToLatestTrade();
+   }
+   else if(sparam == RESET_EQUITY_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, RESET_EQUITY_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Reset equity alerts button accepted.");
+      ResetEquityAlerts();
+   }
+   else
+   {
+      Log("Clicked object is not a reporter button.");
+   }
+}
+
+void OnTimer()
+{
+   datetime now = TimeCurrent();
+   if(g_next_report_time <= 0)
+      g_next_report_time = ComputeNextAutoReportTime(now);
+
+   if(now >= g_next_report_time)
+   {
+      SendReport(InpAutoReportPeriod);
+      g_next_report_time = ComputeNextAutoReportTime(TimeCurrent());
+      Log("Next auto report scheduled for " + TimeToString(g_next_report_time, TIME_DATE | TIME_SECONDS) +
+          ". schedule=" + AutoScheduleText());
+   }
+
+   UpdateStatus();
+   CheckAlerts();
+}
+
+datetime ComputeNextAutoReportTime(datetime now)
+{
+   if(InpAutoReportMode == AUTO_REPORT_DAILY_IST_TIME)
+      return ComputeNextDailyIstServerTime(now);
+
+   return now + MathMax(1, InpReportEveryMinutes) * 60;
+}
+
+datetime ComputeNextDailyIstServerTime(datetime now_server)
+{
+   datetime now_gmt = TimeGMT();
+   int server_gmt_offset = (int)(now_server - now_gmt);
+   datetime now_ist = now_gmt + 19800;
+
+   MqlDateTime ist_struct;
+   TimeToStruct(now_ist, ist_struct);
+   ist_struct.hour = ClampInt(InpDailyIstHour, 0, 23);
+   ist_struct.min = ClampInt(InpDailyIstMinute, 0, 59);
+   ist_struct.sec = 0;
+
+   datetime target_ist = StructToTime(ist_struct);
+   if(now_ist >= target_ist)
+      target_ist += 24 * 3600;
+
+   datetime target_gmt = target_ist - 19800;
+   return target_gmt + server_gmt_offset;
+}
+
+int ClampInt(int value, int min_value, int max_value)
+{
+   if(value < min_value)
+      return min_value;
+   if(value > max_value)
+      return max_value;
+   return value;
+}
+
+string AutoScheduleText()
+{
+   if(InpAutoReportMode == AUTO_REPORT_DAILY_IST_TIME)
+   {
+      return "daily " +
+             TwoDigits(ClampInt(InpDailyIstHour, 0, 23)) + ":" +
+             TwoDigits(ClampInt(InpDailyIstMinute, 0, 59)) +
+             " IST, " + ReportLabel(InpAutoReportPeriod) + " report";
+   }
+
+   return "every " + (string)MathMax(1, InpReportEveryMinutes) +
+          " minute(s), " + ReportLabel(InpAutoReportPeriod) + " report";
+}
+
+string TwoDigits(int value)
+{
+   if(value < 10)
+      return "0" + (string)value;
+
+   return (string)value;
+}
+
+void SendReport(ENUM_REPORT_PERIOD period)
+{
+   datetime to_time = TimeCurrent();
+   datetime from_time = ReportFromTime(period, to_time);
+   string label = ReportLabel(period);
+   RefreshEffectiveMagicFilterFromChart();
+   SendReportWindow(label, from_time, to_time);
+}
+
+void SendCustomReport()
+{
+   RefreshEffectiveMagicFilterFromChart();
+
+   datetime from_time = 0;
+   datetime to_time = 0;
+   string from_text = CustomEditText(CUSTOM_FROM_EDIT_NAME);
+   string to_text = CustomEditText(CUSTOM_TO_EDIT_NAME);
+
+   if(!ParseDashboardDateTime(from_text, from_time))
+   {
+      g_last_error = "Custom From time is invalid. Use YYYY.MM.DD HH:MI or YYYY.MM.DD HH:MI:SS.";
+      g_last_status = "Custom report not sent";
+      Log(g_last_error + " value=" + from_text);
+      UpdateStatus();
+      return;
+   }
+
+   if(!ParseDashboardDateTime(to_text, to_time))
+   {
+      g_last_error = "Custom To time is invalid. Use YYYY.MM.DD HH:MI, YYYY.MM.DD HH:MI:SS, now, or latest.";
+      g_last_status = "Custom report not sent";
+      Log(g_last_error + " value=" + to_text);
+      UpdateStatus();
+      return;
+   }
+
+   if(from_time <= 0 || to_time <= 0 || from_time >= to_time)
+   {
+      g_last_error = "Custom report needs From before To.";
+      g_last_status = "Custom report not sent";
+      Log(g_last_error + " from=" + TimeToString(from_time, TIME_DATE | TIME_SECONDS) +
+          " to=" + TimeToString(to_time, TIME_DATE | TIME_SECONDS));
+      UpdateStatus();
+      return;
+   }
+
+   SendReportWindow("custom", from_time, to_time);
+}
+
+void SendReportWindow(string label, datetime from_time, datetime to_time)
+{
+   g_last_status = "Sending " + label + " report...";
+   g_last_error = "";
+   UpdateStatus();
+   Log("Building " + label + " report. Window=" + WindowText(from_time, to_time));
+
+   ClosedTrade trades[];
+   int count = BuildClosedTrades(from_time, to_time, trades);
+   SortTradesByCloseTimeDesc(trades);
+   string message = BuildReportMessage(label, from_time, to_time, trades, count);
+   Log("Built " + label + " report. Closed trades=" + (string)count +
+       ", message chars=" + (string)StringLen(message));
+
+   if(SendTelegram(message))
+   {
+      g_last_status = "Last " + label + " report sent at " + TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES);
+      Log("Telegram " + label + " report sent successfully.");
+   }
+   else
+   {
+      g_last_status = "Failed to send " + label + " report";
+      Log("Telegram " + label + " report failed. " + g_last_error);
+   }
+
+   UpdateStatus();
+}
+
+datetime ReportFromTime(ENUM_REPORT_PERIOD period, datetime to_time)
+{
+   if(period == REPORT_TODAY)
+      return IstDayStartServerTime(to_time);
+   if(period == REPORT_WEEKLY)
+      return to_time - 7 * 24 * 3600;
+   if(period == REPORT_MONTHLY)
+      return to_time - 30 * 24 * 3600;
+   if(period == REPORT_OVERALL)
+      return 0;
+
+   return to_time - MathMax(1, InpLookbackHours) * 3600;
+}
+
+datetime IstDayStartServerTime(datetime now_server)
+{
+   datetime now_gmt = TimeGMT();
+   int server_gmt_offset = (int)(now_server - now_gmt);
+   datetime now_ist = now_gmt + 19800;
+
+   MqlDateTime ist_struct;
+   TimeToStruct(now_ist, ist_struct);
+   ist_struct.hour = 0;
+   ist_struct.min = 0;
+   ist_struct.sec = 0;
+
+   datetime day_start_ist = StructToTime(ist_struct);
+   datetime day_start_gmt = day_start_ist - 19800;
+   return day_start_gmt + server_gmt_offset;
+}
+
+string ReportLabel(ENUM_REPORT_PERIOD period)
+{
+   if(period == REPORT_TODAY)
+      return "today";
+   if(period == REPORT_WEEKLY)
+      return "weekly";
+   if(period == REPORT_MONTHLY)
+      return "monthly";
+   if(period == REPORT_OVERALL)
+      return "overall";
+
+   return "hourly";
+}
+
+string WindowText(datetime from_time, datetime to_time)
+{
+   if(from_time <= 0)
+      return "full available history - " + TimeToString(to_time, TIME_DATE | TIME_MINUTES);
+
+   return TimeToString(from_time, TIME_DATE | TIME_MINUTES) + " - " + TimeToString(to_time, TIME_DATE | TIME_MINUTES);
+}
+
+bool ParseDashboardDateTime(string value, datetime &parsed_time)
+{
+   string clean = CleanInput(value);
+   string lower = ToLowerText(clean);
+
+   if(lower == "now")
+   {
+      parsed_time = TimeCurrent();
+      return true;
+   }
+
+   if(lower == "latest" || lower == "last")
+      return LatestClosedTradeTime(parsed_time);
+
+   parsed_time = StringToTime(clean);
+   return parsed_time > 0;
+}
+
+string ToLowerText(string value)
+{
+   string result = value;
+   StringToLower(result);
+   return result;
+}
+
+void SetCustomToLatestTrade()
+{
+   RefreshEffectiveMagicFilterFromChart();
+
+   datetime latest_time = 0;
+   if(!LatestClosedTradeTime(latest_time))
+   {
+      g_last_error = "No latest closed trade found for current symbol/magic filters.";
+      g_last_status = "Latest trade not selected";
+      Log(g_last_error);
+      UpdateStatus();
+      return;
+   }
+
+   ObjectSetString(0, CUSTOM_TO_EDIT_NAME, OBJPROP_TEXT, TimeToString(latest_time, TIME_DATE | TIME_SECONDS));
+   g_last_error = "";
+   g_last_status = "Custom To set to latest closed trade at " + TimeToString(latest_time, TIME_DATE | TIME_SECONDS);
+   Log(g_last_status);
+   UpdateStatus();
+}
+
+bool LatestClosedTradeTime(datetime &latest_time)
+{
+   latest_time = 0;
+   datetime now = TimeCurrent();
+   if(!HistorySelect(0, now))
+   {
+      g_last_error = "HistorySelect failed while finding latest trade: " + (string)GetLastError();
+      Log(g_last_error);
+      return false;
+   }
+
+   datetime from_limit = 0;
+   ParseOptionalFromLimit(from_limit);
+
+   int deals_total = HistoryDealsTotal();
+   for(int i = 0; i < deals_total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      datetime close_time = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      if(close_time < from_limit)
+         continue;
+
+      string symbol = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+      if(InpOnlyCurrentSymbol && symbol != _Symbol)
+         continue;
+
+      long magic = FindPositionEntryMagic((ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID));
+      if(!MagicNumberAllowed(magic))
+         continue;
+
+      if(close_time > latest_time)
+         latest_time = close_time;
+   }
+
+   return latest_time > 0;
+}
+
+void ParseOptionalFromLimit(datetime &from_limit)
+{
+   from_limit = 0;
+   string from_text = CustomEditText(CUSTOM_FROM_EDIT_NAME);
+   if(from_text == "")
+      return;
+
+   string lower = ToLowerText(from_text);
+   if(lower == "latest" || lower == "last")
+      return;
+
+   datetime parsed = 0;
+   if(ParseDashboardDateTime(from_text, parsed))
+      from_limit = parsed;
+}
+
+long FindPositionEntryMagic(const ulong position_id)
+{
+   if(position_id == 0)
+      return 0;
+
+   int deals_total = HistoryDealsTotal();
+   for(int i = 0; i < deals_total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      if((ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID) != position_id)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_IN && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      return HistoryDealGetInteger(deal_ticket, DEAL_MAGIC);
+   }
+
+   return 0;
+}
+
+void SortTradesByCloseTimeDesc(ClosedTrade &trades[])
+{
+   int count = ArraySize(trades);
+   for(int i = 0; i < count - 1; i++)
+   {
+      for(int j = i + 1; j < count; j++)
+      {
+         if(trades[j].close_time > trades[i].close_time)
+         {
+            ClosedTrade temp = trades[i];
+            trades[i] = trades[j];
+            trades[j] = temp;
+         }
+      }
+   }
+}
+
+int BuildClosedTrades(datetime from_time, datetime to_time, ClosedTrade &trades[])
+{
+   ArrayResize(trades, 0);
+
+   if(!HistorySelect(0, to_time))
+   {
+      g_last_error = "HistorySelect failed: " + (string)GetLastError();
+      Log(g_last_error);
+      return 0;
+   }
+
+   int deals_total = HistoryDealsTotal();
+   Log("History selected. Deals available=" + (string)deals_total);
+   for(int i = 0; i < deals_total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      datetime close_time = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      if(close_time < from_time || close_time > to_time)
+         continue;
+
+      string symbol = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+      if(InpOnlyCurrentSymbol && symbol != _Symbol)
+         continue;
+
+      ulong position_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
+      if(position_id == 0)
+         continue;
+
+      int index = FindTradeIndex(trades, position_id);
+      if(index < 0)
+      {
+         index = ArraySize(trades);
+         ArrayResize(trades, index + 1);
+         InitClosedTrade(trades[index], position_id);
+      }
+
+      trades[index].symbol = symbol;
+      trades[index].close_time = close_time;
+      trades[index].close_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+      trades[index].profit += HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+      trades[index].commission += HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION);
+      trades[index].swap += HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
+   }
+
+   int count = ArraySize(trades);
+   int kept = 0;
+   for(int t = 0; t < count; t++)
+   {
+      FillEntryDetails(trades[t]);
+      if(!MagicNumberAllowed(trades[t].magic))
+         continue;
+
+      trades[t].net = trades[t].profit + trades[t].commission + trades[t].swap;
+      trades[t].risk_money = EstimateRiskMoney(trades[t]);
+      trades[t].rr = (trades[t].risk_money > 0.0 ? trades[t].net / trades[t].risk_money : 0.0);
+
+      if(kept != t)
+         trades[kept] = trades[t];
+      kept++;
+   }
+
+   ArrayResize(trades, kept);
+   return kept;
+}
+
+void InitClosedTrade(ClosedTrade &trade, ulong position_id)
+{
+   trade.position_id = position_id;
+   trade.open_time = 0;
+   trade.close_time = 0;
+   trade.symbol = "";
+   trade.type = -1;
+   trade.magic = 0;
+   trade.volume = 0.0;
+   trade.open_price = 0.0;
+   trade.close_price = 0.0;
+   trade.entry_sl = 0.0;
+   trade.profit = 0.0;
+   trade.commission = 0.0;
+   trade.swap = 0.0;
+   trade.net = 0.0;
+   trade.risk_money = 0.0;
+   trade.rr = 0.0;
+}
+
+int FindTradeIndex(const ClosedTrade &trades[], ulong position_id)
+{
+   int count = ArraySize(trades);
+   for(int i = 0; i < count; i++)
+   {
+      if(trades[i].position_id == position_id)
+         return i;
+   }
+
+   return -1;
+}
+
+void FillEntryDetails(ClosedTrade &trade)
+{
+   int deals_total = HistoryDealsTotal();
+   for(int i = 0; i < deals_total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      ulong position_id = (ulong)HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
+      if(position_id != trade.position_id)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_IN && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      trade.open_time = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      trade.symbol = HistoryDealGetString(deal_ticket, DEAL_SYMBOL);
+      trade.type = HistoryDealGetInteger(deal_ticket, DEAL_TYPE);
+      trade.magic = HistoryDealGetInteger(deal_ticket, DEAL_MAGIC);
+      trade.volume = HistoryDealGetDouble(deal_ticket, DEAL_VOLUME);
+      trade.open_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+      trade.entry_sl = HistoryDealGetDouble(deal_ticket, DEAL_SL);
+      return;
+   }
+}
+
+double EstimateRiskMoney(const ClosedTrade &trade)
+{
+   if(trade.entry_sl <= 0.0 || trade.open_price <= 0.0 || trade.volume <= 0.0)
+      return 0.0;
+
+   double tick_size = SymbolInfoDouble(trade.symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tick_value = SymbolInfoDouble(trade.symbol, SYMBOL_TRADE_TICK_VALUE);
+   if(tick_size <= 0.0 || tick_value <= 0.0)
+      return 0.0;
+
+   double price_risk = MathAbs(trade.open_price - trade.entry_sl);
+   return (price_risk / tick_size) * tick_value * trade.volume;
+}
+
+string BuildReportMessage(string report_label, datetime from_time, datetime to_time, const ClosedTrade &trades[], int count)
+{
+   double total_net = 0.0;
+   double gross_profit = 0.0;
+   double gross_loss = 0.0;
+   double rr_sum = 0.0;
+   int rr_count = 0;
+   int wins = 0;
+   int losses = 0;
+   int breakevens = 0;
+   int best_trade_index = -1;
+   int worst_trade_index = -1;
+
+   string msg = "<b>MT5 " + EscapeHtml(CapitalizeFirst(report_label)) + " Trade Report</b>\n";
+   msg += "Account: <b>" + EscapeHtml(AccountInfoString(ACCOUNT_NAME)) + "</b>\n";
+   msg += "Login: <code>" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "</code>\n";
+   msg += "Server: " + EscapeHtml(AccountInfoString(ACCOUNT_SERVER)) + "\n";
+   msg += "Currency: " + EscapeHtml(AccountInfoString(ACCOUNT_CURRENCY)) + "\n";
+   msg += "Period: " + EscapeHtml(WindowText(from_time, to_time)) + "\n";
+   msg += "Magic filter: " + (g_effective_magic_filter_enabled ? "<code>" + (string)g_effective_magic_filter + "</code>" : "off") + "\n";
+   if(InpOnlyCurrentSymbol)
+      msg += "Symbol filter: <b>" + EscapeHtml(_Symbol) + "</b>\n";
+   msg += "\n";
+
+   if(count == 0)
+   {
+      msg += "<b>Closed Trades</b>\n";
+      msg += "No closed trades in this period.\n";
+   }
+   else
+   {
+      msg += "<b>Closed Trades</b>\n";
+      msg += "<pre>";
+      msg += "  Time        Symbol   Side      P/L\n";
+      for(int i = 0; i < count; i++)
+      {
+         string side = ShortTradeSideText(trades[i].type);
+
+         msg += TradeStatusDot(trades[i].net) + " " +
+                PadRightKeep(ShortDateTimeText(trades[i].close_time), 11) + " " +
+                PadRightKeep(EscapeHtml(trades[i].symbol), 8) + " " +
+                PadRightKeep(side, 4) + " " +
+                PadLeftKeep(EscapeHtml(MoneyTextNoCurrency(trades[i].net)), 8) + "\n";
+
+         if(best_trade_index < 0 || trades[i].net > trades[best_trade_index].net)
+            best_trade_index = i;
+         if(worst_trade_index < 0 || trades[i].net < trades[worst_trade_index].net)
+            worst_trade_index = i;
+
+         total_net += trades[i].net;
+         if(IsBreakEvenTrade(trades[i].net))
+         {
+            breakevens++;
+         }
+         else if(trades[i].net > 0.0)
+         {
+            wins++;
+            gross_profit += trades[i].net;
+         }
+         else
+         {
+            losses++;
+            gross_loss += MathAbs(trades[i].net);
+         }
+
+         if(trades[i].risk_money > 0.0)
+         {
+            rr_sum += trades[i].rr;
+            rr_count++;
+         }
+      }
+      msg += "</pre>\n";
+   }
+
+   double win_rate = (count > 0 ? 100.0 * wins / count : 0.0);
+   double profit_factor = (gross_loss > 0.0 ? gross_profit / gross_loss : (gross_profit > 0.0 ? 999.0 : 0.0));
+   double average_rr = (rr_count > 0 ? rr_sum / rr_count : 0.0);
+   double net_loss_ratio = (gross_loss > 0.0 ? total_net / gross_loss : (total_net > 0.0 ? 999.0 : 0.0));
+   double average_pnl = (count > 0 ? total_net / count : 0.0);
+   int decisive_trades = wins + losses;
+   double be_adjusted_win_rate = (decisive_trades > 0 ? 100.0 * wins / decisive_trades : 0.0);
+   double average_win = (wins > 0 ? gross_profit / wins : 0.0);
+   double average_loss = (losses > 0 ? gross_loss / losses : 0.0);
+   double payoff_ratio = (average_loss > 0.0 ? average_win / average_loss : (average_win > 0.0 ? 999.0 : 0.0));
+   double expectancy = 0.0;
+   if(decisive_trades > 0)
+      expectancy = (gross_profit - gross_loss) / decisive_trades;
+
+   msg += BuildBalanceSummaryText(from_time, to_time, trades, count, total_net);
+
+   msg += "\n\n<b>Performance Summary</b>\n";
+   msg += "Outcome: <b>" + ResultStatusText(total_net) + "</b>\n";
+   msg += "Net P&amp;L: <b>" + MoneyText(total_net) + "</b>\n";
+   msg += "Trades: <b>" + (string)count + "</b> closed | <b>" + (string)wins + "</b> wins | <b>" + (string)losses + "</b> losses | <b>" + (string)breakevens + "</b> BE\n";
+   msg += "Win rate: <b>" + DoubleToString(win_rate, 1) + "%</b>\n";
+   msg += "Win rate excl BE: <b>" + DoubleToString(be_adjusted_win_rate, 1) + "%</b>\n";
+   msg += "Average P&amp;L/trade: <b>" + MoneyText(average_pnl) + "</b>\n";
+   msg += "Avg win / loss: <b>" + MoneyText(average_win) + "</b> / <b>" + MoneyText(-average_loss) + "</b>\n";
+   msg += "Payoff ratio: <b>" + (payoff_ratio >= 999.0 ? "infinite" : DoubleToString(payoff_ratio, 2) + ":1") + "</b>\n";
+   msg += "Expectancy excl BE: <b>" + MoneyText(expectancy) + "/trade</b>\n";
+   msg += BuildBestWorstTradeText(trades, best_trade_index, worst_trade_index);
+   msg += BuildStreakAnalysisText(trades, count);
+
+   msg += "\n<b>Risk &amp; Quality</b>\n";
+   msg += "Avg realized R: <b>" + (rr_count > 0 ? DoubleToString(average_rr, 2) + "R" : "n/a") + "</b>\n";
+   msg += "Net / gross loss: <b>" + (net_loss_ratio >= 999.0 ? "infinite" : DoubleToString(net_loss_ratio, 2) + "R") + "</b>\n";
+   msg += "Profit factor: <b>" + (profit_factor >= 999.0 ? "infinite" : DoubleToString(profit_factor, 2)) + "</b>\n";
+   msg += "Gross profit: " + MoneyText(gross_profit) + "\n";
+   msg += "Gross loss: -" + DoubleToString(gross_loss, 2) + " " + AccountInfoString(ACCOUNT_CURRENCY) + "\n";
+
+   if(InpIncludeOpenPositions)
+      msg += BuildOpenPositionsText();
+
+   return msg;
+}
+
+string BuildBalanceSummaryText(datetime from_time, datetime to_time, const ClosedTrade &trades[], int count, double report_net)
+{
+   datetime sequence_start = FirstTradeOpenTime(trades);
+   if(sequence_start <= 0 && from_time > 0)
+      sequence_start = from_time;
+
+   double current_balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double floating_profit = AccountInfoDouble(ACCOUNT_PROFIT);
+   double starting_balance = current_balance;
+   bool has_starting_balance = false;
+
+   if(sequence_start > 0)
+      has_starting_balance = BalanceAtTime(sequence_start, starting_balance);
+
+   string text = "\n\n<b>Account Balance</b>\n";
+   if(has_starting_balance)
+   {
+      double balance_change = current_balance - starting_balance;
+      double return_percent = (MathAbs(starting_balance) > 0.0000001 ? 100.0 * balance_change / starting_balance : 0.0);
+
+      text += "Sequence start: " + EscapeHtml(TimeToString(sequence_start, TIME_DATE | TIME_MINUTES)) + "\n";
+      text += "Starting balance: <b>" + MoneyAmountText(starting_balance) + "</b>\n";
+      text += "Current balance: <b>" + MoneyAmountText(current_balance) + "</b>\n";
+      text += "Balance change: <b>" + MoneyText(balance_change) + " (" + DoubleToString(return_percent, 2) + "%)</b>\n";
+   }
+   else
+   {
+      text += "Starting balance: n/a\n";
+      text += "Current balance: <b>" + MoneyAmountText(current_balance) + "</b>\n";
+   }
+
+   text += "Current equity: <b>" + MoneyAmountText(current_equity) + "</b>\n";
+   text += "Floating P&amp;L: <b>" + MoneyText(floating_profit) + "</b>\n";
+   text += "Closed P&amp;L in report: <b>" + MoneyText(report_net) + "</b>\n";
+   return text;
+}
+
+string BuildBestWorstTradeText(const ClosedTrade &trades[], int best_trade_index, int worst_trade_index)
+{
+   string text = "";
+
+   if(best_trade_index >= 0)
+      text += "Best trade: <b>" + MoneyText(trades[best_trade_index].net) + "</b> " +
+              EscapeHtml(trades[best_trade_index].symbol) + " " +
+              EscapeHtml(ShortTradeSideText(trades[best_trade_index].type)) + " " +
+              EscapeHtml(ShortDateTimeText(trades[best_trade_index].close_time)) + "\n";
+
+   if(worst_trade_index >= 0)
+      text += "Worst trade: <b>" + MoneyText(trades[worst_trade_index].net) + "</b> " +
+              EscapeHtml(trades[worst_trade_index].symbol) + " " +
+              EscapeHtml(ShortTradeSideText(trades[worst_trade_index].type)) + " " +
+              EscapeHtml(ShortDateTimeText(trades[worst_trade_index].close_time)) + "\n";
+
+   return text;
+}
+
+string BuildStreakAnalysisText(const ClosedTrade &trades[], int count)
+{
+   int current_type = 0;
+   int current_len = 0;
+   int max_win_streak = 0;
+   int max_loss_streak = 0;
+   int win_streak_count = 0;
+   int loss_streak_count = 0;
+   int win_streak_sum = 0;
+   int loss_streak_sum = 0;
+
+   for(int i = count - 1; i >= 0; i--)
+   {
+      int outcome = TradeOutcomeCode(trades[i].net);
+      if(outcome == 0)
+      {
+         FinishStreak(current_type, current_len,
+                      max_win_streak, max_loss_streak,
+                      win_streak_count, loss_streak_count,
+                      win_streak_sum, loss_streak_sum);
+         current_type = 0;
+         current_len = 0;
+         continue;
+      }
+
+      if(current_type == outcome)
+      {
+         current_len++;
+      }
+      else
+      {
+         FinishStreak(current_type, current_len,
+                      max_win_streak, max_loss_streak,
+                      win_streak_count, loss_streak_count,
+                      win_streak_sum, loss_streak_sum);
+         current_type = outcome;
+         current_len = 1;
+      }
+   }
+
+   int active_type = current_type;
+   int active_len = current_len;
+   FinishStreak(current_type, current_len,
+                max_win_streak, max_loss_streak,
+                win_streak_count, loss_streak_count,
+                win_streak_sum, loss_streak_sum);
+
+   double average_win_streak = (win_streak_count > 0 ? (double)win_streak_sum / win_streak_count : 0.0);
+   double average_loss_streak = (loss_streak_count > 0 ? (double)loss_streak_sum / loss_streak_count : 0.0);
+
+   string text = "\n<b>Streak Analysis</b>\n";
+   text += "Current streak: <b>" + StreakText(active_type, active_len) + "</b>\n";
+   text += "Win streaks: <b>" + (string)win_streak_count + "</b> | max <b>" + (string)max_win_streak + "</b> | avg <b>" + DoubleToString(average_win_streak, 1) + "</b>\n";
+   text += "Loss streaks: <b>" + (string)loss_streak_count + "</b> | max <b>" + (string)max_loss_streak + "</b> | avg <b>" + DoubleToString(average_loss_streak, 1) + "</b>\n";
+   return text;
+}
+
+void FinishStreak(int streak_type,
+                  int streak_len,
+                  int &max_win_streak,
+                  int &max_loss_streak,
+                  int &win_streak_count,
+                  int &loss_streak_count,
+                  int &win_streak_sum,
+                  int &loss_streak_sum)
+{
+   if(streak_len <= 0)
+      return;
+
+   if(streak_type > 0)
+   {
+      win_streak_count++;
+      win_streak_sum += streak_len;
+      if(streak_len > max_win_streak)
+         max_win_streak = streak_len;
+   }
+   else if(streak_type < 0)
+   {
+      loss_streak_count++;
+      loss_streak_sum += streak_len;
+      if(streak_len > max_loss_streak)
+         max_loss_streak = streak_len;
+   }
+}
+
+int TradeOutcomeCode(double value)
+{
+   if(IsBreakEvenTrade(value))
+      return 0;
+   if(value > 0.0)
+      return 1;
+   return -1;
+}
+
+string StreakText(int streak_type, int streak_len)
+{
+   if(streak_len <= 0 || streak_type == 0)
+      return "BE/none";
+   if(streak_type > 0)
+      return (string)streak_len + " wins";
+   return (string)streak_len + " losses";
+}
+
+datetime FirstTradeOpenTime(const ClosedTrade &trades[])
+{
+   datetime first_time = 0;
+   int count = ArraySize(trades);
+
+   for(int i = 0; i < count; i++)
+   {
+      if(trades[i].open_time <= 0)
+         continue;
+
+      if(first_time <= 0 || trades[i].open_time < first_time)
+         first_time = trades[i].open_time;
+   }
+
+   return first_time;
+}
+
+bool BalanceAtTime(datetime balance_time, double &balance)
+{
+   if(balance_time <= 0)
+      return false;
+
+   datetime now = TimeCurrent();
+   if(!HistorySelect(0, now))
+   {
+      Log("BalanceAtTime HistorySelect failed: " + (string)GetLastError());
+      return false;
+   }
+
+   double later_balance_changes = 0.0;
+   int deals_total = HistoryDealsTotal();
+   for(int i = 0; i < deals_total; i++)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      datetime deal_time = (datetime)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+      if(deal_time < balance_time || deal_time > now)
+         continue;
+
+      later_balance_changes += DealBalanceChange(deal_ticket);
+   }
+
+   balance = AccountInfoDouble(ACCOUNT_BALANCE) - later_balance_changes;
+   return true;
+}
+
+double DealBalanceChange(ulong deal_ticket)
+{
+   double profit = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+   double commission = HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION);
+   double swap = HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
+   return profit + commission + swap;
+}
+
+long TradeDurationMinutes(const ClosedTrade &trade)
+{
+   if(trade.open_time <= 0 || trade.close_time <= 0 || trade.close_time < trade.open_time)
+      return 0;
+
+   long seconds = (long)(trade.close_time - trade.open_time);
+   long minutes = seconds / 60;
+   if(seconds > 0 && minutes == 0)
+      return 1;
+
+   return minutes;
+}
+
+string TimeText(datetime value)
+{
+   if(value <= 0)
+      return "n/a";
+
+   return TimeToString(value, TIME_DATE | TIME_MINUTES);
+}
+
+string BuildOpenPositionsText()
+{
+   int total = PositionsTotal();
+   int included = 0;
+   double floating = 0.0;
+   string text = "\n\n<b>Open Positions</b>\n";
+
+   for(int i = 0; i < total; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      if(InpOnlyCurrentSymbol && symbol != _Symbol)
+         continue;
+
+      long magic = PositionGetInteger(POSITION_MAGIC);
+      if(!MagicNumberAllowed(magic))
+         continue;
+
+      long type = PositionGetInteger(POSITION_TYPE);
+      double profit = PositionGetDouble(POSITION_PROFIT);
+      floating += profit;
+      included++;
+
+      text += "\n";
+      text += "<b>" + EscapeHtml(symbol) + " " + PositionSideText(type) + "</b>\n";
+      text += "Volume: " + DoubleToString(PositionGetDouble(POSITION_VOLUME), 2) + " lots\n";
+      text += "Floating P&amp;L: <b>" + MoneyText(profit) + "</b>\n";
+   }
+
+   if(included == 0)
+      text += "No open positions.\n";
+
+   text += "\nTotal floating P&amp;L: <b>" + MoneyText(floating) + "</b>\n";
+   return text;
+}
+
+bool SendTelegram(string text)
+{
+   string bot_token = CleanBotToken(InpBotToken);
+   string chat_id = GetEffectiveChatId(bot_token);
+
+   if(bot_token == "" || chat_id == "")
+   {
+      g_last_error = "Set InpBotToken and InpChatId, or send /start to the bot and keep InpAutoDetectChatId=true.";
+      Log(g_last_error);
+      return false;
+   }
+
+   int max_chunk = 3500;
+   int length = StringLen(text);
+   if(length <= max_chunk)
+   {
+      Log("Sending Telegram message in 1 chunk. chars=" + (string)length);
+      return SendTelegramChunk(text, bot_token, chat_id);
+   }
+
+   string plain_text = StripTelegramHtml(text);
+   length = StringLen(plain_text);
+   Log("Telegram message too long. Sending split chunks. plain chars=" + (string)length);
+   int offset = 0;
+   int chunk_number = 1;
+   while(offset < length)
+   {
+      int take = (int)MathMin((double)max_chunk, (double)(length - offset));
+      if(offset + take < length)
+      {
+         int newline_pos = LastNewlineBefore(plain_text, offset + take, offset);
+         if(newline_pos > offset)
+            take = newline_pos - offset + 1;
+      }
+
+      string chunk = "<pre>" + EscapeHtml(StringSubstr(plain_text, offset, take)) + "</pre>";
+      Log("Sending Telegram chunk " + (string)chunk_number + ". chars=" + (string)StringLen(chunk));
+      if(!SendTelegramChunk(chunk, bot_token, chat_id))
+         return false;
+
+      offset += take;
+      chunk_number++;
+      Sleep(250);
+   }
+
+   return true;
+}
+
+int LastNewlineBefore(string value, int before_pos, int min_pos)
+{
+   int result = -1;
+   int search_from = min_pos;
+
+   while(true)
+   {
+      int pos = StringFind(value, "\n", search_from);
+      if(pos < 0 || pos >= before_pos)
+         break;
+
+      result = pos;
+      search_from = pos + 1;
+   }
+
+   return result;
+}
+
+bool SendTelegramChunk(string text, string bot_token, string chat_id)
+{
+   string url = "https://api.telegram.org/bot" + bot_token + "/sendMessage";
+   string body = "chat_id=" + UrlEncode(chat_id) + "&parse_mode=HTML&text=" + UrlEncode(text);
+   char data[];
+   char result[];
+   string headers = "Content-Type: application/x-www-form-urlencoded\r\n";
+   string result_headers = "";
+
+   StringToCharArray(body, data, 0, WHOLE_ARRAY, CP_UTF8);
+   int data_size = ArraySize(data);
+   if(data_size > 0 && data[data_size - 1] == 0)
+      ArrayResize(data, data_size - 1);
+
+   ResetLastError();
+   Log("Calling Telegram WebRequest. body chars=" + (string)StringLen(body));
+   int code = WebRequest("POST", url, headers, 10000, data, result, result_headers);
+   string response = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   Log("Telegram WebRequest returned HTTP=" + (string)code +
+       ", terminal error=" + (string)GetLastError() +
+       ", response=" + response);
+
+   if(code != 200)
+   {
+      g_last_error = "Telegram WebRequest failed. HTTP=" + (string)code +
+                     " err=" + (string)GetLastError() +
+                     " response=" + response;
+      if(code == 404)
+         g_last_error += " | Check bot token. 404 usually means the token is wrong, revoked, or pasted with extra URL/text.";
+      return false;
+   }
+
+   g_last_error = "";
+   return true;
+}
+
+string GetEffectiveChatId(string bot_token)
+{
+   string chat_id = CleanInput(InpChatId);
+   if(chat_id != "")
+      return chat_id;
+
+   if(g_detected_chat_id != "")
+      return g_detected_chat_id;
+
+   if(!InpAutoDetectChatId)
+      return "";
+
+   g_detected_chat_id = DetectChatIdFromUpdates(bot_token);
+   return g_detected_chat_id;
+}
+
+string DetectChatIdFromUpdates(string bot_token)
+{
+   if(bot_token == "")
+      return "";
+
+   string url = "https://api.telegram.org/bot" + bot_token + "/getUpdates";
+   char data[];
+   char result[];
+   string headers = "";
+   string result_headers = "";
+
+   ResetLastError();
+   Log("InpChatId is empty. Trying Telegram getUpdates to auto-detect chat id.");
+   int code = WebRequest("GET", url, headers, 10000, data, result, result_headers);
+   string response = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   Log("getUpdates returned HTTP=" + (string)code +
+       ", terminal error=" + (string)GetLastError() +
+       ", response=" + response);
+
+   if(code != 200)
+   {
+      g_last_error = "getUpdates failed. HTTP=" + (string)code +
+                     " err=" + (string)GetLastError() +
+                     " response=" + response;
+      return "";
+   }
+
+   string chat_id = ExtractLastChatId(response);
+   if(chat_id == "")
+   {
+      g_last_error = "Could not auto-detect chat id. Send /start or any text to the bot, stop other polling code, then click report again.";
+      Log(g_last_error);
+      return "";
+   }
+
+   Log("Auto-detected Telegram chat id: " + chat_id);
+   return chat_id;
+}
+
+string ExtractLastChatId(string json)
+{
+   string marker = "\"chat\":{\"id\":";
+   int search_from = 0;
+   string last_id = "";
+
+   while(true)
+   {
+      int pos = StringFind(json, marker, search_from);
+      if(pos < 0)
+         break;
+
+      int id_start = pos + StringLen(marker);
+      int id_end = id_start;
+      while(id_end < StringLen(json))
+      {
+         ushort ch = StringGetCharacter(json, id_end);
+         if(!((ch >= '0' && ch <= '9') || ch == '-'))
+            break;
+         id_end++;
+      }
+
+      if(id_end > id_start)
+         last_id = StringSubstr(json, id_start, id_end - id_start);
+
+      search_from = id_end;
+   }
+
+   return last_id;
+}
+
+string UrlEncode(string value)
+{
+   uchar bytes[];
+   StringToCharArray(value, bytes, 0, WHOLE_ARRAY, CP_UTF8);
+
+   string encoded = "";
+   int count = ArraySize(bytes);
+   for(int i = 0; i < count; i++)
+   {
+      uchar ch = bytes[i];
+      if(ch == 0)
+         break;
+
+      bool safe = (ch >= 'A' && ch <= 'Z') ||
+                  (ch >= 'a' && ch <= 'z') ||
+                  (ch >= '0' && ch <= '9') ||
+                  ch == '-' || ch == '_' || ch == '.' || ch == '~';
+
+      if(safe)
+         encoded += CharToString(ch);
+      else if(ch == ' ')
+         encoded += "+";
+      else
+         encoded += "%" + StringFormat("%02X", ch);
+   }
+
+   return encoded;
+}
+
+string CleanInput(string value)
+{
+   string clean = value;
+   StringTrimLeft(clean);
+   StringTrimRight(clean);
+   return clean;
+}
+
+string CleanBotToken(string value)
+{
+   string clean = CleanInput(value);
+   string prefix = "https://api.telegram.org/bot";
+   int prefix_pos = StringFind(clean, prefix);
+   if(prefix_pos >= 0)
+      clean = StringSubstr(clean, prefix_pos + StringLen(prefix));
+
+   int slash_pos = StringFind(clean, "/");
+   if(slash_pos >= 0)
+      clean = StringSubstr(clean, 0, slash_pos);
+
+   return CleanInput(clean);
+}
+
+string TradeSideText(long deal_type)
+{
+   if(deal_type == DEAL_TYPE_BUY)
+      return "BUY";
+   if(deal_type == DEAL_TYPE_SELL)
+      return "SELL";
+   return "UNKNOWN";
+}
+
+string ShortTradeSideText(long deal_type)
+{
+   if(deal_type == DEAL_TYPE_BUY)
+      return "Buy";
+   if(deal_type == DEAL_TYPE_SELL)
+      return "Sell";
+   return "?";
+}
+
+string PositionSideText(long position_type)
+{
+   if(position_type == POSITION_TYPE_BUY)
+      return "BUY";
+   if(position_type == POSITION_TYPE_SELL)
+      return "SELL";
+   return "UNKNOWN";
+}
+
+string MoneyText(double value)
+{
+   string currency = AccountInfoString(ACCOUNT_CURRENCY);
+   string sign = (value >= 0.0 ? "+" : "");
+   return sign + DoubleToString(value, 2) + " " + currency;
+}
+
+string MoneyAmountText(double value)
+{
+   return DoubleToString(value, 2) + " " + AccountInfoString(ACCOUNT_CURRENCY);
+}
+
+string MoneyTextNoCurrency(double value)
+{
+   string sign = (value >= 0.0 ? "+" : "");
+   return sign + DoubleToString(value, 2);
+}
+
+string TradeStatusDot(double value)
+{
+   if(IsBreakEvenTrade(value))
+      return "⚪";
+   if(value > 0.0)
+      return "🟢";
+   return "🔴";
+}
+
+bool IsBreakEvenTrade(double value)
+{
+   return MathAbs(value) <= 1.0;
+}
+
+string ResultStatusText(double value)
+{
+   if(value > 0.0)
+      return "Net profitable";
+   if(value < 0.0)
+      return "Net loss";
+
+   return "Break-even";
+}
+
+string CapitalizeFirst(string value)
+{
+   if(StringLen(value) <= 0)
+      return value;
+
+   ushort first = StringGetCharacter(value, 0);
+   if(first >= 'a' && first <= 'z')
+      first -= 32;
+
+   return ShortToString(first) + StringSubstr(value, 1);
+}
+
+string ShortDateTimeText(datetime value)
+{
+   if(value <= 0)
+      return "n/a";
+
+   MqlDateTime parts;
+   TimeToStruct(value, parts);
+   return TwoDigits(parts.mon) + "/" +
+          TwoDigits(parts.day) + " " +
+          TwoDigits(parts.hour) + ":" +
+          TwoDigits(parts.min);
+}
+
+string PadRight(string value, int width)
+{
+   string result = value;
+   while(StringLen(result) < width)
+      result += " ";
+
+   if(StringLen(result) > width)
+      result = StringSubstr(result, 0, width);
+
+   return result;
+}
+
+string PadLeft(string value, int width)
+{
+   string result = value;
+   while(StringLen(result) < width)
+      result = " " + result;
+
+   if(StringLen(result) > width)
+      result = StringSubstr(result, 0, width);
+
+   return result;
+}
+
+string PadRightKeep(string value, int width)
+{
+   string result = value;
+   while(StringLen(result) < width)
+      result += " ";
+
+   return result;
+}
+
+string PadLeftKeep(string value, int width)
+{
+   string result = value;
+   while(StringLen(result) < width)
+      result = " " + result;
+
+   return result;
+}
+
+string EscapeHtml(string value)
+{
+   string result = value;
+   StringReplace(result, "&", "&amp;");
+   StringReplace(result, "<", "&lt;");
+   StringReplace(result, ">", "&gt;");
+   return result;
+}
+
+string StripTelegramHtml(string value)
+{
+   string result = value;
+   StringReplace(result, "<b>", "");
+   StringReplace(result, "</b>", "");
+   StringReplace(result, "<code>", "");
+   StringReplace(result, "</code>", "");
+   StringReplace(result, "<pre>", "");
+   StringReplace(result, "</pre>", "");
+   StringReplace(result, "&amp;", "&");
+   StringReplace(result, "&lt;", "<");
+   StringReplace(result, "&gt;", ">");
+   return result;
+}
+
+bool MagicNumberAllowed(long magic)
+{
+   if(!g_effective_magic_filter_enabled)
+      return true;
+
+   return magic == g_effective_magic_filter;
+}
+
+void RefreshEffectiveMagicFilterFromChart()
+{
+   g_effective_magic_filter_enabled = InpUseMagicNumberFilter;
+   g_effective_magic_filter = InpMagicNumberFilter;
+
+   if(ObjectFind(0, CUSTOM_MAGIC_EDIT_NAME) < 0)
+      return;
+
+   string magic_text = CustomEditText(CUSTOM_MAGIC_EDIT_NAME);
+   string clean = CleanInput(magic_text);
+   string lower = ToLowerText(clean);
+
+   if(clean == "" || lower == "all" || lower == "off" || lower == "any")
+   {
+      g_effective_magic_filter_enabled = false;
+      return;
+   }
+
+   g_effective_magic_filter = (long)StringToInteger(clean);
+   g_effective_magic_filter_enabled = true;
+}
+
+string CustomEditText(const string object_name)
+{
+   if(ObjectFind(0, object_name) < 0)
+      return "";
+
+   return CleanInput(ObjectGetString(0, object_name, OBJPROP_TEXT));
+}
+
+void DeleteReportButtons()
+{
+   ObjectDelete(0, DASHBOARD_BG_NAME);
+   ObjectDelete(0, DASHBOARD_LBL_TITLE);
+   ObjectDelete(0, DASHBOARD_LBL_STATUS);
+   ObjectDelete(0, DASHBOARD_LBL_INFO);
+   ObjectDelete(0, DASHBOARD_LBL_CUSTOM);
+   ObjectDelete(0, DASHBOARD_LBL_SCHEDULE);
+   ObjectDelete(0, DASHBOARD_LBL_NEXT);
+   ObjectDelete(0, DASHBOARD_LBL_EQUITY_TITLE);
+   ObjectDelete(0, DASHBOARD_LBL_EQ1);
+   ObjectDelete(0, DASHBOARD_LBL_EQ2);
+   ObjectDelete(0, DASHBOARD_LBL_EQ3);
+   ObjectDelete(0, DASHBOARD_LBL_EQ4);
+   ObjectDelete(0, DASHBOARD_LBL_EQ5);
+   ObjectDelete(0, DASHBOARD_LBL_ERROR);
+   ObjectDelete(0, DASHBOARD_SEP1);
+   ObjectDelete(0, DASHBOARD_SEP2);
+   ObjectDelete(0, DASHBOARD_SEP3);
+   ObjectDelete(0, SEND_NOW_BUTTON_NAME);
+   ObjectDelete(0, SEND_TODAY_BUTTON_NAME);
+   ObjectDelete(0, SEND_WEEKLY_BUTTON_NAME);
+   ObjectDelete(0, SEND_MONTHLY_BUTTON_NAME);
+   ObjectDelete(0, SEND_OVERALL_BUTTON_NAME);
+   ObjectDelete(0, SEND_CUSTOM_BUTTON_NAME);
+   ObjectDelete(0, SET_TO_LATEST_BUTTON_NAME);
+   ObjectDelete(0, CUSTOM_FROM_EDIT_NAME);
+   ObjectDelete(0, CUSTOM_TO_EDIT_NAME);
+   ObjectDelete(0, CUSTOM_MAGIC_EDIT_NAME);
+   ObjectDelete(0, CUSTOM_FROM_LABEL_NAME);
+   ObjectDelete(0, CUSTOM_TO_LABEL_NAME);
+   ObjectDelete(0, CUSTOM_MAGIC_LABEL_NAME);
+   ObjectDelete(0, RESET_EQUITY_BUTTON_NAME);
+}
+
+void CreateReportButtons()
+{
+   DeleteReportButtons();
+   if(!InpShowSendNowButton)
+   {
+      Log("Report buttons disabled by input.");
+      return;
+   }
+
+   int base_x = 5;
+   int base_y = 5;
+   int panel_w = 225;
+   int x_lbl = 16;
+   int x_btn = 16;
+   int x_edt = 60;
+   int btn_w = 160;
+
+   // Background panel
+   ObjectCreate(0, DASHBOARD_BG_NAME, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_XDISTANCE, base_x);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_YDISTANCE, base_y);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_XSIZE, panel_w);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_YSIZE, 530);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_COLOR, clrGray);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_BGCOLOR, clrDarkSlateGray);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_BACK, false);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_HIDDEN, true);
+
+   int y = 14;
+
+   // Title
+   CreateDashboardLabel(DASHBOARD_LBL_TITLE, "Telegram Trade Reporter", y, x_lbl, 10, clrWhite);
+   y += 18;
+
+   // Status
+   CreateDashboardLabel(DASHBOARD_LBL_STATUS, "", y, x_lbl, 8, clrWhite);
+   y += 14;
+
+   // Info line (magic + alerts)
+   CreateDashboardLabel(DASHBOARD_LBL_INFO, "", y, x_lbl, 8, clrWhite);
+   y += 14;
+
+   // Custom from/to
+   CreateDashboardLabel(DASHBOARD_LBL_CUSTOM, "", y, x_lbl, 8, clrWhite);
+   y += 14;
+
+   // Schedule
+   CreateDashboardLabel(DASHBOARD_LBL_SCHEDULE, "", y, x_lbl, 8, clrWhite);
+   y += 14;
+
+   // Next report
+   CreateDashboardLabel(DASHBOARD_LBL_NEXT, "", y, x_lbl, 8, clrWhite);
+   y += 18;
+
+   // Separator 1
+   CreateSeparatorLine(DASHBOARD_SEP1, y, x_lbl, panel_w - 2 * x_lbl);
+   y += 8;
+
+   // Report buttons
+   CreateReportButton(SEND_NOW_BUTTON_NAME, "Send Hourly Now", y, clrSeaGreen, clrDarkGreen, x_btn, btn_w);
+   y += 26;
+   CreateReportButton(SEND_TODAY_BUTTON_NAME, "Send Today", y, clrDarkOliveGreen, clrDarkGreen, x_btn, btn_w);
+   y += 26;
+   CreateReportButton(SEND_WEEKLY_BUTTON_NAME, "Send Weekly", y, clrSteelBlue, clrMidnightBlue, x_btn, btn_w);
+   y += 26;
+   CreateReportButton(SEND_MONTHLY_BUTTON_NAME, "Send Monthly", y, clrDarkSlateGray, clrBlack, x_btn, btn_w);
+   y += 26;
+   CreateReportButton(SEND_OVERALL_BUTTON_NAME, "Send Overall", y, clrSaddleBrown, clrMaroon, x_btn, btn_w);
+   y += 30;
+
+   // Separator 2
+   CreateSeparatorLine(DASHBOARD_SEP2, y, x_lbl, panel_w - 2 * x_lbl);
+   y += 8;
+
+   // Custom section
+   CreateDashboardLabel(CUSTOM_FROM_LABEL_NAME, "From", y, x_lbl, 8, clrWhite);
+   CreateReportEdit(CUSTOM_FROM_EDIT_NAME, TimeToString(TimeCurrent() - MathMax(1, InpLookbackHours) * 3600, TIME_DATE | TIME_SECONDS), y - 2, x_edt);
+   y += 24;
+
+   CreateDashboardLabel(CUSTOM_TO_LABEL_NAME, "To", y, x_lbl, 8, clrWhite);
+   CreateReportEdit(CUSTOM_TO_EDIT_NAME, "now", y - 2, x_edt);
+   y += 24;
+
+   CreateReportButton(SET_TO_LATEST_BUTTON_NAME, "Use Latest Trade", y, clrDimGray, clrBlack, x_btn, btn_w);
+   y += 26;
+
+   CreateDashboardLabel(CUSTOM_MAGIC_LABEL_NAME, "Magic", y, x_lbl, 8, clrWhite);
+   CreateReportEdit(CUSTOM_MAGIC_EDIT_NAME, InpUseMagicNumberFilter ? (string)InpMagicNumberFilter : "all", y - 2, x_edt);
+   y += 24;
+
+   CreateReportButton(SEND_CUSTOM_BUTTON_NAME, "Send Custom", y, clrDarkCyan, clrTeal, x_btn, btn_w);
+   y += 30;
+
+   // Separator 3
+   CreateSeparatorLine(DASHBOARD_SEP3, y, x_lbl, panel_w - 2 * x_lbl);
+   y += 8;
+
+   // Equity section
+   CreateDashboardLabel(DASHBOARD_LBL_EQUITY_TITLE, "", y, x_lbl, 9, clrWhite);
+   y += 18;
+
+   CreateDashboardLabel(DASHBOARD_LBL_EQ1, "", y, x_lbl, 8, clrWhite);
+   y += 16;
+   CreateDashboardLabel(DASHBOARD_LBL_EQ2, "", y, x_lbl, 8, clrWhite);
+   y += 16;
+   CreateDashboardLabel(DASHBOARD_LBL_EQ3, "", y, x_lbl, 8, clrWhite);
+   y += 16;
+   CreateDashboardLabel(DASHBOARD_LBL_EQ4, "", y, x_lbl, 8, clrWhite);
+   y += 16;
+   CreateDashboardLabel(DASHBOARD_LBL_EQ5, "", y, x_lbl, 8, clrWhite);
+   y += 20;
+
+   CreateReportButton(RESET_EQUITY_BUTTON_NAME, "Reset Equity Alerts", y, clrDarkRed, clrMaroon, x_btn, btn_w);
+   y += 28;
+
+   // Error label
+   CreateDashboardLabel(DASHBOARD_LBL_ERROR, "", y, x_lbl, 8, clrRed);
+}
+
+void CreateReportButton(string name, string label, int y_distance, color background, color border, int x_distance = 14, int x_size = 150)
+{
+   if(!ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0))
+   {
+      g_last_error = "Could not create report button: " + (string)GetLastError();
+      Log(g_last_error + " name=" + name);
+      return;
+   }
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x_distance);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y_distance);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, x_size);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, 24);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, background);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, border);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetString(0, name, OBJPROP_TEXT, label);
+   Log("Created report button: " + label + " (" + name + ")");
+}
+
+void CreateReportEdit(string name, string value, int y_distance, int x_distance = 56)
+{
+   if(!ObjectCreate(0, name, OBJ_EDIT, 0, 0, 0))
+   {
+      g_last_error = "Could not create report edit field: " + (string)GetLastError();
+      Log(g_last_error + " name=" + name);
+      return;
+   }
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x_distance);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y_distance);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, 150);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, 22);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 8);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clrBlack);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, clrWhite);
+   ObjectSetInteger(0, name, OBJPROP_BORDER_COLOR, clrDimGray);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetString(0, name, OBJPROP_TEXT, value);
+}
+
+void CreateDashboardLabel(string name, string text, int y, int x, int font_size, color clr)
+{
+   ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, font_size);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+}
+
+void CreateSeparatorLine(string name, int y, int x, int width)
+{
+   ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, 1);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clrGray);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, clrGray);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
+
+void UpdateStatus()
+{
+   if(!InpShowChartStatus)
+      return;
+
+   RefreshEffectiveMagicFilterFromChart();
+
+   if(ObjectFind(0, DASHBOARD_LBL_STATUS) >= 0)
+   {
+      string status_text = g_last_status;
+      if(g_last_error != "")
+         status_text += " | Error: " + g_last_error;
+      ObjectSetString(0, DASHBOARD_LBL_STATUS, OBJPROP_TEXT, status_text);
+   }
+
+   if(ObjectFind(0, DASHBOARD_LBL_INFO) >= 0)
+   {
+      string info = "Magic: " + (g_effective_magic_filter_enabled ? (string)g_effective_magic_filter : "off");
+      info += " | Alerts: " + (InpEnableAlerts ? "ON" : "OFF");
+      ObjectSetString(0, DASHBOARD_LBL_INFO, OBJPROP_TEXT, info);
+   }
+
+   if(ObjectFind(0, DASHBOARD_LBL_CUSTOM) >= 0)
+      ObjectSetString(0, DASHBOARD_LBL_CUSTOM, OBJPROP_TEXT,
+         "From: " + CustomEditText(CUSTOM_FROM_EDIT_NAME) + " | To: " + CustomEditText(CUSTOM_TO_EDIT_NAME));
+
+   if(ObjectFind(0, DASHBOARD_LBL_SCHEDULE) >= 0)
+      ObjectSetString(0, DASHBOARD_LBL_SCHEDULE, OBJPROP_TEXT, "Schedule: " + AutoScheduleText());
+
+   if(ObjectFind(0, DASHBOARD_LBL_NEXT) >= 0)
+      ObjectSetString(0, DASHBOARD_LBL_NEXT, OBJPROP_TEXT, "Next: " + TimeToString(g_next_report_time, TIME_DATE | TIME_SECONDS));
+
+   if(InpEnableAlerts && InpAlertOnEquityTarget)
+   {
+      if(ObjectFind(0, DASHBOARD_LBL_EQUITY_TITLE) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQUITY_TITLE, OBJPROP_TEXT, "Equity Levels:");
+      if(ObjectFind(0, DASHBOARD_LBL_EQ1) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQ1, OBJPROP_TEXT, EquityLineText(1, InpEquityLevel1, InpEquityText1));
+      if(ObjectFind(0, DASHBOARD_LBL_EQ2) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQ2, OBJPROP_TEXT, EquityLineText(2, InpEquityLevel2, InpEquityText2));
+      if(ObjectFind(0, DASHBOARD_LBL_EQ3) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQ3, OBJPROP_TEXT, EquityLineText(3, InpEquityLevel3, InpEquityText3));
+      if(ObjectFind(0, DASHBOARD_LBL_EQ4) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQ4, OBJPROP_TEXT, EquityLineText(4, InpEquityLevel4, InpEquityText4));
+      if(ObjectFind(0, DASHBOARD_LBL_EQ5) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQ5, OBJPROP_TEXT, EquityLineText(5, InpEquityLevel5, InpEquityText5));
+   }
+   else
+   {
+      if(ObjectFind(0, DASHBOARD_LBL_EQUITY_TITLE) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQUITY_TITLE, OBJPROP_TEXT, "");
+      for(int i = 1; i <= 5; i++)
+      {
+         string eq_name = (i == 1 ? DASHBOARD_LBL_EQ1 : i == 2 ? DASHBOARD_LBL_EQ2 : i == 3 ? DASHBOARD_LBL_EQ3 : i == 4 ? DASHBOARD_LBL_EQ4 : DASHBOARD_LBL_EQ5);
+         if(ObjectFind(0, eq_name) >= 0)
+            ObjectSetString(0, eq_name, OBJPROP_TEXT, "");
+      }
+   }
+
+   if(ObjectFind(0, DASHBOARD_LBL_ERROR) >= 0)
+   {
+      if(g_last_error != "")
+         ObjectSetString(0, DASHBOARD_LBL_ERROR, OBJPROP_TEXT, "Error: " + g_last_error);
+      else
+         ObjectSetString(0, DASHBOARD_LBL_ERROR, OBJPROP_TEXT, "");
+   }
+}
+
+void Log(string message)
+{
+   if(!InpPrintDebugLogs)
+      return;
+
+   Print("TelegramTradeReporter: " + message);
+}
+
+void CheckAlerts()
+{
+   if(!InpEnableAlerts)
+      return;
+
+   if(InpAlertOnEquityTarget)
+      CheckEquityTargetAlert();
+
+   if(InpAlertOnConsecutiveTrades)
+      CheckConsecutiveTradesAlert();
+}
+
+void CheckEquityTargetAlert()
+{
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   CheckSingleEquityLevel(equity, InpEquityLevel1, InpEquityText1);
+   CheckSingleEquityLevel(equity, InpEquityLevel2, InpEquityText2);
+   CheckSingleEquityLevel(equity, InpEquityLevel3, InpEquityText3);
+   CheckSingleEquityLevel(equity, InpEquityLevel4, InpEquityText4);
+   CheckSingleEquityLevel(equity, InpEquityLevel5, InpEquityText5);
+}
+
+void CheckSingleEquityLevel(double equity, double target, string custom_text)
+{
+   if(target <= 0.0)
+      return;
+
+   bool already_triggered = IsEquityLevelTriggered(target);
+
+   if(equity >= target)
+   {
+      if(!already_triggered)
+      {
+         string custom = CleanInput(custom_text);
+         string msg = "<b>🚨 Equity Alert</b>\n";
+         msg += "Account: <b>" + EscapeHtml(AccountInfoString(ACCOUNT_NAME)) + "</b>\n";
+         msg += "Login: <code>" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "</code>\n";
+         msg += "Server: " + EscapeHtml(AccountInfoString(ACCOUNT_SERVER)) + "\n";
+         msg += "Currency: " + EscapeHtml(AccountInfoString(ACCOUNT_CURRENCY)) + "\n";
+         msg += "Current equity: <b>" + MoneyAmountText(equity) + "</b>\n";
+         msg += "Target level: <b>" + MoneyAmountText(target) + "</b>\n";
+         if(custom != "")
+            msg += "\n" + EscapeHtml(custom) + "\n";
+         SendTelegram(msg);
+         AddEquityTriggeredLevel(target);
+         Log("Equity target alert sent. equity=" + DoubleToString(equity, 2) + " target=" + DoubleToString(target, 2) + " text=" + custom);
+      }
+   }
+   else
+   {
+      if(already_triggered && InpEquityAlertMode == EQUITY_ALERT_EVERY_TIME)
+      {
+         RemoveEquityTriggeredLevel(target);
+         Log("Equity dropped below target " + DoubleToString(target, 2) + ", alert flag reset.");
+      }
+   }
+}
+
+bool IsEquityLevelTriggered(double level)
+{
+   string key = "," + DoubleToString(level, 2) + ",";
+   return StringFind(g_equity_target_levels_triggered, key) >= 0;
+}
+
+void AddEquityTriggeredLevel(double level)
+{
+   if(!IsEquityLevelTriggered(level))
+      g_equity_target_levels_triggered += "," + DoubleToString(level, 2) + ",";
+}
+
+void RemoveEquityTriggeredLevel(double level)
+{
+   string key = "," + DoubleToString(level, 2) + ",";
+   int pos = StringFind(g_equity_target_levels_triggered, key);
+   if(pos >= 0)
+   {
+      string before = StringSubstr(g_equity_target_levels_triggered, 0, pos);
+      string after = StringSubstr(g_equity_target_levels_triggered, pos + StringLen(key));
+      g_equity_target_levels_triggered = before + after;
+   }
+}
+
+void InitializeEquityTriggeredStates()
+{
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   if(InpEquityLevel1 > 0.0 && equity >= InpEquityLevel1)
+      AddEquityTriggeredLevel(InpEquityLevel1);
+   if(InpEquityLevel2 > 0.0 && equity >= InpEquityLevel2)
+      AddEquityTriggeredLevel(InpEquityLevel2);
+   if(InpEquityLevel3 > 0.0 && equity >= InpEquityLevel3)
+      AddEquityTriggeredLevel(InpEquityLevel3);
+   if(InpEquityLevel4 > 0.0 && equity >= InpEquityLevel4)
+      AddEquityTriggeredLevel(InpEquityLevel4);
+   if(InpEquityLevel5 > 0.0 && equity >= InpEquityLevel5)
+      AddEquityTriggeredLevel(InpEquityLevel5);
+
+   Log("Equity triggered states initialized on startup. Triggered: " + g_equity_target_levels_triggered);
+}
+
+void ResetEquityAlerts()
+{
+   g_equity_target_levels_triggered = "";
+   g_last_alerted_win_streak = 0;
+   g_last_alerted_loss_streak = 0;
+   g_last_status = "Equity alerts reset";
+   Log("Equity alerts reset by user.");
+   UpdateStatus();
+}
+
+string EquityLineText(int level_num, double target, string custom_text)
+{
+   if(target <= 0.0)
+      return "";
+
+   string status = IsEquityLevelTriggered(target) ? "TRIGGERED" : "Waiting";
+   string custom = CleanInput(custom_text);
+   string label = (custom != "") ? custom : ("L" + (string)level_num);
+   return label + ": " + MoneyAmountText(target) + " [" + status + "]";
+}
+
+void CheckConsecutiveTradesAlert()
+{
+   if(!HistorySelect(0, TimeCurrent()))
+   {
+      Log("CheckConsecutiveTradesAlert: HistorySelect failed");
+      return;
+   }
+
+   int win_streak = 0;
+   int loss_streak = 0;
+   int deals_total = HistoryDealsTotal();
+   bool found_streak_type = false;
+   bool streak_is_win = false;
+
+   for(int i = deals_total - 1; i >= 0; i--)
+   {
+      ulong deal_ticket = HistoryDealGetTicket(i);
+      if(deal_ticket == 0)
+         continue;
+
+      long entry = HistoryDealGetInteger(deal_ticket, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY && entry != DEAL_ENTRY_INOUT)
+         continue;
+
+      double profit = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+
+      if(IsBreakEvenTrade(profit))
+         continue;
+
+      if(!found_streak_type)
+      {
+         streak_is_win = (profit > 0.0);
+         found_streak_type = true;
+      }
+
+      if((streak_is_win && profit > 0.0) || (!streak_is_win && profit <= 0.0))
+      {
+         if(streak_is_win)
+            win_streak++;
+         else
+            loss_streak++;
+      }
+      else
+         break;
+   }
+
+   if(win_streak >= InpAlertWinStreakCount && win_streak > g_last_alerted_win_streak)
+   {
+      string msg = "<b>🔥 Consecutive Wins: " + (string)win_streak + "</b>\n";
+      msg += "Account: <b>" + EscapeHtml(AccountInfoString(ACCOUNT_NAME)) + "</b>\n";
+      msg += "Login: <code>" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "</code>\n";
+      msg += "Server: " + EscapeHtml(AccountInfoString(ACCOUNT_SERVER)) + "\n";
+      SendTelegram(msg);
+      g_last_alerted_win_streak = win_streak;
+      g_last_alerted_loss_streak = 0;
+      Log("Consecutive wins alert sent: " + (string)win_streak);
+   }
+
+   if(loss_streak >= InpAlertLossStreakCount && loss_streak > g_last_alerted_loss_streak)
+   {
+      string msg = "<b>⚠️ Consecutive Losses: " + (string)loss_streak + "</b>\n";
+      msg += "Account: <b>" + EscapeHtml(AccountInfoString(ACCOUNT_NAME)) + "</b>\n";
+      msg += "Login: <code>" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "</code>\n";
+      msg += "Server: " + EscapeHtml(AccountInfoString(ACCOUNT_SERVER)) + "\n";
+      SendTelegram(msg);
+      g_last_alerted_loss_streak = loss_streak;
+      g_last_alerted_win_streak = 0;
+      Log("Consecutive losses alert sent: " + (string)loss_streak);
+   }
+
+   if(win_streak == 0)
+      g_last_alerted_win_streak = 0;
+
+   if(loss_streak == 0)
+      g_last_alerted_loss_streak = 0;
+}
