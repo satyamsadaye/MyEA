@@ -90,6 +90,25 @@ input int InpAlertLossStreakCount = 3;              // Consecutive losses thresh
 #define CUSTOM_FROM_LABEL_NAME "TTR_CUSTOM_FROM_LABEL"
 #define CUSTOM_TO_LABEL_NAME "TTR_CUSTOM_TO_LABEL"
 #define CUSTOM_MAGIC_LABEL_NAME "TTR_CUSTOM_MAGIC_LABEL"
+#define RESET_EQUITY_BUTTON_NAME "TTR_RESET_EQUITY"
+
+#define DASHBOARD_BG_NAME "TTR_DASHBOARD_BG"
+#define DASHBOARD_LBL_TITLE "TTR_LBL_TITLE"
+#define DASHBOARD_LBL_STATUS "TTR_LBL_STATUS"
+#define DASHBOARD_LBL_INFO "TTR_LBL_INFO"
+#define DASHBOARD_LBL_CUSTOM "TTR_LBL_CUSTOM"
+#define DASHBOARD_LBL_SCHEDULE "TTR_LBL_SCHEDULE"
+#define DASHBOARD_LBL_NEXT "TTR_LBL_NEXT"
+#define DASHBOARD_LBL_EQUITY_TITLE "TTR_LBL_EQ_TITLE"
+#define DASHBOARD_LBL_EQ1 "TTR_LBL_EQ1"
+#define DASHBOARD_LBL_EQ2 "TTR_LBL_EQ2"
+#define DASHBOARD_LBL_EQ3 "TTR_LBL_EQ3"
+#define DASHBOARD_LBL_EQ4 "TTR_LBL_EQ4"
+#define DASHBOARD_LBL_EQ5 "TTR_LBL_EQ5"
+#define DASHBOARD_LBL_ERROR "TTR_LBL_ERROR"
+#define DASHBOARD_SEP1 "TTR_SEP1"
+#define DASHBOARD_SEP2 "TTR_SEP2"
+#define DASHBOARD_SEP3 "TTR_SEP3"
 
 struct ClosedTrade
 {
@@ -121,11 +140,13 @@ long g_effective_magic_filter = 0;
 string g_equity_target_levels_triggered = "";
 int g_last_alerted_win_streak = 0;
 int g_last_alerted_loss_streak = 0;
+double g_previous_equity = -1;
 
 int OnInit()
 {
    EventSetTimer(1);
    g_next_report_time = ComputeNextAutoReportTime(TimeCurrent());
+   g_previous_equity = -1;
    CreateReportButtons();
    RefreshEffectiveMagicFilterFromChart();
    Log("EA initialized. Buttons=" + (InpShowSendNowButton ? "on" : "off") +
@@ -136,6 +157,7 @@ int OnInit()
       SendTelegram("MT5 Telegram trade reporter started for account " + (string)AccountInfoInteger(ACCOUNT_LOGIN) + ".");
 
    UpdateStatus();
+
    return INIT_SUCCEEDED;
 }
 
@@ -199,6 +221,12 @@ void OnChartEvent(const int id,
       ObjectSetInteger(0, SET_TO_LATEST_BUTTON_NAME, OBJPROP_STATE, false);
       Log("Latest trade button accepted.");
       SetCustomToLatestTrade();
+   }
+   else if(sparam == RESET_EQUITY_BUTTON_NAME)
+   {
+      ObjectSetInteger(0, RESET_EQUITY_BUTTON_NAME, OBJPROP_STATE, false);
+      Log("Reset equity alerts button accepted.");
+      ResetEquityAlerts();
    }
    else
    {
@@ -1539,6 +1567,23 @@ string CustomEditText(const string object_name)
 
 void DeleteReportButtons()
 {
+   ObjectDelete(0, DASHBOARD_BG_NAME);
+   ObjectDelete(0, DASHBOARD_LBL_TITLE);
+   ObjectDelete(0, DASHBOARD_LBL_STATUS);
+   ObjectDelete(0, DASHBOARD_LBL_INFO);
+   ObjectDelete(0, DASHBOARD_LBL_CUSTOM);
+   ObjectDelete(0, DASHBOARD_LBL_SCHEDULE);
+   ObjectDelete(0, DASHBOARD_LBL_NEXT);
+   ObjectDelete(0, DASHBOARD_LBL_EQUITY_TITLE);
+   ObjectDelete(0, DASHBOARD_LBL_EQ1);
+   ObjectDelete(0, DASHBOARD_LBL_EQ2);
+   ObjectDelete(0, DASHBOARD_LBL_EQ3);
+   ObjectDelete(0, DASHBOARD_LBL_EQ4);
+   ObjectDelete(0, DASHBOARD_LBL_EQ5);
+   ObjectDelete(0, DASHBOARD_LBL_ERROR);
+   ObjectDelete(0, DASHBOARD_SEP1);
+   ObjectDelete(0, DASHBOARD_SEP2);
+   ObjectDelete(0, DASHBOARD_SEP3);
    ObjectDelete(0, SEND_NOW_BUTTON_NAME);
    ObjectDelete(0, SEND_TODAY_BUTTON_NAME);
    ObjectDelete(0, SEND_WEEKLY_BUTTON_NAME);
@@ -1552,6 +1597,7 @@ void DeleteReportButtons()
    ObjectDelete(0, CUSTOM_FROM_LABEL_NAME);
    ObjectDelete(0, CUSTOM_TO_LABEL_NAME);
    ObjectDelete(0, CUSTOM_MAGIC_LABEL_NAME);
+   ObjectDelete(0, RESET_EQUITY_BUTTON_NAME);
 }
 
 void CreateReportButtons()
@@ -1563,22 +1609,120 @@ void CreateReportButtons()
       return;
    }
 
-   CreateReportButton(SEND_NOW_BUTTON_NAME, "Send Hourly Now", 28, clrSeaGreen, clrDarkGreen);
-   CreateReportButton(SEND_TODAY_BUTTON_NAME, "Send Today", 58, clrDarkOliveGreen, clrDarkGreen);
-   CreateReportButton(SEND_WEEKLY_BUTTON_NAME, "Send Weekly", 88, clrSteelBlue, clrMidnightBlue);
-   CreateReportButton(SEND_MONTHLY_BUTTON_NAME, "Send Monthly", 118, clrDarkSlateGray, clrBlack);
-   CreateReportButton(SEND_OVERALL_BUTTON_NAME, "Send Overall", 148, clrSaddleBrown, clrMaroon);
-   CreateReportLabel(CUSTOM_FROM_LABEL_NAME, "From", 184);
-   CreateReportEdit(CUSTOM_FROM_EDIT_NAME, TimeToString(TimeCurrent() - MathMax(1, InpLookbackHours) * 3600, TIME_DATE | TIME_SECONDS), 180);
-   CreateReportLabel(CUSTOM_TO_LABEL_NAME, "To", 212);
-   CreateReportEdit(CUSTOM_TO_EDIT_NAME, "now", 208);
-   CreateReportButton(SET_TO_LATEST_BUTTON_NAME, "Use Latest Trade", 236, clrDimGray, clrBlack);
-   CreateReportLabel(CUSTOM_MAGIC_LABEL_NAME, "Magic", 272);
-   CreateReportEdit(CUSTOM_MAGIC_EDIT_NAME, InpUseMagicNumberFilter ? (string)InpMagicNumberFilter : "all", 268);
-   CreateReportButton(SEND_CUSTOM_BUTTON_NAME, "Send Custom", 296, clrDarkCyan, clrTeal);
+   int base_x = 5;
+   int base_y = 5;
+   int panel_w = 225;
+   int x_lbl = 16;
+   int x_btn = 16;
+   int x_edt = 60;
+   int btn_w = 160;
+
+   // Background panel
+   ObjectCreate(0, DASHBOARD_BG_NAME, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_XDISTANCE, base_x);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_YDISTANCE, base_y);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_XSIZE, panel_w);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_YSIZE, 445);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_COLOR, clrGray);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_BGCOLOR, clrDarkSlateGray);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_BACK, false);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, DASHBOARD_BG_NAME, OBJPROP_HIDDEN, true);
+
+   int y = 10;
+
+   // Title
+   CreateDashboardLabel(DASHBOARD_LBL_TITLE, "Telegram Trade Reporter", y, x_lbl, 10, clrWhite);
+   y += 14;
+
+   // Status
+   CreateDashboardLabel(DASHBOARD_LBL_STATUS, "", y, x_lbl, 8, clrWhite);
+   y += 10;
+
+   // Info line (magic + alerts)
+   CreateDashboardLabel(DASHBOARD_LBL_INFO, "", y, x_lbl, 8, clrWhite);
+   y += 10;
+
+   // Custom from/to
+   CreateDashboardLabel(DASHBOARD_LBL_CUSTOM, "", y, x_lbl, 8, clrWhite);
+   y += 10;
+
+   // Schedule
+   CreateDashboardLabel(DASHBOARD_LBL_SCHEDULE, "", y, x_lbl, 8, clrWhite);
+   y += 10;
+
+   // Next report
+   CreateDashboardLabel(DASHBOARD_LBL_NEXT, "", y, x_lbl, 8, clrWhite);
+   y += 12;
+
+   // Separator 1
+   CreateSeparatorLine(DASHBOARD_SEP1, y, x_lbl, panel_w - 2 * x_lbl);
+   y += 4;
+
+   // Report buttons
+   CreateReportButton(SEND_NOW_BUTTON_NAME, "Hourly", y, clrSeaGreen, clrDarkGreen, x_btn, btn_w);
+   y += 24;
+   CreateReportButton(SEND_TODAY_BUTTON_NAME, "Today", y, clrDarkOliveGreen, clrDarkGreen, x_btn, btn_w);
+   y += 24;
+   CreateReportButton(SEND_WEEKLY_BUTTON_NAME, "Weekly", y, clrSteelBlue, clrMidnightBlue, x_btn, btn_w);
+   y += 24;
+   CreateReportButton(SEND_MONTHLY_BUTTON_NAME, "Monthly", y, clrDarkSlateGray, clrBlack, x_btn, btn_w);
+   y += 24;
+   CreateReportButton(SEND_OVERALL_BUTTON_NAME, "Overall", y, clrSaddleBrown, clrMaroon, x_btn, btn_w);
+   y += 24;
+
+   // Separator 2
+   CreateSeparatorLine(DASHBOARD_SEP2, y, x_lbl, panel_w - 2 * x_lbl);
+   y += 4;
+
+   // Custom section
+   CreateDashboardLabel(CUSTOM_FROM_LABEL_NAME, "From", y, x_lbl, 8, clrWhite);
+   CreateReportEdit(CUSTOM_FROM_EDIT_NAME, TimeToString(TimeCurrent() - MathMax(1, InpLookbackHours) * 3600, TIME_DATE | TIME_SECONDS), y - 2, x_edt);
+   y += 22;
+
+   CreateDashboardLabel(CUSTOM_TO_LABEL_NAME, "To", y, x_lbl, 8, clrWhite);
+   CreateReportEdit(CUSTOM_TO_EDIT_NAME, "now", y - 2, x_edt);
+   y += 22;
+
+   CreateReportButton(SET_TO_LATEST_BUTTON_NAME, "Use Latest Trade", y, clrDimGray, clrBlack, x_btn, btn_w);
+   y += 24;
+
+   CreateDashboardLabel(CUSTOM_MAGIC_LABEL_NAME, "Magic", y, x_lbl, 8, clrWhite);
+   CreateReportEdit(CUSTOM_MAGIC_EDIT_NAME, InpUseMagicNumberFilter ? (string)InpMagicNumberFilter : "all", y - 2, x_edt);
+   y += 22;
+
+   CreateReportButton(SEND_CUSTOM_BUTTON_NAME, "Send Custom", y, clrDarkCyan, clrTeal, x_btn, btn_w);
+   y += 24;
+
+   // Separator 3
+   CreateSeparatorLine(DASHBOARD_SEP3, y, x_lbl, panel_w - 2 * x_lbl);
+   y += 4;
+
+   // Equity section
+   CreateDashboardLabel(DASHBOARD_LBL_EQUITY_TITLE, "", y, x_lbl, 9, clrWhite);
+   y += 14;
+
+   CreateDashboardLabel(DASHBOARD_LBL_EQ1, "", y, x_lbl, 8, clrWhite);
+   y += 12;
+   CreateDashboardLabel(DASHBOARD_LBL_EQ2, "", y, x_lbl, 8, clrWhite);
+   y += 12;
+   CreateDashboardLabel(DASHBOARD_LBL_EQ3, "", y, x_lbl, 8, clrWhite);
+   y += 12;
+   CreateDashboardLabel(DASHBOARD_LBL_EQ4, "", y, x_lbl, 8, clrWhite);
+   y += 12;
+   CreateDashboardLabel(DASHBOARD_LBL_EQ5, "", y, x_lbl, 8, clrWhite);
+   y += 14;
+
+   CreateReportButton(RESET_EQUITY_BUTTON_NAME, "Reset All", y, clrDarkRed, clrMaroon, x_btn, btn_w);
+   y += 24;
+
+   // Error label
+   CreateDashboardLabel(DASHBOARD_LBL_ERROR, "", y, x_lbl, 8, clrRed);
 }
 
-void CreateReportButton(string name, string label, int y_distance, color background, color border)
+void CreateReportButton(string name, string label, int y_distance, color background, color border, int x_distance = 14, int x_size = 150)
 {
    if(!ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0))
    {
@@ -1588,9 +1732,9 @@ void CreateReportButton(string name, string label, int y_distance, color backgro
    }
 
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 12);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x_distance);
    ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y_distance);
-   ObjectSetInteger(0, name, OBJPROP_XSIZE, 150);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, x_size);
    ObjectSetInteger(0, name, OBJPROP_YSIZE, 24);
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
    ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
@@ -1602,26 +1746,7 @@ void CreateReportButton(string name, string label, int y_distance, color backgro
    Log("Created report button: " + label + " (" + name + ")");
 }
 
-void CreateReportLabel(string name, string label, int y_distance)
-{
-   if(!ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0))
-   {
-      g_last_error = "Could not create report label: " + (string)GetLastError();
-      Log(g_last_error + " name=" + name);
-      return;
-   }
-
-   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 12);
-   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y_distance);
-   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, 9);
-   ObjectSetInteger(0, name, OBJPROP_COLOR, clrWhite);
-   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
-   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
-   ObjectSetString(0, name, OBJPROP_TEXT, label);
-}
-
-void CreateReportEdit(string name, string value, int y_distance)
+void CreateReportEdit(string name, string value, int y_distance, int x_distance = 56)
 {
    if(!ObjectCreate(0, name, OBJ_EDIT, 0, 0, 0))
    {
@@ -1631,7 +1756,7 @@ void CreateReportEdit(string name, string value, int y_distance)
    }
 
    ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, 54);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x_distance);
    ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y_distance);
    ObjectSetInteger(0, name, OBJPROP_XSIZE, 150);
    ObjectSetInteger(0, name, OBJPROP_YSIZE, 22);
@@ -1644,6 +1769,34 @@ void CreateReportEdit(string name, string value, int y_distance)
    ObjectSetString(0, name, OBJPROP_TEXT, value);
 }
 
+void CreateDashboardLabel(string name, string text, int y, int x, int font_size, color clr)
+{
+   ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_FONTSIZE, font_size);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+}
+
+void CreateSeparatorLine(string name, int y, int x, int width)
+{
+   ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, 1);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clrGray);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, clrGray);
+   ObjectSetInteger(0, name, OBJPROP_BACK, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+}
+
 void UpdateStatus()
 {
    if(!InpShowChartStatus)
@@ -1651,18 +1804,65 @@ void UpdateStatus()
 
    RefreshEffectiveMagicFilterFromChart();
 
-   string text = "Telegram Trade Reporter\n";
-   text += g_last_status + "\n";
-   text += "Magic filter: " + (g_effective_magic_filter_enabled ? (string)g_effective_magic_filter : "off") + "\n";
-   text += "Custom From: " + CustomEditText(CUSTOM_FROM_EDIT_NAME) + "\n";
-   text += "Custom To: " + CustomEditText(CUSTOM_TO_EDIT_NAME) + "\n";
-   text += "Auto schedule: " + AutoScheduleText() + "\n";
-   text += "Next auto report: " + TimeToString(g_next_report_time, TIME_DATE | TIME_SECONDS) + "\n";
-   text += "Alerts: " + (InpEnableAlerts ? "ON" : "OFF") + "\n";
-   if(g_last_error != "")
-      text += "Error: " + g_last_error + "\n";
+   if(ObjectFind(0, DASHBOARD_LBL_STATUS) >= 0)
+   {
+      string status_text = g_last_status;
+      if(g_last_error != "")
+         status_text += " | Error: " + g_last_error;
+      ObjectSetString(0, DASHBOARD_LBL_STATUS, OBJPROP_TEXT, status_text);
+   }
 
-   Comment(text);
+   if(ObjectFind(0, DASHBOARD_LBL_INFO) >= 0)
+   {
+      string info = "Magic: " + (g_effective_magic_filter_enabled ? (string)g_effective_magic_filter : "off");
+      info += " | Alerts: " + (InpEnableAlerts ? "ON" : "OFF");
+      ObjectSetString(0, DASHBOARD_LBL_INFO, OBJPROP_TEXT, info);
+   }
+
+   if(ObjectFind(0, DASHBOARD_LBL_CUSTOM) >= 0)
+      ObjectSetString(0, DASHBOARD_LBL_CUSTOM, OBJPROP_TEXT,
+         "From: " + CustomEditText(CUSTOM_FROM_EDIT_NAME) + " | To: " + CustomEditText(CUSTOM_TO_EDIT_NAME));
+
+   if(ObjectFind(0, DASHBOARD_LBL_SCHEDULE) >= 0)
+      ObjectSetString(0, DASHBOARD_LBL_SCHEDULE, OBJPROP_TEXT, "Schedule: " + AutoScheduleText());
+
+   if(ObjectFind(0, DASHBOARD_LBL_NEXT) >= 0)
+      ObjectSetString(0, DASHBOARD_LBL_NEXT, OBJPROP_TEXT, "Next: " + TimeToString(g_next_report_time, TIME_DATE | TIME_SECONDS));
+
+   if(InpEnableAlerts && InpAlertOnEquityTarget)
+   {
+      if(ObjectFind(0, DASHBOARD_LBL_EQUITY_TITLE) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQUITY_TITLE, OBJPROP_TEXT, "Equity Levels:");
+      if(ObjectFind(0, DASHBOARD_LBL_EQ1) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQ1, OBJPROP_TEXT, EquityLineText(1, InpEquityLevel1, InpEquityText1));
+      if(ObjectFind(0, DASHBOARD_LBL_EQ2) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQ2, OBJPROP_TEXT, EquityLineText(2, InpEquityLevel2, InpEquityText2));
+      if(ObjectFind(0, DASHBOARD_LBL_EQ3) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQ3, OBJPROP_TEXT, EquityLineText(3, InpEquityLevel3, InpEquityText3));
+      if(ObjectFind(0, DASHBOARD_LBL_EQ4) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQ4, OBJPROP_TEXT, EquityLineText(4, InpEquityLevel4, InpEquityText4));
+      if(ObjectFind(0, DASHBOARD_LBL_EQ5) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQ5, OBJPROP_TEXT, EquityLineText(5, InpEquityLevel5, InpEquityText5));
+   }
+   else
+   {
+      if(ObjectFind(0, DASHBOARD_LBL_EQUITY_TITLE) >= 0)
+         ObjectSetString(0, DASHBOARD_LBL_EQUITY_TITLE, OBJPROP_TEXT, "");
+      for(int i = 1; i <= 5; i++)
+      {
+         string eq_name = (i == 1 ? DASHBOARD_LBL_EQ1 : i == 2 ? DASHBOARD_LBL_EQ2 : i == 3 ? DASHBOARD_LBL_EQ3 : i == 4 ? DASHBOARD_LBL_EQ4 : DASHBOARD_LBL_EQ5);
+         if(ObjectFind(0, eq_name) >= 0)
+            ObjectSetString(0, eq_name, OBJPROP_TEXT, "");
+      }
+   }
+
+   if(ObjectFind(0, DASHBOARD_LBL_ERROR) >= 0)
+   {
+      if(g_last_error != "")
+         ObjectSetString(0, DASHBOARD_LBL_ERROR, OBJPROP_TEXT, "Error: " + g_last_error);
+      else
+         ObjectSetString(0, DASHBOARD_LBL_ERROR, OBJPROP_TEXT, "");
+   }
 }
 
 void Log(string message)
@@ -1689,21 +1889,30 @@ void CheckEquityTargetAlert()
 {
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
 
-   CheckSingleEquityLevel(equity, InpEquityLevel1, InpEquityText1);
-   CheckSingleEquityLevel(equity, InpEquityLevel2, InpEquityText2);
-   CheckSingleEquityLevel(equity, InpEquityLevel3, InpEquityText3);
-   CheckSingleEquityLevel(equity, InpEquityLevel4, InpEquityText4);
-   CheckSingleEquityLevel(equity, InpEquityLevel5, InpEquityText5);
+   if(g_previous_equity < 0)
+   {
+      g_previous_equity = equity;
+      return;
+   }
+
+   CheckSingleEquityLevel(g_previous_equity, equity, InpEquityLevel1, InpEquityText1);
+   CheckSingleEquityLevel(g_previous_equity, equity, InpEquityLevel2, InpEquityText2);
+   CheckSingleEquityLevel(g_previous_equity, equity, InpEquityLevel3, InpEquityText3);
+   CheckSingleEquityLevel(g_previous_equity, equity, InpEquityLevel4, InpEquityText4);
+   CheckSingleEquityLevel(g_previous_equity, equity, InpEquityLevel5, InpEquityText5);
+
+   g_previous_equity = equity;
 }
 
-void CheckSingleEquityLevel(double equity, double target, string custom_text)
+void CheckSingleEquityLevel(double prev_equity, double equity, double target, string custom_text)
 {
    if(target <= 0.0)
       return;
 
    bool already_triggered = IsEquityLevelTriggered(target);
+   bool crossed_above = (prev_equity < target && equity >= target);
 
-   if(equity >= target)
+   if(crossed_above)
    {
       if(!already_triggered)
       {
@@ -1722,7 +1931,7 @@ void CheckSingleEquityLevel(double equity, double target, string custom_text)
          Log("Equity target alert sent. equity=" + DoubleToString(equity, 2) + " target=" + DoubleToString(target, 2) + " text=" + custom);
       }
    }
-   else
+   else if(equity < target)
    {
       if(already_triggered && InpEquityAlertMode == EQUITY_ALERT_EVERY_TIME)
       {
@@ -1754,6 +1963,45 @@ void RemoveEquityTriggeredLevel(double level)
       string after = StringSubstr(g_equity_target_levels_triggered, pos + StringLen(key));
       g_equity_target_levels_triggered = before + after;
    }
+}
+
+void InitializeEquityTriggeredStates()
+{
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   if(InpEquityLevel1 > 0.0 && equity >= InpEquityLevel1)
+      AddEquityTriggeredLevel(InpEquityLevel1);
+   if(InpEquityLevel2 > 0.0 && equity >= InpEquityLevel2)
+      AddEquityTriggeredLevel(InpEquityLevel2);
+   if(InpEquityLevel3 > 0.0 && equity >= InpEquityLevel3)
+      AddEquityTriggeredLevel(InpEquityLevel3);
+   if(InpEquityLevel4 > 0.0 && equity >= InpEquityLevel4)
+      AddEquityTriggeredLevel(InpEquityLevel4);
+   if(InpEquityLevel5 > 0.0 && equity >= InpEquityLevel5)
+      AddEquityTriggeredLevel(InpEquityLevel5);
+
+   Log("Equity triggered states initialized on startup. Triggered: " + g_equity_target_levels_triggered);
+}
+
+void ResetEquityAlerts()
+{
+   g_equity_target_levels_triggered = "";
+   g_last_alerted_win_streak = 0;
+   g_last_alerted_loss_streak = 0;
+   g_last_status = "Equity alerts reset";
+   Log("Equity alerts reset by user.");
+   UpdateStatus();
+}
+
+string EquityLineText(int level_num, double target, string custom_text)
+{
+   if(target <= 0.0)
+      return "";
+
+   string status = IsEquityLevelTriggered(target) ? "TRIGGERED" : "Waiting";
+   string custom = CleanInput(custom_text);
+   string label = (custom != "") ? custom : ("L" + (string)level_num);
+   return label + ": " + MoneyAmountText(target) + " [" + status + "]";
 }
 
 void CheckConsecutiveTradesAlert()
