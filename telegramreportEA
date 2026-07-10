@@ -42,9 +42,16 @@ input bool InpShowChartStatus = true;          // Show reporter status on chart
 input bool InpShowSendNowButton = true;        // Show Send Report Now button
 input bool InpPrintDebugLogs = true;           // Print report debug logs in Experts tab
 
+enum ENUM_EQUITY_ALERT_MODE
+{
+   EQUITY_ALERT_EVERY_TIME = 0,                     // Alert every time equity reaches target
+   EQUITY_ALERT_ONCE = 1                            // Alert only once
+};
+
 input group "Performance Alerts"
 input bool InpEnableAlerts = false;                 // Enable performance alerts
 input bool InpAlertOnEquityTarget = false;          // Alert when equity hits target level
+input ENUM_EQUITY_ALERT_MODE InpEquityAlertMode = EQUITY_ALERT_EVERY_TIME; // Equity alert mode
 input double InpEquityTargetLevel = 0.0;            // Equity target level (absolute)
 input bool InpAlertOnConsecutiveTrades = false;     // Alert on consecutive wins/losses
 input int InpAlertWinStreakCount = 5;               // Consecutive wins threshold
@@ -1680,7 +1687,7 @@ void CheckEquityTargetAlert()
    }
    else
    {
-      if(g_equity_target_alert_sent)
+      if(g_equity_target_alert_sent && InpEquityAlertMode == EQUITY_ALERT_EVERY_TIME)
       {
          g_equity_target_alert_sent = false;
          Log("Equity dropped below target, alert flag reset.");
