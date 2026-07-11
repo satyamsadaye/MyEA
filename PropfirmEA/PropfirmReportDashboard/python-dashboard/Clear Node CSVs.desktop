@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Clear Node CSVs
+Comment=Clears all Partial_prop_Node CSV files
+Exec=bash -c '/home/satyam/Desktop/Opencode/PropfirmReportDashboard/clear_nodes.sh; echo; read -p "Press Enter to close..."'
+Terminal=true
+Icon=application-x-shellscript
