@@ -25,6 +25,14 @@ def extract_card(html, cls, label):
     )
     return m.group(1).strip() if m else ""
 
+def extract_card_sub(html, cls, label):
+    m = re.search(
+        r'<div class="card ' + re.escape(cls) + r'"><div class="label">' +
+        re.escape(label) + r'</div><div class="value">[^<]+</div><div class="sub">[^<]*' +
+        r'&middot;\s*avg\s*([^<]+)</div>', html
+    )
+    return m.group(1).strip() if m else ""
+
 def extract_section_cards(html, section_title):
     start = html.find("<h2>" + section_title + "</h2>")
     if start < 0:
@@ -36,6 +44,8 @@ def extract_section_cards(html, section_title):
         "T5Active": extract_card(section_html, "act", "Active Runs"),
         "T5ActiveProfit": extract_card(section_html, "profit", "Active in Profit"),
         "T5ActiveLoss": extract_card(section_html, "loss", "Active in Drawdown"),
+        "T5ActiveProfitDepth": extract_card_sub(section_html, "profit", "Active in Profit"),
+        "T5ActiveLossDepth": extract_card_sub(section_html, "loss", "Active in Drawdown"),
         "T5PassRate": extract_card(section_html, "rate", "Overall Pass Rate"),
         "T5CompletedPass": extract_card(section_html, "done", "Completed Pass Rate"),
         "T5Trades": extract_card(section_html, "tot", "Total Trades"),
@@ -187,6 +197,8 @@ def scan_reports():
             "T5Active": top5_data.get("T5Active", ""),
             "T5ActiveProfit": top5_data.get("T5ActiveProfit", ""),
             "T5ActiveLoss": top5_data.get("T5ActiveLoss", ""),
+            "T5ActiveProfitDepth": top5_data.get("T5ActiveProfitDepth", ""),
+            "T5ActiveLossDepth": top5_data.get("T5ActiveLossDepth", ""),
             "T5PassRate": top5_data.get("T5PassRate", ""),
             "T5CompletedPass": top5_data.get("T5CompletedPass", ""),
             "T5Trades": top5_data.get("T5Trades", ""),
@@ -440,7 +452,9 @@ function render(){
                 '<span class="stat-item"><span class="num blow">'+escapeHtml(report.T5Blown)+'</span> blown</span>'+
                 '<span class="stat-item"><span class="num act">'+escapeHtml(report.T5Active)+'</span> act'+
                 (report.T5ActiveProfit?' <span style="font-size:12px;color:#059669">'+escapeHtml(report.T5ActiveProfit)+' profit</span>':'')+
+                (report.T5ActiveProfitDepth?' <span style="font-size:12px;color:#059669">avg +'+escapeHtml(report.T5ActiveProfitDepth)+'</span>':'')+
                 (report.T5ActiveLoss?' <span style="font-size:12px;color:#dc2626">'+escapeHtml(report.T5ActiveLoss)+' DD</span>':'')+
+                (report.T5ActiveLossDepth?' <span style="font-size:12px;color:#dc2626">avg '+escapeHtml(report.T5ActiveLossDepth)+'</span>':'')+
                 '</span>'+
                 '<span class="stat-item"><span class="num rate">'+escapeHtml(report.T5PassRate)+'</span> rate</span>'+
                 '<span class="stat-item"><span class="num purple">'+escapeHtml(report.T5CompletedPass)+'</span> compl</span>'+
