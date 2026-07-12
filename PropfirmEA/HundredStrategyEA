@@ -1139,9 +1139,11 @@
    input int PropPauseSignalsMinuteUTC = 30;
    input int PropCloseAllHourUTC = 19;
    input int PropCloseAllMinuteUTC = 30;
-   input int PropResumeSignalsHourUTC = 1;
-   input int PropResumeSignalsMinuteUTC = 30;
-   input bool PropRollingStartMode = true;               // If true, spawns a fresh run per strategy (interval controlled below)
+    input int PropResumeSignalsHourUTC = 1;
+    input int PropResumeSignalsMinuteUTC = 30;
+    input bool PropEnableForceClose = true;               // If false, skip force-closing positions at PropCloseAll time (trade continues)
+    input bool PropEnablePauseSignals = true;             // If false, ignore pause signals window (trade continuously)
+    input bool PropRollingStartMode = true;               // If true, spawns a fresh run per strategy (interval controlled below)
    input ENUM_PROP_SPAWN_INTERVAL PropSpawnInterval = SPAWN_DAILY_AT_RESUME; // How often to spawn a fresh batch of 500 runs
    input int PropMaxStartDays = 0;                       // 0 = unlimited spawn batches per strategy
    input string PropHtmlReportFileName = "Propfirm_100_Strategy_Report.html";
@@ -4774,7 +4776,7 @@
          PropResetDailyReferences();
       }
 
-      if(PropIsCloseTime(now))
+      if(PropEnableForceClose && PropIsCloseTime(now))
          PropCloseAllVirtualPositions();
 
       PropUpdateOpenPositions();
@@ -4788,7 +4790,7 @@
          lastBarTime = currentBar;
       }
 
-      if(PropSignalsPaused(now))
+      if(PropEnablePauseSignals && PropSignalsPaused(now))
          return;
 
       for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
@@ -5113,7 +5115,7 @@
          PropRollingResetDaily();
       }
 
-      if(PropIsCloseTime(now))
+      if(PropEnableForceClose && PropIsCloseTime(now))
          PropRollingCloseAll();
 
       datetime currentBar = iTime(_Symbol, _Period, 0);
@@ -5121,7 +5123,7 @@
       if(newBar)
          propSignalCacheBar = currentBar;
 
-         if(newBar && !PropSignalsPaused(now))
+         if(newBar && (!PropEnablePauseSignals || !PropSignalsPaused(now)))
          {
       for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
       {
@@ -5149,7 +5151,7 @@
       if(PropRollingShouldSpawn(now))
          PropRollingSpawnRuns(now);
 
-      if(PropSignalsPaused(now))
+      if(PropEnablePauseSignals && PropSignalsPaused(now))
          return;
 
       if(OneTradePerBar && !newBar)
@@ -5178,7 +5180,7 @@
 
    bool PropRollingShouldSpawn(const datetime now)
    {
-      if(PropSignalsPaused(now))
+      if(PropEnablePauseSignals && PropSignalsPaused(now))
          return false;
 
       MqlDateTime dt;
@@ -6580,6 +6582,8 @@
       FileWriteString(handle, PropKv("Pause Signals (UTC)", StringFormat("%02d:%02d", PropPauseSignalsHourUTC, PropPauseSignalsMinuteUTC)));
       FileWriteString(handle, PropKv("Close All (UTC)", StringFormat("%02d:%02d", PropCloseAllHourUTC, PropCloseAllMinuteUTC)));
       FileWriteString(handle, PropKv("Resume Signals (UTC)", StringFormat("%02d:%02d", PropResumeSignalsHourUTC, PropResumeSignalsMinuteUTC)));
+      FileWriteString(handle, PropKv("Force Close Enabled", PropBoolStr(PropEnableForceClose)));
+      FileWriteString(handle, PropKv("Pause Signals Enabled", PropBoolStr(PropEnablePauseSignals)));
       FileWriteString(handle, PropKv("Spawn Interval", PropSpawnIntervalLabel()));
       FileWriteString(handle, PropKv("Recency Half-Life (days)", DoubleToString(PropRecencyHalfLifeDays, 1) + (PropRecencyHalfLifeDays > 0.0 ? "" : " (disabled)")));
       FileWriteString(handle, PropKv("Prop Strategy Mode", (PropStrategyMode == PROP_STRATEGY_CUSTOM) ? ("CUSTOM: " + PropCustomStrategies) : "ALL"));
