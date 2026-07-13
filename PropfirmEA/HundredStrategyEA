@@ -1207,35 +1207,39 @@
    PropStrategyResult propResults[PROP_STRATEGY_COUNT];
    datetime propCurrentDayReset = 0;
 
-   struct PropRunResult
-   {
-      int strategyId;
-      string strategyName;
-      datetime startDay;
-      datetime ended;
-      bool breached;
-      bool passed;
-      bool protectionTriggeredToday;
-      string breachReason;
-      datetime dayReset;
-      datetime lastTradeBar;
-      double balance;
-      double equity;
-      double dayStartReference;
-      double startingBalance;
-      double maxDrawdown;
-      double maxProfit;
-      double grossProfit;
-      double grossLoss;
-      int daysToTarget;
-      int daysToBreach;
-      int equityProtectionTriggers;
-      int trades;
-      int wins;
-      int losses;
-      int breakevenTrades;
-      PropVirtualPosition pos;
-   };
+    struct PropRunResult
+    {
+       int strategyId;
+       string strategyName;
+       datetime startDay;
+       datetime ended;
+       bool breached;
+       bool passed;
+       bool protectionTriggeredToday;
+       string breachReason;
+       datetime dayReset;
+       datetime lastTradeBar;
+       double balance;
+       double equity;
+       double dayStartReference;
+       double startingBalance;
+       double maxDrawdown;
+       double maxProfit;
+       double grossProfit;
+       double grossLoss;
+       int daysToTarget;
+       int daysToBreach;
+       int equityProtectionTriggers;
+       int trades;
+       int wins;
+       int losses;
+       int breakevenTrades;
+       PropVirtualPosition pos;
+       datetime lastClosedTradeTime;
+       double closedTradePnL[5];
+       string lastTriggeredSignal;
+       string lastSkippedSignal;
+    };
 
    PropRunResult propRuns[];
    datetime propLastResumeSpawn = 0;
@@ -5160,14 +5164,23 @@
       for(int k = 0; k < ArraySize(propActiveIdx); k++)
       {
          int i = propActiveIdx[k];
-         if(propRuns[i].breached || propRuns[i].passed || propRuns[i].pos.open)
-            continue;
-         if(propRuns[i].protectionTriggeredToday)
+         if(propRuns[i].breached || propRuns[i].passed)
             continue;
 
          int dir = propSignalCache[propRuns[i].strategyId - 1];
          if(dir == 0)
             continue;
+
+          if(propRuns[i].pos.open)
+          {
+             string skipSigStr = TimeToString(now, TIME_DATE | TIME_SECONDS) + " " + (dir == ORDER_TYPE_BUY ? "BUY" : "SELL");
+             if(skipSigStr != propRuns[i].lastTriggeredSignal)
+                propRuns[i].lastSkippedSignal = skipSigStr;
+             continue;
+          }
+         if(propRuns[i].protectionTriggeredToday)
+            continue;
+
          if(ReverseSignals)
             dir = (dir == ORDER_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
          if((AllowedDirection == SIGNAL_BUY_ONLY && dir == ORDER_TYPE_SELL) ||
@@ -5268,9 +5281,13 @@
          propRuns[idx].wins = 0;
          propRuns[idx].losses = 0;
          propRuns[idx].breakevenTrades = 0;
-         propRuns[idx].pos.open = false;
+          propRuns[idx].pos.open = false;
+          propRuns[idx].lastClosedTradeTime = 0;
+          for(int p = 0; p < 5; p++) propRuns[idx].closedTradePnL[p] = 0.0;
+          propRuns[idx].lastTriggeredSignal = "";
+          propRuns[idx].lastSkippedSignal = "";
 
-         propPosInActive[idx] = ArraySize(propActiveIdx);
+          propPosInActive[idx] = ArraySize(propActiveIdx);
          ArrayResize(propActiveIdx, propPosInActive[idx] + 1);
          propActiveIdx[propPosInActive[idx]] = idx;
          spawnIdx++;
@@ -5296,15 +5313,16 @@
       ArrayResize(propActiveIdx, last);
    }
 
-   void PropRollingOpenPosition(const int index, const int type, const datetime now)
-   {
-      propRuns[index].pos.open = true;
-      propRuns[index].pos.type = type;
-      propRuns[index].pos.entry = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      propRuns[index].pos.lot = VirtualExitLot;
-      propRuns[index].pos.openTime = now;
-      propRuns[index].trades++;
-   }
+    void PropRollingOpenPosition(const int index, const int type, const datetime now)
+    {
+       propRuns[index].pos.open = true;
+       propRuns[index].pos.type = type;
+       propRuns[index].pos.entry = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+       propRuns[index].pos.lot = VirtualExitLot;
+       propRuns[index].pos.openTime = now;
+       propRuns[index].trades++;
+       propRuns[index].lastTriggeredSignal = TimeToString(now, TIME_DATE | TIME_SECONDS) + " " + (type == ORDER_TYPE_BUY ? "BUY" : "SELL");
+    }
 
    double PropRollingPositionProfit(const int index)
    {
@@ -5318,27 +5336,31 @@
       return diff / propCacheTickSize * propCacheTickValue * propRuns[index].pos.lot;
    }
 
-   void PropRollingCloseVirtualPosition(const int index)
-   {
-      if(!propRuns[index].pos.open)
-         return;
-      double profit = PropRollingPositionProfit(index);
-      propRuns[index].balance += profit;
-      propRuns[index].equity = propRuns[index].balance;
-      if(profit > 0.0)
-      {
-         propRuns[index].wins++;
-         propRuns[index].grossProfit += profit;
-      }
-      else if(profit < 0.0)
-      {
-         propRuns[index].losses++;
-         propRuns[index].grossLoss += profit;
-      }
-      else
-         propRuns[index].breakevenTrades++;
-      propRuns[index].pos.open = false;
-   }
+    void PropRollingCloseVirtualPosition(const int index)
+    {
+       if(!propRuns[index].pos.open)
+          return;
+       double profit = PropRollingPositionProfit(index);
+       propRuns[index].balance += profit;
+       propRuns[index].equity = propRuns[index].balance;
+       if(profit > 0.0)
+       {
+          propRuns[index].wins++;
+          propRuns[index].grossProfit += profit;
+       }
+       else if(profit < 0.0)
+       {
+          propRuns[index].losses++;
+          propRuns[index].grossLoss += profit;
+       }
+       else
+          propRuns[index].breakevenTrades++;
+       propRuns[index].pos.open = false;
+       propRuns[index].lastClosedTradeTime = TimeCurrent();
+       for(int p = 3; p >= 0; p--)
+          propRuns[index].closedTradePnL[p + 1] = propRuns[index].closedTradePnL[p];
+       propRuns[index].closedTradePnL[0] = profit;
+    }
 
    void PropRollingCloseAll()
    {
@@ -6261,12 +6283,15 @@
          PropTopScrollHtml("runs") +
          "<div class=\"table-scroll has-top\" id=\"ts_runs\">\n<table id=\"runs\">\n<thead><tr>\n" +
          "<th data-type=\"num\" class=\"sticky-col\">#</th>\n<th data-type=\"str\" class=\"sticky-col\">Strategy</th>\n<th data-type=\"str\">Start Day</th>\n" +
-         "<th data-type=\"str\">Status</th>\n<th data-type=\"str\">Reason</th>\n" +
-         "<th data-type=\"num\">Start Bal</th>\n<th data-type=\"num\">End Bal</th>\n<th data-type=\"num\">Net P/L</th>\n" +
-         "<th data-type=\"num\">Win Rate</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
-         "<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">PF</th>\n<th data-type=\"num\">R:R</th>\n<th data-type=\"num\">Max Profit</th>\n" +
-         "<th data-type=\"num\">Max DD</th>\n<th data-type=\"num\">Days->Target</th>\n<th data-type=\"num\">Days->Breach</th>\n" +
-         "<th data-type=\"num\">Eq. Prot</th>\n" + (useRecency ? "<th data-type=\"num\">Weight</th>\n" : "") + "<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody></tbody>\n</table>\n" +
+          "<th data-type=\"str\">Status</th>\n<th data-type=\"str\">Reason</th>\n" +
+          "<th data-type=\"num\">Start Bal</th>\n<th data-type=\"num\">End Bal</th>\n<th data-type=\"num\">Net P/L</th>\n" +
+          "<th data-type=\"num\">Win Rate</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
+          "<th data-type=\"str\">Running</th>\n" +
+          "<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">PF</th>\n<th data-type=\"num\">R:R</th>\n<th data-type=\"num\">Max Profit</th>\n" +
+          "<th data-type=\"num\">Max DD</th>\n<th data-type=\"num\">Days->Target</th>\n<th data-type=\"num\">Days->Breach</th>\n" +
+          "<th data-type=\"num\">Eq. Prot</th>\n" + (useRecency ? "<th data-type=\"num\">Weight</th>\n" : "") +
+          "<th data-type=\"str\">Last Close Trade</th>\n<th data-type=\"str\">Last 5 P&amp;L</th>\n<th data-type=\"str\">Last Trigg Signal</th>\n<th data-type=\"str\">Last Skipped Signal</th>\n" +
+          "<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody></tbody>\n</table>\n" +
          "<div class=\"pagination\" id=\"runs_pagination\"></div>\n" +
          "</div>\n</div>\n</div>\n");
 
@@ -6320,9 +6345,35 @@
          json += StringFormat("\"maxDD\":%.2f,", propRuns[i].maxDrawdown);
          json += StringFormat("\"daysTgt\":%d,", propRuns[i].daysToTarget);
          json += StringFormat("\"daysBrk\":%d,", propRuns[i].daysToBreach);
-         json += StringFormat("\"eqProt\":%d,", propRuns[i].equityProtectionTriggers);
-         json += StringFormat("\"weight\":%.4f,", weight);
-         json += "\"ended\":\"" + endedStr + "\"";
+           json += StringFormat("\"eqProt\":%d,", propRuns[i].equityProtectionTriggers);
+           json += StringFormat("\"weight\":%.4f,", weight);
+           json += "\"running\":" + (propRuns[i].pos.open ? "true" : "false") + ",";
+           json += "\"lastCloseTime\":\"" + (propRuns[i].lastClosedTradeTime > 0 ? TimeToString(propRuns[i].lastClosedTradeTime, TIME_DATE | TIME_MINUTES) : "") + "\",";
+           string pnlStr = "";
+           if(propRuns[i].pos.open)
+           {
+              double runPnl = PropRollingPositionProfit(i);
+              pnlStr += (runPnl >= 0 ? "+" : "") + "$" + DoubleToString(runPnl, 2) + "(R)";
+              int pnlCount = MathMin(4, propRuns[i].trades);
+              for(int p = 0; p < pnlCount; p++)
+              {
+                 pnlStr += ", ";
+                 pnlStr += (propRuns[i].closedTradePnL[p] >= 0 ? "+" : "") + "$" + DoubleToString(propRuns[i].closedTradePnL[p], 2);
+              }
+           }
+           else
+           {
+              int pnlCount = MathMin(5, propRuns[i].trades);
+              for(int p = 0; p < pnlCount; p++)
+              {
+                 if(p > 0) pnlStr += ", ";
+                 pnlStr += (propRuns[i].closedTradePnL[p] >= 0 ? "+" : "") + "$" + DoubleToString(propRuns[i].closedTradePnL[p], 2);
+              }
+           }
+          json += "\"pnl5\":\"" + PropJsonEscape(pnlStr) + "\",";
+          json += "\"lastTrigSig\":\"" + PropJsonEscape(propRuns[i].lastTriggeredSignal) + "\",";
+          json += "\"lastSkipSig\":\"" + PropJsonEscape(propRuns[i].lastSkippedSignal) + "\",";
+          json += "\"ended\":\"" + endedStr + "\"";
          json += "}";
          if(i > 0) json = "," + json;
          FileWriteString(handle, json);
@@ -6741,8 +6792,8 @@
    void PropWriteRunsFooter(const int handle, const bool hasWeightCol)
    {
       string colsJs = hasWeightCol ?
-         "['n','strat','startDay','status','reason','startBal','endBal','net','winRate','wins','losses','trades','pf','rr','maxProfit','maxDD','daysTgt','daysBrk','eqProt','weight','ended']" :
-         "['n','strat','startDay','status','reason','startBal','endBal','net','winRate','wins','losses','trades','pf','rr','maxProfit','maxDD','daysTgt','daysBrk','eqProt','ended']";
+          "['n','strat','startDay','status','reason','startBal','endBal','net','winRate','wins','losses','running','trades','pf','rr','maxProfit','maxDD','daysTgt','daysBrk','eqProt','weight','lastCloseTime','pnl5','lastTrigSig','lastSkipSig','ended']" :
+          "['n','strat','startDay','status','reason','startBal','endBal','net','winRate','wins','losses','running','trades','pf','rr','maxProfit','maxDD','daysTgt','daysBrk','eqProt','lastCloseTime','pnl5','lastTrigSig','lastSkipSig','ended']";
       FileWriteString(handle,
          "<div class=\"footer\">Generated by <code>HundredStrategyEA</code> propfirm backtest mode. This is a virtual simulation - no real trades were placed.</div>\n" +
          "<script>\n" +
@@ -6768,7 +6819,7 @@
          "  function doSort(){\n" +
          "    if(sortIdx<0)return;\n" +
          "    var key=cols[sortIdx];\n" +
-         "    var types={'n':'num','startBal':'num','endBal':'num','net':'num','winRate':'num','wins':'num','losses':'num','trades':'num','pf':'num','rr':'num','maxProfit':'num','maxDD':'num','daysTgt':'num','daysBrk':'num','eqProt':'num','weight':'num'};\n" +
+         "    var types={'n':'num','startBal':'num','endBal':'num','net':'num','winRate':'num','wins':'num','losses':'num','running':'str','trades':'num','pf':'num','rr':'num','maxProfit':'num','maxDD':'num','daysTgt':'num','daysBrk':'num','eqProt':'num','weight':'num','lastCloseTime':'str','pnl5':'str','lastTrigSig':'str','lastSkipSig':'str'};\n" +
          "    var isNum=types[key]==='num';\n" +
          "    filtered.sort(function(a,b){var av=a[key],bv=b[key];if(isNum){av=parseFloat(av)||0;bv=parseFloat(bv)||0;return sortAsc?av-bv:bv-av;}return sortAsc?String(av).localeCompare(String(bv)):String(bv).localeCompare(String(av));});\n" +
          "  }\n" +
@@ -6792,7 +6843,8 @@
          "    var wrHtml=r.hasWinRate?'<div class=barwrap><div class=barfill b'+Math.round(r.winRate)+'></div></div>'+r.winRate.toFixed(1)+'%':'<span class=\"zero\">n/a</span>';\n" +
          "    var pfHtml=r.hasPF?'<span class=\"num\">'+r.pf.toFixed(2)+'</span>':'<span class=\"zero\">n/a</span>';\n" +
          "    var rrHtml=r.hasRR?'<span class=\"num\">'+r.rr.toFixed(2)+'</span>':'<span class=\"zero\">n/a</span>';\n" +
-         "    tr.innerHTML='<td class=\"num sticky-col\">'+r.n+'</td><td class=\"sticky-col\">'+r.strat+'</td><td>'+r.startDay+'</td><td><span class=\"badge '+r.status+'\">'+badgeMap[r.status]+'</span></td><td class=reason>'+r.reason+'</td><td class=num>'+r.startBal.toFixed(2)+'</td><td class=num>'+r.endBal.toFixed(2)+'</td><td class=\"num '+nc+'\">'+r.netStr+'</td><td class=num>'+wrHtml+'</td><td class=\"num pos\">'+r.wins+'</td><td class=\"num neg\">'+r.losses+'</td><td class=num>'+r.trades+'</td><td>'+pfHtml+'</td><td>'+rrHtml+'</td><td class=\"num pos\">'+r.maxProfit.toFixed(2)+'</td><td class=\"num neg\">'+r.maxDD.toFixed(2)+'</td><td class=num>'+r.daysTgt+'</td><td class=num>'+r.daysBrk+'</td><td class=num>'+r.eqProt+'</td>'+(hasWeight?'<td class=num>'+r.weight.toFixed(3)+'</td>':'')+'<td>'+r.ended+'</td>';\n" +
+         "    var runHtml=r.running?'<span class=\"badge act\" style=\"background:#dbeafe;color:#1e40af\">YES</span>':'<span class=\"badge\" style=\"background:#f1f5f9;color:#94a3b8\">-</span>';\n" +
+          "    tr.innerHTML='<td class=\"num sticky-col\">'+r.n+'</td><td class=\"sticky-col\">'+r.strat+'</td><td>'+r.startDay+'</td><td><span class=\"badge '+r.status+'\">'+badgeMap[r.status]+'</span></td><td class=reason>'+r.reason+'</td><td class=num>'+r.startBal.toFixed(2)+'</td><td class=num>'+r.endBal.toFixed(2)+'</td><td class=\"num '+nc+'\">'+r.netStr+'</td><td class=num>'+wrHtml+'</td><td class=\"num pos\">'+r.wins+'</td><td class=\"num neg\">'+r.losses+'</td><td>'+runHtml+'</td><td class=num>'+r.trades+'</td><td>'+pfHtml+'</td><td>'+rrHtml+'</td><td class=\"num pos\">'+r.maxProfit.toFixed(2)+'</td><td class=\"num neg\">'+r.maxDD.toFixed(2)+'</td><td class=num>'+r.daysTgt+'</td><td class=num>'+r.daysBrk+'</td><td class=num>'+r.eqProt+'</td>'+(hasWeight?'<td class=num>'+r.weight.toFixed(3)+'</td>':'')+'<td>'+r.lastCloseTime+'</td><td>'+r.pnl5+'</td><td>'+r.lastTrigSig+'</td><td>'+r.lastSkipSig+'</td><td>'+r.ended+'</td>'\n" +
          "    return tr;\n" +
          "  }\n" +
          "  function renderPagination(totalPages){\n" +
