@@ -5463,10 +5463,21 @@
       return "<div class=\"kv\"><span class=\"k\">" + key + "</span><span class=\"v\">" + val + "</span></div>\n";
    }
 
-   string PropBoolStr(const bool b)
-   {
-      return b ? "true" : "false";
-   }
+    string PropBoolStr(const bool b)
+    {
+       return b ? "true" : "false";
+    }
+
+    string PropTimeAgo(const datetime dt, const datetime ref)
+    {
+       if(dt <= 0) return "-";
+       int sec = (int)(ref - dt);
+       if(sec < 0) sec = 0;
+       if(sec < 60) return "<1m";
+       if(sec < 3600) return IntegerToString(sec / 60) + "m";
+       if(sec < 86400) return IntegerToString(sec / 3600) + "h";
+       return IntegerToString(sec / 86400) + "d";
+    }
 
    long PropSpawnIntervalSeconds()
    {
@@ -5679,6 +5690,7 @@
       double aggDuration[PROP_STRATEGY_COUNT];
       int aggWinRateCount[PROP_STRATEGY_COUNT];
       double aggRecencyWeightSum[PROP_STRATEGY_COUNT], aggRecencyPassedWeight[PROP_STRATEGY_COUNT];
+      datetime aggLastCloseTime[PROP_STRATEGY_COUNT];
       datetime testStart = 0;
 
       ArrayInitialize(aggStarts, 0);
@@ -5703,6 +5715,7 @@
       ArrayInitialize(aggDuration, 0.0);
       ArrayInitialize(aggRecencyWeightSum, 0.0);
       ArrayInitialize(aggRecencyPassedWeight, 0.0);
+      ArrayInitialize(aggLastCloseTime, 0);
 
       datetime testEndTime = TimeCurrent();
       if(g_testEndTime > 0) testEndTime = g_testEndTime;
@@ -5755,12 +5768,14 @@
             aggWinRateCount[sid]++;
          }
 
-         double net = propRuns[i].balance - propRuns[i].startingBalance;
-         aggNetSum[sid] += net;
-         if(net > aggBestNet[sid]) aggBestNet[sid] = net;
-         if(net < aggWorstNet[sid]) aggWorstNet[sid] = net;
+          double net = propRuns[i].balance - propRuns[i].startingBalance;
+          aggNetSum[sid] += net;
+          if(net > aggBestNet[sid]) aggBestNet[sid] = net;
+          if(net < aggWorstNet[sid]) aggWorstNet[sid] = net;
+          if(propRuns[i].lastClosedTradeTime > aggLastCloseTime[sid])
+             aggLastCloseTime[sid] = propRuns[i].lastClosedTradeTime;
 
-         if(propRuns[i].passed && propRuns[i].daysToTarget > 0)
+          if(propRuns[i].passed && propRuns[i].daysToTarget > 0)
             aggDaysToTarget[sid] += propRuns[i].daysToTarget;
 
          if(testStart == 0 || propRuns[i].startDay < testStart)
@@ -6148,12 +6163,18 @@
 
       FileWriteString(handle,
          "<div class=\"section\">\n<h2>Strategy Ranking (" + (useRecency ? "by recency score" : "by pass rate across start-days") + ")</h2>\n" +
-         PropToolbarHtml("strat") +
-         PropTopScrollHtml("strat") +
+          PropToolbarHtml("strat") +
+          "<div class=\"toolbar\" style=\"margin-top:6px\">\n" +
+          "<button class=\"btn\" onclick=\"sortColDesc('strat',3)\">Most Passed &#9660;</button>\n" +
+          "<button class=\"btn\" onclick=\"sortColDesc('strat',4)\">Most Blown &#9660;</button>\n" +
+          "</div>\n" +
+          "<script>function sortColDesc(t,c){var th=document.getElementById(t).querySelectorAll('thead th')[c];if(!th)return;if(th.classList.contains('sort-desc'))return;th.click();if(th.classList.contains('sort-asc'))th.click();}</script>\n" +
+          PropTopScrollHtml("strat") +
          "<div class=\"table-scroll has-top\" id=\"ts_strat\">\n<table id=\"strat\">\n<thead><tr>\n" +
          "<th data-type=\"num\" class=\"sticky-col\">Rank</th>\n<th data-type=\"str\" class=\"sticky-col\">Strategy</th>\n<th data-type=\"num\">Starts</th>\n" +
-         "<th data-type=\"num\">Passed</th>\n<th data-type=\"num\">Blown</th>\n<th data-type=\"num\">Active</th>\n" +
-            "<th data-type=\"num\">True Blow Risk<br><span style=\"font-weight:400;font-size:10px\">blown &divide; (passed+blown)</span></th>\n" +
+          "<th data-type=\"num\">Passed</th>\n<th data-type=\"num\">Blown</th>\n<th data-type=\"num\">Active</th>\n" +
+             "<th data-type=\"str\">Last Closed Trade</th>\n" +
+             "<th data-type=\"num\">True Blow Risk<br><span style=\"font-weight:400;font-size:10px\">blown &divide; (passed+blown)</span></th>\n" +
             "<th data-type=\"num\">Safety Score<br><span style=\"font-weight:400;font-size:10px\">100 &minus; blow risk</span></th>\n" +
             (useRecency ? "<th data-type=\"num\">Recency Score</th>\n" : "") +
          "<th data-type=\"num\">All-Time Pass Rate</th>\n<th data-type=\"num\">Avg Win Rate</th>\n" +
@@ -6196,10 +6217,11 @@
          string row = "";
          row += StringFormat("<tr><td class=\"num sticky-col\">%d</td>", rankOut);
          row += "<td class=\"sticky-col\"><a href=\"javascript:void(0)\" onclick=\"filterRuns('" + stratName + "')\" class=\"strat-link\">" + stratName + "</a></td>";
-         row += StringFormat("<td class=\"num\">%d</td>", aggStarts[sid]);
-         row += StringFormat("<td class=\"num pos\">%d</td>", aggPassed[sid]);
-         row += StringFormat("<td class=\"num neg\">%d</td>", aggBlown[sid]);
-         row += StringFormat("<td class=\"num\">%d</td>", aggActive[sid]);
+          row += StringFormat("<td class=\"num\">%d</td>", aggStarts[sid]);
+          row += StringFormat("<td class=\"num pos\">%d</td>", aggPassed[sid]);
+          row += StringFormat("<td class=\"num neg\">%d</td>", aggBlown[sid]);
+          row += StringFormat("<td class=\"num\">%d</td>", aggActive[sid]);
+          row += "<td data-sort=\"" + IntegerToString((long)aggLastCloseTime[sid]) + "\">" + PropTimeAgo(aggLastCloseTime[sid], testEndTime) + "</td>";
          int resolvedRuns = aggPassed[sid] + aggBlown[sid];
          double trueBlowRisk = (resolvedRuns > 0) ? (double)aggBlown[sid] / (double)resolvedRuns * 100.0 : 0.0;
          double safetyScore = (resolvedRuns > 0) ? 100.0 - trueBlowRisk : 0.0;
@@ -6602,9 +6624,11 @@
           ".top5-card .sr b{color:#1e293b}\n" +
           ".footer{color:#94a3b8;font-size:12px;text-align:center;margin-top:22px;padding:14px}\n" +
           ".footer code{background:#f1f5f9;padding:2px 8px;border-radius:4px;color:#64748b}\n" +
-          ".gotop{position:fixed;bottom:24px;right:24px;z-index:999;background:#6366f1;color:#fff;border:none;border-radius:10px;padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 4px 12px rgba(99,102,241,.4);transition:opacity .2s,transform .2s;opacity:0;pointer-events:none}\n" +
-          ".gotop.show{opacity:1;pointer-events:auto}\n" +
-          ".gotop:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(99,102,241,.5)}\n" +
+           ".gotop{position:fixed;bottom:24px;right:24px;z-index:999;background:#6366f1;color:#fff;border:none;border-radius:10px;padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 4px 12px rgba(99,102,241,.4);transition:opacity .2s,transform .2s;opacity:0;pointer-events:none}\n" +
+           ".gotop.show{opacity:1;pointer-events:auto}\n" +
+           ".gotop:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(99,102,241,.5)}\n" +
+           ".utcclock{position:fixed;bottom:78px;right:24px;z-index:999;background:#1e293b;color:#94a3b8;border-radius:8px;padding:5px 10px;font-size:11px;font-family:monospace;opacity:0;pointer-events:none;transition:opacity .2s;letter-spacing:.3px;white-space:nowrap}\n" +
+           ".utcclock.show{opacity:1;pointer-events:auto}\n" +
          "</style>\n<script>(function(){var s=document.createElement('style');var c='';for(var i=0;i<=100;i++){c+='.b'+i+'{width:'+i+'%}';}s.textContent=c;document.head.appendChild(s);})();</script>\n</head>\n<body>\n<div class=\"wrap\">\n");
    }
 
@@ -6722,26 +6746,30 @@
    void PropWriteFooter(const int handle, const string tableId)
    {
       FileWriteString(handle,
-         "<button class=\"gotop\" id=\"gotopBtn\" onclick=\"window.scrollTo({top:0,behavior:'smooth'})\" title=\"Back to top\">&#8593; Top</button>\n" +
-         "<div class=\"footer\">Generated by <code>HundredStrategyEA</code> propfirm backtest mode. This is a virtual simulation - no real trades were placed.</div>\n" +
-         "<script>\n" +
-         "(function(){\n" +
-         "  var tableId='" + tableId + "';\n" +
-         "  var tbody=document.querySelector('#'+tableId+' tbody');\n" +
-         "  if(!tbody)return;\n" +
-         "  var search=document.getElementById('search_'+tableId);\n" +
-         "  var btns=document.querySelectorAll('.btn[data-tbl=\"'+tableId+'\"]');\n" +
-         "  var filter='all';\n" +
-         "  var dtimer=null;\n" +
-         "  function apply(){var q=search.value.toLowerCase();var rows=tbody.querySelectorAll('tr');for(var i=0;i<rows.length;i++){var r=rows[i];var name=r.cells[1].textContent.toLowerCase();var status=r.getAttribute('data-status')||'';var mq=name.indexOf(q)>=0;var mf=(filter==='all'||status===filter);r.style.display=(mq&&mf)?'':'none';}}\n" +
-         "  if(search)search.addEventListener('input',function(){clearTimeout(dtimer);dtimer=setTimeout(apply,200);});\n" +
-         "  for(var b=0;b<btns.length;b++){btns[b].addEventListener('click',function(){for(var k=0;k<btns.length;k++)btns[k].classList.remove('active');this.classList.add('active');filter=this.getAttribute('data-f');clearTimeout(dtimer);dtimer=setTimeout(apply,200);});}\n" +
-         "  var heads=document.querySelectorAll('#'+tableId+' thead th[data-type]');\n" +
-         "  for(var h=0;h<heads.length;h++){heads[h].addEventListener('click',function(){var th=this;var idx=0;var ths=th.parentNode.children;for(var c=0;c<ths.length;c++){if(ths[c]===th){idx=c;break;}}var type=th.getAttribute('data-type')||'str';var asc=true;if(th.classList.contains('sort-asc'))asc=false;for(var j=0;j<heads.length;j++){heads[j].classList.remove('sort-asc');heads[j].classList.remove('sort-desc');}th.classList.add(asc?'sort-asc':'sort-desc');var rowsArr=[];var trs=tbody.querySelectorAll('tr');for(var i=0;i<trs.length;i++)rowsArr.push(trs[i]);rowsArr.sort(function(a,b){var aCell=a.cells[idx];var bCell=b.cells[idx];var av=aCell.getAttribute('data-sort');var bv=bCell.getAttribute('data-sort');if(av===null)av=aCell.textContent.trim();if(bv===null)bv=bCell.textContent.trim();if(type==='num'){av=parseFloat(av)||0;bv=parseFloat(bv)||0;return asc?av-bv:bv-av;}return asc?a.localeCompare(b):b.localeCompare(a);});for(var i=0;i<rowsArr.length;i++)tbody.appendChild(rowsArr[i]);});}\n" +
-         "  var gotop=document.getElementById('gotopBtn');\n" +
-         "  if(gotop){window.addEventListener('scroll',function(){if(window.scrollY>300){gotop.classList.add('show');}else{gotop.classList.remove('show');}});}\n" +
-         "})();\n" +
-         "</script>\n");
+          "<div class=\"utcclock\" id=\"utcClock\"></div>\n" +
+          "<button class=\"gotop\" id=\"gotopBtn\" onclick=\"window.scrollTo({top:0,behavior:'smooth'})\" title=\"Back to top\">&#8593; Top</button>\n" +
+          "<div class=\"footer\">Generated by <code>HundredStrategyEA</code> propfirm backtest mode. This is a virtual simulation - no real trades were placed.</div>\n" +
+          "<script>\n" +
+          "(function(){\n" +
+          "  var tableId='" + tableId + "';\n" +
+          "  var tbody=document.querySelector('#'+tableId+' tbody');\n" +
+          "  if(!tbody)return;\n" +
+          "  var search=document.getElementById('search_'+tableId);\n" +
+          "  var btns=document.querySelectorAll('.btn[data-tbl=\"'+tableId+'\"]');\n" +
+          "  var filter='all';\n" +
+          "  var dtimer=null;\n" +
+          "  function apply(){var q=search.value.toLowerCase();var rows=tbody.querySelectorAll('tr');for(var i=0;i<rows.length;i++){var r=rows[i];var name=r.cells[1].textContent.toLowerCase();var status=r.getAttribute('data-status')||'';var mq=name.indexOf(q)>=0;var mf=(filter==='all'||status===filter);r.style.display=(mq&&mf)?'':'none';}}\n" +
+          "  if(search)search.addEventListener('input',function(){clearTimeout(dtimer);dtimer=setTimeout(apply,200);});\n" +
+          "  for(var b=0;b<btns.length;b++){btns[b].addEventListener('click',function(){for(var k=0;k<btns.length;k++)btns[k].classList.remove('active');this.classList.add('active');filter=this.getAttribute('data-f');clearTimeout(dtimer);dtimer=setTimeout(apply,200);});}\n" +
+          "  var heads=document.querySelectorAll('#'+tableId+' thead th[data-type]');\n" +
+          "  for(var h=0;h<heads.length;h++){heads[h].addEventListener('click',function(){var th=this;var idx=0;var ths=th.parentNode.children;for(var c=0;c<ths.length;c++){if(ths[c]===th){idx=c;break;}}var type=th.getAttribute('data-type')||'str';var asc=true;if(th.classList.contains('sort-asc'))asc=false;for(var j=0;j<heads.length;j++){heads[j].classList.remove('sort-asc');heads[j].classList.remove('sort-desc');}th.classList.add(asc?'sort-asc':'sort-desc');var rowsArr=[];var trs=tbody.querySelectorAll('tr');for(var i=0;i<trs.length;i++)rowsArr.push(trs[i]);rowsArr.sort(function(a,b){var aCell=a.cells[idx];var bCell=b.cells[idx];var av=aCell.getAttribute('data-sort');var bv=bCell.getAttribute('data-sort');if(av===null)av=aCell.textContent.trim();if(bv===null)bv=bCell.textContent.trim();if(type==='num'){av=parseFloat(av)||0;bv=parseFloat(bv)||0;return asc?av-bv:bv-av;}return asc?a.localeCompare(b):b.localeCompare(a);});for(var i=0;i<rowsArr.length;i++)tbody.appendChild(rowsArr[i]);});}\n" +
+          "  var gotop=document.getElementById('gotopBtn');\n" +
+          "  var utcEl=document.getElementById('utcClock');\n" +
+          "  function updateClock(){var n=new Date();var y=n.getUTCFullYear();var m=('0'+(n.getUTCMonth()+1)).slice(-2);var d=('0'+n.getUTCDate()).slice(-2);var h=('0'+n.getUTCHours()).slice(-2);var mi=('0'+n.getUTCMinutes()).slice(-2);var s=('0'+n.getUTCSeconds()).slice(-2);if(utcEl)utcEl.textContent=y+'.'+m+'.'+d+' '+h+':'+mi+':'+s+' UTC';}\n" +
+          "  setInterval(updateClock,1000);updateClock();\n" +
+          "  if(gotop && utcEl){window.addEventListener('scroll',function(){var show=window.scrollY>300;gotop.classList.toggle('show',show);utcEl.classList.toggle('show',show);});}\n" +
+          "})();\n" +
+          "</script>\n");
       FileWriteString(handle,
          "<script>\n" +
          "(function(){\n" +
