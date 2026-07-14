@@ -1188,21 +1188,27 @@
       double dayStartReference;
       double maxDrawdown;
       double maxProfit;
-      int daysToTarget;
-      int daysToBreach;
-      int equityProtectionTriggers;
-      int trades;
-      int wins;
-      int losses;
-      int breakevenTrades;
-      int totalSignals;
-      double startingBalance;
-      double grossProfit;
-      double grossLoss;
-      bool protectionTriggeredToday;
-      string breachReason;
-      PropVirtualPosition pos;
-   };
+       int daysToTarget;
+       int daysToBreach;
+       int tradesToTarget;
+       int tradesToBreach;
+       int currentWinStreak;
+       int currentLossStreak;
+       int maxWinStreak;
+       int maxLossStreak;
+       int equityProtectionTriggers;
+       int trades;
+       int wins;
+       int losses;
+       int breakevenTrades;
+       int totalSignals;
+       double startingBalance;
+       double grossProfit;
+       double grossLoss;
+       bool protectionTriggeredToday;
+       string breachReason;
+       PropVirtualPosition pos;
+    };
 
    PropStrategyResult propResults[PROP_STRATEGY_COUNT];
    datetime propCurrentDayReset = 0;
@@ -1227,14 +1233,20 @@
        double maxProfit;
        double grossProfit;
        double grossLoss;
-       int daysToTarget;
-       int daysToBreach;
-       int equityProtectionTriggers;
-       int trades;
-       int wins;
-       int losses;
-       int breakevenTrades;
-       PropVirtualPosition pos;
+        int daysToTarget;
+        int daysToBreach;
+        int tradesToTarget;
+        int tradesToBreach;
+        int currentWinStreak;
+        int currentLossStreak;
+        int maxWinStreak;
+        int maxLossStreak;
+        int equityProtectionTriggers;
+        int trades;
+        int wins;
+        int losses;
+        int breakevenTrades;
+        PropVirtualPosition pos;
        datetime lastClosedTradeTime;
        double closedTradePnL[5];
        string lastTriggeredSignal;
@@ -4746,14 +4758,20 @@
          propResults[i].dayStartReference = PropStartingBalance;
          propResults[i].maxDrawdown = 0.0;
          propResults[i].maxProfit = 0.0;
-         propResults[i].daysToTarget = 0;
-         propResults[i].daysToBreach = 0;
-         propResults[i].equityProtectionTriggers = 0;
-         propResults[i].trades = 0;
-         propResults[i].wins = 0;
-         propResults[i].losses = 0;
-         propResults[i].breakevenTrades = 0;
-         propResults[i].totalSignals = 0;
+          propResults[i].daysToTarget = 0;
+          propResults[i].daysToBreach = 0;
+          propResults[i].tradesToTarget = 0;
+          propResults[i].tradesToBreach = 0;
+          propResults[i].currentWinStreak = 0;
+          propResults[i].currentLossStreak = 0;
+          propResults[i].maxWinStreak = 0;
+          propResults[i].maxLossStreak = 0;
+          propResults[i].equityProtectionTriggers = 0;
+          propResults[i].trades = 0;
+          propResults[i].wins = 0;
+          propResults[i].losses = 0;
+          propResults[i].breakevenTrades = 0;
+          propResults[i].totalSignals = 0;
          propResults[i].startingBalance = PropStartingBalance;
          propResults[i].grossProfit = 0.0;
          propResults[i].grossLoss = 0.0;
@@ -4893,11 +4911,19 @@
       {
          propResults[index].wins++;
          propResults[index].grossProfit += profit;
+         propResults[index].currentWinStreak++;
+         propResults[index].currentLossStreak = 0;
+         if(propResults[index].currentWinStreak > propResults[index].maxWinStreak)
+            propResults[index].maxWinStreak = propResults[index].currentWinStreak;
       }
       else if(profit < 0.0)
       {
          propResults[index].losses++;
          propResults[index].grossLoss += profit;
+         propResults[index].currentLossStreak++;
+         propResults[index].currentWinStreak = 0;
+         if(propResults[index].currentLossStreak > propResults[index].maxLossStreak)
+            propResults[index].maxLossStreak = propResults[index].currentLossStreak;
       }
       else
          propResults[index].breakevenTrades++;
@@ -4942,19 +4968,21 @@
              PropCloseVirtualPosition(i);
           }
 
-          if(propResults[i].equity - PropStartingBalance >= targetMoney)
-          {
-             propResults[i].passed = true;
-             propResults[i].ended = now;
-             propResults[i].daysToTarget = (int)((now - propResults[i].started) / 86400) + 1;
-             propResults[i].breachReason = "Target hit";
-             PropCloseVirtualPosition(i);
-          }
-          else if(totalDrawdown >= maxDrawdownMoney || (PropEnableDailyDrawdown && dailyDrawdown >= dailyBreachMoney))
-          {
-             propResults[i].breached = true;
-             propResults[i].ended = now;
-             propResults[i].daysToBreach = (int)((now - propResults[i].started) / 86400) + 1;
+           if(propResults[i].equity - PropStartingBalance >= targetMoney)
+           {
+              propResults[i].passed = true;
+              propResults[i].ended = now;
+              propResults[i].daysToTarget = (int)((now - propResults[i].started) / 86400) + 1;
+              propResults[i].tradesToTarget = propResults[i].trades;
+              propResults[i].breachReason = "Target hit";
+              PropCloseVirtualPosition(i);
+           }
+           else if(totalDrawdown >= maxDrawdownMoney || (PropEnableDailyDrawdown && dailyDrawdown >= dailyBreachMoney))
+           {
+              propResults[i].breached = true;
+              propResults[i].ended = now;
+              propResults[i].daysToBreach = (int)((now - propResults[i].started) / 86400) + 1;
+              propResults[i].tradesToBreach = propResults[i].trades;
              if(PropEnableDailyDrawdown && totalDrawdown >= maxDrawdownMoney && dailyDrawdown >= dailyBreachMoney)
                 propResults[i].breachReason = "Total + Daily DD";
              else if(totalDrawdown >= maxDrawdownMoney)
@@ -5274,13 +5302,19 @@
          propRuns[idx].maxProfit = 0.0;
          propRuns[idx].grossProfit = 0.0;
          propRuns[idx].grossLoss = 0.0;
-         propRuns[idx].daysToTarget = 0;
-         propRuns[idx].daysToBreach = 0;
-         propRuns[idx].equityProtectionTriggers = 0;
-         propRuns[idx].trades = 0;
-         propRuns[idx].wins = 0;
-         propRuns[idx].losses = 0;
-         propRuns[idx].breakevenTrades = 0;
+          propRuns[idx].daysToTarget = 0;
+          propRuns[idx].daysToBreach = 0;
+          propRuns[idx].tradesToTarget = 0;
+          propRuns[idx].tradesToBreach = 0;
+          propRuns[idx].currentWinStreak = 0;
+          propRuns[idx].currentLossStreak = 0;
+          propRuns[idx].maxWinStreak = 0;
+          propRuns[idx].maxLossStreak = 0;
+          propRuns[idx].equityProtectionTriggers = 0;
+          propRuns[idx].trades = 0;
+          propRuns[idx].wins = 0;
+          propRuns[idx].losses = 0;
+          propRuns[idx].breakevenTrades = 0;
           propRuns[idx].pos.open = false;
           propRuns[idx].lastClosedTradeTime = 0;
           for(int p = 0; p < 5; p++) propRuns[idx].closedTradePnL[p] = 0.0;
@@ -5343,19 +5377,27 @@
        double profit = PropRollingPositionProfit(index);
        propRuns[index].balance += profit;
        propRuns[index].equity = propRuns[index].balance;
-       if(profit > 0.0)
-       {
-          propRuns[index].wins++;
-          propRuns[index].grossProfit += profit;
-       }
-       else if(profit < 0.0)
-       {
-          propRuns[index].losses++;
-          propRuns[index].grossLoss += profit;
-       }
-       else
-          propRuns[index].breakevenTrades++;
-       propRuns[index].pos.open = false;
+        if(profit > 0.0)
+        {
+           propRuns[index].wins++;
+           propRuns[index].grossProfit += profit;
+           propRuns[index].currentWinStreak++;
+           propRuns[index].currentLossStreak = 0;
+           if(propRuns[index].currentWinStreak > propRuns[index].maxWinStreak)
+              propRuns[index].maxWinStreak = propRuns[index].currentWinStreak;
+        }
+        else if(profit < 0.0)
+        {
+           propRuns[index].losses++;
+           propRuns[index].grossLoss += profit;
+           propRuns[index].currentLossStreak++;
+           propRuns[index].currentWinStreak = 0;
+           if(propRuns[index].currentLossStreak > propRuns[index].maxLossStreak)
+              propRuns[index].maxLossStreak = propRuns[index].currentLossStreak;
+        }
+        else
+           propRuns[index].breakevenTrades++;
+        propRuns[index].pos.open = false;
        propRuns[index].lastClosedTradeTime = TimeCurrent();
        for(int p = 3; p >= 0; p--)
           propRuns[index].closedTradePnL[p + 1] = propRuns[index].closedTradePnL[p];
@@ -5414,20 +5456,22 @@
              propRuns[i].equity = propRuns[i].balance;
           }
 
-          if(propRuns[i].equity - propRuns[i].startingBalance >= targetMoney)
-          {
-             propRuns[i].passed = true;
-             propRuns[i].ended = now;
-             propRuns[i].daysToTarget = (int)((now - propRuns[i].startDay) / 86400) + 1;
-             propRuns[i].breachReason = "Target hit";
-             PropRollingCloseVirtualPosition(i);
-             finished = true;
-          }
-          else if(totalDrawdown >= maxDrawdownMoney || (PropEnableDailyDrawdown && dailyDrawdown >= dailyBreachMoney))
-          {
-             propRuns[i].breached = true;
-             propRuns[i].ended = now;
-             propRuns[i].daysToBreach = (int)((now - propRuns[i].startDay) / 86400) + 1;
+           if(propRuns[i].equity - propRuns[i].startingBalance >= targetMoney)
+           {
+              propRuns[i].passed = true;
+              propRuns[i].ended = now;
+              propRuns[i].daysToTarget = (int)((now - propRuns[i].startDay) / 86400) + 1;
+              propRuns[i].tradesToTarget = propRuns[i].trades;
+              propRuns[i].breachReason = "Target hit";
+              PropRollingCloseVirtualPosition(i);
+              finished = true;
+           }
+           else if(totalDrawdown >= maxDrawdownMoney || (PropEnableDailyDrawdown && dailyDrawdown >= dailyBreachMoney))
+           {
+              propRuns[i].breached = true;
+              propRuns[i].ended = now;
+              propRuns[i].daysToBreach = (int)((now - propRuns[i].startDay) / 86400) + 1;
+              propRuns[i].tradesToBreach = propRuns[i].trades;
              if(PropEnableDailyDrawdown && totalDrawdown >= maxDrawdownMoney && dailyDrawdown >= dailyBreachMoney)
                 propRuns[i].breachReason = "Total + Daily DD";
              else if(totalDrawdown >= maxDrawdownMoney)
@@ -5613,10 +5657,13 @@
          "<th data-type=\"num\" class=\"sticky-col\">Rank</th>\n<th data-type=\"str\" class=\"sticky-col\">Strategy</th>\n<th data-type=\"str\">Status</th>\n" +
          "<th data-type=\"str\">Reason</th>\n<th data-type=\"num\">Start Bal</th>\n<th data-type=\"num\">End Bal</th>\n" +
          "<th data-type=\"num\">Net P/L</th>\n<th data-type=\"num\">Win Rate</th>\n<th data-type=\"num\">Wins</th>\n" +
-         "<th data-type=\"num\">Losses</th>\n<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">PF</th>\n" +
-         "<th data-type=\"num\">Max Profit</th>\n<th data-type=\"num\">Max DD</th>\n<th data-type=\"num\">Days->Target</th>\n" +
-         "<th data-type=\"num\">Days->Breach</th>\n<th data-type=\"num\">Eq. Prot</th>\n<th data-type=\"str\">Started</th>\n" +
-         "<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody>\n");
+          "<th data-type=\"num\">Losses</th>\n<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">PF</th>\n" +
+          "<th data-type=\"num\">Max Profit</th>\n<th data-type=\"num\">Max DD</th>\n<th data-type=\"str\">Trades->Target/Blow</th>\n" +
+          "<th data-type=\"num\">Days->Target</th>\n" +
+          "<th data-type=\"num\">Days->Breach</th>\n<th data-type=\"num\">Eq. Prot</th>\n" +
+           "<th data-type=\"str\">Win Streak<br><span style=\"font-weight:400;font-size:10px\">Streak (M)</span></th>\n<th data-type=\"str\">Loss Streak<br><span style=\"font-weight:400;font-size:10px\">Streak (M)</span></th>\n" +
+           "<th data-type=\"str\">Started</th>\n" +
+           "<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody>\n");
 
       int rankOut = 0;
       for(int i = 0; i < PROP_STRATEGY_COUNT; i++)
@@ -5660,12 +5707,22 @@
             row += StringFormat("<td class=\"num\">%.2f</td>", propResults[i].grossProfit / MathAbs(propResults[i].grossLoss));
          else
             row += "<td class=\"num zero\">n/a</td>";
-         row += StringFormat("<td class=\"num pos\">%.2f</td>", propResults[i].maxProfit);
-         row += StringFormat("<td class=\"num neg\">%.2f</td>", propResults[i].maxDrawdown);
-         row += StringFormat("<td class=\"num\">%d</td>", propResults[i].daysToTarget);
-         row += StringFormat("<td class=\"num\">%d</td>", propResults[i].daysToBreach);
-         row += StringFormat("<td class=\"num\">%d</td>", propResults[i].equityProtectionTriggers);
-         row += StringFormat("<td>%s</td>", TimeToString(propResults[i].started, TIME_DATE | TIME_MINUTES));
+          row += StringFormat("<td class=\"num pos\">%.2f</td>", propResults[i].maxProfit);
+          row += StringFormat("<td class=\"num neg\">%.2f</td>", propResults[i].maxDrawdown);
+           string tgtBrkStr = "";
+           if(propResults[i].passed && propResults[i].tradesToTarget > 0)
+              tgtBrkStr = IntegerToString(propResults[i].tradesToTarget) + " (P)";
+           else if(propResults[i].breached && propResults[i].tradesToBreach > 0)
+              tgtBrkStr = IntegerToString(propResults[i].tradesToBreach) + " (B)";
+           else
+              tgtBrkStr = "-";
+           row += StringFormat("<td class=\"num\">%s</td>", tgtBrkStr);
+           row += StringFormat("<td class=\"num\">%d</td>", propResults[i].daysToTarget);
+           row += StringFormat("<td class=\"num\">%d</td>", propResults[i].daysToBreach);
+           row += StringFormat("<td class=\"num\">%d</td>", propResults[i].equityProtectionTriggers);
+            row += StringFormat("<td class=\"num\">%d (M)</td>", propResults[i].maxWinStreak);
+            row += StringFormat("<td class=\"num\">%d (M)</td>", propResults[i].maxLossStreak);
+          row += StringFormat("<td>%s</td>", TimeToString(propResults[i].started, TIME_DATE | TIME_MINUTES));
          row += StringFormat("<td>%s</td>", propResults[i].ended > 0 ? TimeToString(propResults[i].ended, TIME_DATE | TIME_MINUTES) : "n/a");
          row += "</tr>\n";
          FileWriteString(handle, row);
@@ -5689,6 +5746,11 @@
       double aggGrossProfit[PROP_STRATEGY_COUNT], aggGrossLoss[PROP_STRATEGY_COUNT];
       double aggDuration[PROP_STRATEGY_COUNT];
       int aggWinRateCount[PROP_STRATEGY_COUNT];
+      int aggTradesToTarget[PROP_STRATEGY_COUNT], aggTradesToBreach[PROP_STRATEGY_COUNT];
+      int aggTradesToTargetCount[PROP_STRATEGY_COUNT], aggTradesToBreachCount[PROP_STRATEGY_COUNT];
+      int aggMaxWinStreak[PROP_STRATEGY_COUNT], aggMaxLossStreak[PROP_STRATEGY_COUNT];
+      int aggWinStreakSum[PROP_STRATEGY_COUNT], aggLossStreakSum[PROP_STRATEGY_COUNT];
+      int aggWinStreakCount[PROP_STRATEGY_COUNT], aggLossStreakCount[PROP_STRATEGY_COUNT];
       double aggRecencyWeightSum[PROP_STRATEGY_COUNT], aggRecencyPassedWeight[PROP_STRATEGY_COUNT];
       datetime aggLastCloseTime[PROP_STRATEGY_COUNT];
       datetime testStart = 0;
@@ -5716,6 +5778,16 @@
       ArrayInitialize(aggRecencyWeightSum, 0.0);
       ArrayInitialize(aggRecencyPassedWeight, 0.0);
       ArrayInitialize(aggLastCloseTime, 0);
+      ArrayInitialize(aggTradesToTarget, 0);
+      ArrayInitialize(aggTradesToBreach, 0);
+      ArrayInitialize(aggTradesToTargetCount, 0);
+      ArrayInitialize(aggTradesToBreachCount, 0);
+      ArrayInitialize(aggMaxWinStreak, 0);
+      ArrayInitialize(aggMaxLossStreak, 0);
+      ArrayInitialize(aggWinStreakSum, 0);
+      ArrayInitialize(aggLossStreakSum, 0);
+      ArrayInitialize(aggWinStreakCount, 0);
+      ArrayInitialize(aggLossStreakCount, 0);
 
       datetime testEndTime = TimeCurrent();
       if(g_testEndTime > 0) testEndTime = g_testEndTime;
@@ -5775,8 +5847,33 @@
           if(propRuns[i].lastClosedTradeTime > aggLastCloseTime[sid])
              aggLastCloseTime[sid] = propRuns[i].lastClosedTradeTime;
 
-          if(propRuns[i].passed && propRuns[i].daysToTarget > 0)
-            aggDaysToTarget[sid] += propRuns[i].daysToTarget;
+           if(propRuns[i].passed && propRuns[i].daysToTarget > 0)
+             aggDaysToTarget[sid] += propRuns[i].daysToTarget;
+
+          if(propRuns[i].passed && propRuns[i].tradesToTarget > 0)
+          {
+             aggTradesToTarget[sid] += propRuns[i].tradesToTarget;
+             aggTradesToTargetCount[sid]++;
+          }
+          if(propRuns[i].breached && propRuns[i].tradesToBreach > 0)
+          {
+             aggTradesToBreach[sid] += propRuns[i].tradesToBreach;
+             aggTradesToBreachCount[sid]++;
+          }
+          if(propRuns[i].maxWinStreak > aggMaxWinStreak[sid])
+             aggMaxWinStreak[sid] = propRuns[i].maxWinStreak;
+          if(propRuns[i].maxLossStreak > aggMaxLossStreak[sid])
+             aggMaxLossStreak[sid] = propRuns[i].maxLossStreak;
+          if(propRuns[i].maxWinStreak > 0)
+          {
+             aggWinStreakSum[sid] += propRuns[i].maxWinStreak;
+             aggWinStreakCount[sid]++;
+          }
+          if(propRuns[i].maxLossStreak > 0)
+          {
+             aggLossStreakSum[sid] += propRuns[i].maxLossStreak;
+             aggLossStreakCount[sid]++;
+          }
 
          if(testStart == 0 || propRuns[i].startDay < testStart)
             testStart = propRuns[i].startDay;
@@ -6098,7 +6195,6 @@
       FileWriteString(handle, PropKv("Total Runs Simulated", IntegerToString(totalRuns)));
       FileWriteString(handle, "</div>\n<div class=\"note\">Each strategy is re-started fresh " + PropSpawnIntervalLabel() + " during the active window (pause/close hours skipped). A strategy can have multiple runs active simultaneously. Best strategy: <b>" + bestStratName + "</b> (" + DoubleToString(bestStratRate, 1) + "% pass rate)" + (recencyIneffective ? "<br><b style=\"color:#dc2626\">&#9888; Recency warning:</b> Half-life (" + DoubleToString(PropRecencyHalfLifeDays, 1) + "d) is much longer than test span (" + DoubleToString(testSpanDays, 1) + "d). All runs get near-equal weight, so recency score &asymp; raw pass rate. For meaningful recency differentiation, use a half-life &le; " + DoubleToString(testSpanDays, 1) + "d or run a longer backtest." : "") + "</div>\n</div>\n");
 
-      PropWriteMethodology(handle);
       FileWriteString(handle,
          "<div class=\"section\">\n<h2>Summary Dashboard</h2>\n<div class=\"cards\">\n" +
          "<div class=\"card pass\"><div class=\"label\">Passed Runs</div><div class=\"value\">" + IntegerToString(totalPassed) + "</div><div class=\"sub\">target hit</div></div>\n" +
@@ -6186,8 +6282,11 @@
             "<th data-type=\"num\" class=\"persist-col\">Momentum</th>\n" +
          "<th data-type=\"num\">PF</th>\n<th data-type=\"num\">Avg R:R</th>\n" +
          "<th data-type=\"num\">Avg Net P/L</th>\n<th data-type=\"num\">Best Net</th>\n<th data-type=\"num\">Worst Net</th>\n" +
-            "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
-         "<th data-type=\"num\">Avg Days->Target</th>\n</tr></thead>\n<tbody>\n");
+             "<th data-type=\"num\">Total Trades</th>\n<th data-type=\"num\">Avg Trades/Day</th>\n<th data-type=\"num\">Total Signals</th>\n<th data-type=\"num\">Avg Sig/Day</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
+             "<th data-type=\"str\">Avg Trades<br><span style=\"font-weight:400;font-size:10px\">Target (P) / Blow (B)</span></th>\n" +
+             "<th data-type=\"str\">Win Streak<br><span style=\"font-weight:400;font-size:10px\">Max(M) / Avg(A)</span></th>\n" +
+             "<th data-type=\"str\">Loss Streak<br><span style=\"font-weight:400;font-size:10px\">Max(M) / Avg(A)</span></th>\n" +
+          "<th data-type=\"num\">Avg Days->Target</th>\n</tr></thead>\n<tbody>\n");
 
       int rankOut = 0;
       for(int rank = 0; rank < PROP_STRATEGY_COUNT; rank++)
@@ -6288,13 +6387,67 @@
          double avgSigDay = (testSpanDays > 0.0) ? (double)propSignalCounts[sid] / testSpanDays : 0.0;
          row += StringFormat("<td class=\"num\">%d</td>", propSignalCounts[sid]);
          row += StringFormat("<td class=\"num\">%.1f</td>", avgSigDay);
-         row += StringFormat("<td class=\"num pos\">%d</td>", aggWins[sid]);
-         row += StringFormat("<td class=\"num neg\">%d</td>", aggLosses[sid]);
-         row += StringFormat("<td class=\"num\">%.1f</td>", avgDays);
-         row += "</tr>\n";
+          row += StringFormat("<td class=\"num pos\">%d</td>", aggWins[sid]);
+          row += StringFormat("<td class=\"num neg\">%d</td>", aggLosses[sid]);
+          double avgTradesTgt = (aggTradesToTargetCount[sid] > 0) ? (double)aggTradesToTarget[sid] / (double)aggTradesToTargetCount[sid] : 0.0;
+          double avgTradesBrk = (aggTradesToBreachCount[sid] > 0) ? (double)aggTradesToBreach[sid] / (double)aggTradesToBreachCount[sid] : 0.0;
+           string tgtBrkStr = "";
+           if(avgTradesTgt > 0 && avgTradesBrk > 0)
+              tgtBrkStr = DoubleToString(avgTradesTgt, 1) + " (P) / " + DoubleToString(avgTradesBrk, 1) + " (B)";
+           else if(avgTradesTgt > 0)
+              tgtBrkStr = DoubleToString(avgTradesTgt, 1) + " (P)";
+           else if(avgTradesBrk > 0)
+              tgtBrkStr = DoubleToString(avgTradesBrk, 1) + " (B)";
+           else
+              tgtBrkStr = "-";
+           row += StringFormat("<td class=\"num\">%s</td>", tgtBrkStr);
+           double avgWinStreak = (aggWinStreakCount[sid] > 0) ? (double)aggWinStreakSum[sid] / (double)aggWinStreakCount[sid] : 0.0;
+           double avgLossStreak = (aggLossStreakCount[sid] > 0) ? (double)aggLossStreakSum[sid] / (double)aggLossStreakCount[sid] : 0.0;
+           row += StringFormat("<td class=\"num\">%d (M) / %.1f (A)</td>", aggMaxWinStreak[sid], avgWinStreak);
+           row += StringFormat("<td class=\"num\">%d (M) / %.1f (A)</td>", aggMaxLossStreak[sid], avgLossStreak);
+          row += StringFormat("<td class=\"num\">%.1f</td>", avgDays);
+          row += "</tr>\n";
          FileWriteString(handle, row);
       }
-      FileWriteString(handle, "</tbody>\n</table>\n</div>\n</div>\n");
+      FileWriteString(handle, "</tbody>\n</table>\n<div class=\"pagination\" id=\"strat_pagination\"></div>\n</div>\n</div>\n" +
+         "<script>\n" +
+         "(function(){\n" +
+         "  var table=document.getElementById('strat');\n" +
+         "  var tbody=table?table.querySelector('tbody'):null;\n" +
+         "  if(!tbody)return;\n" +
+         "  var pageSize=50,page=1;\n" +
+         "  var pgEl=document.getElementById('strat_pagination');\n" +
+         "  function getVisible(){var rows=tbody.querySelectorAll('tr');var out=[];for(var i=0;i<rows.length;i++){if(rows[i].style.display!=='none')out.push(rows[i]);}return out;}\n" +
+         "  function renderPagination(){\n" +
+         "    var visible=getVisible();\n" +
+         "    var totalPages=Math.max(1,Math.ceil(visible.length/pageSize));\n" +
+         "    if(page>totalPages)page=totalPages;\n" +
+         "    var start=(page-1)*pageSize,end=Math.min(start+pageSize,visible.length);\n" +
+         "    var rows=tbody.querySelectorAll('tr');\n" +
+         "    for(var i=0;i<rows.length;i++){\n" +
+         "      if(rows[i].style.display==='none')continue;\n" +
+         "      rows[i].style.display=visible.indexOf(rows[i])>=start&&visible.indexOf(rows[i])<end?'':'none';\n" +
+         "    }\n" +
+         "    if(!pgEl||totalPages<=1){if(pgEl)pgEl.innerHTML='';return;}\n" +
+         "    var h='<button class=\"btn'+(page<=1?' disabled':'')+'\" onclick=\"window.__stratPage('+(page-1)+')\">&#9664;</button>';\n" +
+         "    var startP=Math.max(1,page-2),endP=Math.min(totalPages,page+2);\n" +
+         "    if(startP>1)h+='<button class=\"btn\" onclick=\"window.__stratPage(1)\">1</button>'+(startP>2?'<span class=\"page-info\">...</span>':'');\n" +
+         "    for(var p=startP;p<=endP;p++){h+='<button class=\"btn'+(p===page?' active':'')+'\" onclick=\"window.__stratPage('+p+')\">'+p+'</button>';}\n" +
+         "    if(endP<totalPages)h+=(endP<totalPages-1?'<span class=\"page-info\">...</span>':'')+'<button class=\"btn\" onclick=\"window.__stratPage('+totalPages+')\">'+totalPages+'</button>';\n" +
+         "    h+='<button class=\"btn'+(page>=totalPages?' disabled':'')+'\" onclick=\"window.__stratPage('+(page+1)+')\">&#9654;</button>';\n" +
+         "    h+='<span class=\"page-info\">Page '+page+' of '+totalPages+' ('+visible.length+' rows)</span>';\n" +
+         "    pgEl.innerHTML=h;\n" +
+         "    if(window.__syncTopScrolls)setTimeout(window.__syncTopScrolls,50);\n" +
+         "  }\n" +
+         "  window.__stratPage=function(p){page=p;renderPagination();};\n" +
+         "  var search=document.getElementById('search_strat');\n" +
+         "  var btns=document.querySelectorAll('.btn[data-tbl=\"strat\"]');\n" +
+         "  function onFilter(){page=1;setTimeout(renderPagination,250);}\n" +
+         "  if(search)search.addEventListener('input',onFilter);\n" +
+         "  for(var b=0;b<btns.length;b++){btns[b].addEventListener('click',onFilter);}\n" +
+         "  renderPagination();\n" +
+         "})();\n" +
+         "</script>\n");
 
       FileWriteString(handle,
          "<div class=\"section\">\n<h2>Per-Run Detail (all strategy x start-day runs)</h2>\n" +
@@ -6310,10 +6463,12 @@
           "<th data-type=\"num\">Win Rate</th>\n<th data-type=\"num\">Wins</th>\n<th data-type=\"num\">Losses</th>\n" +
           "<th data-type=\"str\">Running</th>\n" +
           "<th data-type=\"num\">Trades</th>\n<th data-type=\"num\">PF</th>\n<th data-type=\"num\">R:R</th>\n<th data-type=\"num\">Max Profit</th>\n" +
-          "<th data-type=\"num\">Max DD</th>\n<th data-type=\"num\">Days->Target</th>\n<th data-type=\"num\">Days->Breach</th>\n" +
-          "<th data-type=\"num\">Eq. Prot</th>\n" + (useRecency ? "<th data-type=\"num\">Weight</th>\n" : "") +
-          "<th data-type=\"str\">Last Close Trade</th>\n<th data-type=\"str\">Last 5 P&amp;L</th>\n<th data-type=\"str\">Last Trigg Signal</th>\n<th data-type=\"str\">Last Skipped Signal</th>\n" +
-          "<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody></tbody>\n</table>\n" +
+           "<th data-type=\"num\">Max DD</th>\n<th data-type=\"str\">Trades->Target/Blow</th>\n" +
+           "<th data-type=\"num\">Days->Target</th>\n<th data-type=\"num\">Days->Breach</th>\n" +
+           "<th data-type=\"num\">Eq. Prot</th>\n" + (useRecency ? "<th data-type=\"num\">Weight</th>\n" : "") +
+           "<th data-type=\"str\">Win Streak<br><span style=\"font-weight:400;font-size:10px\">Streak (M)</span></th>\n<th data-type=\"str\">Loss Streak<br><span style=\"font-weight:400;font-size:10px\">Streak (M)</span></th>\n" +
+           "<th data-type=\"str\">Last Close Trade</th>\n<th data-type=\"str\">Last 5 P&amp;L</th>\n<th data-type=\"str\">Last Trigg Signal</th>\n<th data-type=\"str\">Last Skipped Signal</th>\n" +
+           "<th data-type=\"str\">Ended</th>\n</tr></thead>\n<tbody></tbody>\n</table>\n" +
          "<div class=\"pagination\" id=\"runs_pagination\"></div>\n" +
          "</div>\n</div>\n</div>\n");
 
@@ -6343,33 +6498,37 @@
          }
 
          string json = "{";
-         json += StringFormat("\"n\":%d,", i + 1);
-         json += "\"strat\":\"" + PropJsonEscape(propRuns[i].strategyName) + "\",";
-         json += "\"startDay\":\"" + TimeToString(propRuns[i].startDay, TIME_DATE | TIME_MINUTES) + "\",";
-         json += "\"status\":\"" + status + "\",";
-         json += "\"reason\":\"" + PropJsonEscape(reason) + "\",";
-         json += StringFormat("\"startBal\":%.2f,", propRuns[i].startingBalance);
-         json += StringFormat("\"endBal\":%.2f,", propRuns[i].balance);
-         json += StringFormat("\"net\":%.2f,", netProfit);
-         json += StringFormat("\"netStr\":\"%s\",", netStr);
-         json += StringFormat("\"netPos\":%s,", netProfit > 0.0 ? "true" : "false");
-         json += StringFormat("\"netZero\":%s,", MathAbs(netProfit) < 0.005 ? "true" : "false");
-         json += StringFormat("\"winRate\":%.1f,", winRate);
-         json += StringFormat("\"hasWinRate\":%s,", closedTrades > 0 ? "true" : "false");
-         json += StringFormat("\"wins\":%d,", propRuns[i].wins);
-         json += StringFormat("\"losses\":%d,", propRuns[i].losses);
-         json += StringFormat("\"trades\":%d,", propRuns[i].trades);
-         json += StringFormat("\"pf\":%.2f,", profitFactor);
-         json += StringFormat("\"hasPF\":%s,", propRuns[i].grossLoss < 0.0 ? "true" : "false");
-         json += StringFormat("\"rr\":%.2f,", realizedRR);
-         json += StringFormat("\"hasRR\":%s,", runAvgLoss > 0.0 ? "true" : "false");
-         json += StringFormat("\"maxProfit\":%.2f,", propRuns[i].maxProfit);
-         json += StringFormat("\"maxDD\":%.2f,", propRuns[i].maxDrawdown);
-         json += StringFormat("\"daysTgt\":%d,", propRuns[i].daysToTarget);
-         json += StringFormat("\"daysBrk\":%d,", propRuns[i].daysToBreach);
-           json += StringFormat("\"eqProt\":%d,", propRuns[i].equityProtectionTriggers);
-           json += StringFormat("\"weight\":%.4f,", weight);
-           json += "\"running\":" + (propRuns[i].pos.open ? "true" : "false") + ",";
+          json += StringFormat("\"n\":%d,", i + 1);
+          json += "\"strat\":\"" + PropJsonEscape(propRuns[i].strategyName) + "\",";
+          json += "\"startDay\":\"" + TimeToString(propRuns[i].startDay, TIME_DATE | TIME_MINUTES) + "\",";
+          json += "\"status\":\"" + status + "\",";
+          json += "\"reason\":\"" + PropJsonEscape(reason) + "\",";
+          json += StringFormat("\"startBal\":%.2f,", propRuns[i].startingBalance);
+          json += StringFormat("\"endBal\":%.2f,", propRuns[i].balance);
+          json += StringFormat("\"net\":%.2f,", netProfit);
+          json += StringFormat("\"netStr\":\"%s\",", netStr);
+          json += StringFormat("\"netPos\":%s,", netProfit > 0.0 ? "true" : "false");
+          json += StringFormat("\"netZero\":%s,", MathAbs(netProfit) < 0.005 ? "true" : "false");
+          json += StringFormat("\"winRate\":%.1f,", winRate);
+          json += StringFormat("\"hasWinRate\":%s,", closedTrades > 0 ? "true" : "false");
+          json += StringFormat("\"wins\":%d,", propRuns[i].wins);
+          json += StringFormat("\"losses\":%d,", propRuns[i].losses);
+          json += StringFormat("\"trades\":%d,", propRuns[i].trades);
+          json += StringFormat("\"tradesTgt\":%d,", propRuns[i].tradesToTarget);
+          json += StringFormat("\"tradesBrk\":%d,", propRuns[i].tradesToBreach);
+          json += StringFormat("\"maxWinStr\":%d,", propRuns[i].maxWinStreak);
+          json += StringFormat("\"maxLossStr\":%d,", propRuns[i].maxLossStreak);
+          json += StringFormat("\"pf\":%.2f,", profitFactor);
+          json += StringFormat("\"hasPF\":%s,", propRuns[i].grossLoss < 0.0 ? "true" : "false");
+          json += StringFormat("\"rr\":%.2f,", realizedRR);
+          json += StringFormat("\"hasRR\":%s,", runAvgLoss > 0.0 ? "true" : "false");
+          json += StringFormat("\"maxProfit\":%.2f,", propRuns[i].maxProfit);
+          json += StringFormat("\"maxDD\":%.2f,", propRuns[i].maxDrawdown);
+          json += StringFormat("\"daysTgt\":%d,", propRuns[i].daysToTarget);
+          json += StringFormat("\"daysBrk\":%d,", propRuns[i].daysToBreach);
+            json += StringFormat("\"eqProt\":%d,", propRuns[i].equityProtectionTriggers);
+            json += StringFormat("\"weight\":%.4f,", weight);
+            json += "\"running\":" + (propRuns[i].pos.open ? "true" : "false") + ",";
            json += "\"lastCloseTime\":\"" + (propRuns[i].lastClosedTradeTime > 0 ? TimeToString(propRuns[i].lastClosedTradeTime, TIME_DATE | TIME_MINUTES) : "") + "\",";
            string pnlStr = "";
            if(propRuns[i].pos.open)
@@ -6503,6 +6662,8 @@
          FileWriteString(handle, "}\n");
       FileWriteString(handle, "if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',function(){renderSparklines();});}else{renderSparklines();}\n");
       FileWriteString(handle, "</script>\n");
+
+      PropWriteMethodology(handle);
 
       PropWriteFooter(handle, "strat");
       PropWriteRunsFooter(handle, useRecency);
@@ -6651,6 +6812,7 @@
       FileWriteString(handle, PropKv("Starting Balance", DoubleToString(PropStartingBalance, 2)));
       FileWriteString(handle, PropKv("Profit Target", DoubleToString(PropProfitTargetPercent, 2) + "%"));
       FileWriteString(handle, PropKv("Max Total Drawdown", DoubleToString(PropMaxTotalDrawdownPercent, 2) + "%"));
+      FileWriteString(handle, PropKv("Daily Drawdown Enabled", PropBoolStr(PropEnableDailyDrawdown)));
       FileWriteString(handle, PropKv("Daily Drawdown", DoubleToString(PropDailyDrawdownPercent, 2) + "%"));
       FileWriteString(handle, PropKv("Daily Protection Buffer", DoubleToString(PropDailyProtectionBufferPercent, 2) + "%"));
       FileWriteString(handle, PropKv("Daily Reset (UTC)", StringFormat("%02d:%02d", PropDailyResetHourUTC, PropDailyResetMinuteUTC)));
@@ -6668,6 +6830,8 @@
       FileWriteString(handle, PropKv("Virtual Stop Loss", DoubleToString(VirtualStopLossMoney, 2)));
       FileWriteString(handle, PropKv("Test Started", TimeToString(testStart, TIME_DATE | TIME_MINUTES)));
       FileWriteString(handle, PropKv("Report Generated", TimeToString(testEnd, TIME_DATE | TIME_SECONDS)));
+      double totalDays = (testEnd > testStart) ? (double)(testEnd - testStart) / 86400.0 : 0.0;
+      FileWriteString(handle, PropKv("Total Backtested Days", DoubleToString(totalDays, 0) + " Days"));
    }
 
    void PropWriteMethodology(const int handle)
@@ -6716,6 +6880,12 @@
       FileWriteString(handle,
          "<div class=\"m-item\">\n<h3>Ranking / Sort Order</h3>\n" +
          "<p>Strategies are sorted by <b>recency score</b> when enabled (then all-time pass rate, then average net P/L as tiebreakers); otherwise by all-time pass rate then average net P/L. Click any column header to re-sort the table.</p>\n</div>\n");
+      FileWriteString(handle,
+         "<div class=\"m-item\">\n<h3>Avg Trades to Hit Target / Blow &mdash; (P) and (B)</h3>\n" +
+         "<p><b>(P)</b> = Average number of trades to hit the profit target (passed runs). <b>(B)</b> = Average number of trades before the account blew (breached runs). In the prerun table the column shows both, e.g. <code>2.9 (P) / 3.0 (B)</code>. In per-run detail each run shows only its outcome, e.g. <code>2 (P)</code> for a passed run or <code>3 (B)</code> for a blown run.</p>\n</div>\n");
+      FileWriteString(handle,
+         "<div class=\"m-item\">\n<h3>Winning &amp; Losing Streaks &mdash; (M) and (A)</h3>\n" +
+         "<p><b>(M)</b> = Maximum consecutive wins/losses across all runs of the strategy. <b>(A)</b> = Average of the max streaks per run. Displayed as <code>Max(M) / Avg(A)</code>, e.g. <code>5 (M) / 2.3 (A)</code> means the best run had 5 consecutive wins and the average max win streak across runs was 2.3.</p>\n</div>\n");
       FileWriteString(handle,
          "<div class=\"m-item\">\n<h3>Active Runs &mdash; How to Read</h3>\n" +
          "<p><b>Active Runs</b> are strategies still running at the end of the test period &mdash; they neither passed (hit profit target) nor blew (breached a rule). They remain unresolved.</p>\n" +
@@ -6820,8 +6990,8 @@
    void PropWriteRunsFooter(const int handle, const bool hasWeightCol)
    {
       string colsJs = hasWeightCol ?
-          "['n','strat','startDay','status','reason','startBal','endBal','net','winRate','wins','losses','running','trades','pf','rr','maxProfit','maxDD','daysTgt','daysBrk','eqProt','weight','lastCloseTime','pnl5','lastTrigSig','lastSkipSig','ended']" :
-          "['n','strat','startDay','status','reason','startBal','endBal','net','winRate','wins','losses','running','trades','pf','rr','maxProfit','maxDD','daysTgt','daysBrk','eqProt','lastCloseTime','pnl5','lastTrigSig','lastSkipSig','ended']";
+          "['n','strat','startDay','status','reason','startBal','endBal','net','winRate','wins','losses','running','trades','pf','rr','maxProfit','maxDD','tradesTgt','daysTgt','daysBrk','eqProt','weight','maxWinStr','maxLossStr','lastCloseTime','pnl5','lastTrigSig','lastSkipSig','ended']" :
+          "['n','strat','startDay','status','reason','startBal','endBal','net','winRate','wins','losses','running','trades','pf','rr','maxProfit','maxDD','tradesTgt','daysTgt','daysBrk','eqProt','maxWinStr','maxLossStr','lastCloseTime','pnl5','lastTrigSig','lastSkipSig','ended']";
       FileWriteString(handle,
          "<div class=\"footer\">Generated by <code>HundredStrategyEA</code> propfirm backtest mode. This is a virtual simulation - no real trades were placed.</div>\n" +
          "<script>\n" +
@@ -6847,7 +7017,7 @@
          "  function doSort(){\n" +
          "    if(sortIdx<0)return;\n" +
          "    var key=cols[sortIdx];\n" +
-         "    var types={'n':'num','startBal':'num','endBal':'num','net':'num','winRate':'num','wins':'num','losses':'num','running':'str','trades':'num','pf':'num','rr':'num','maxProfit':'num','maxDD':'num','daysTgt':'num','daysBrk':'num','eqProt':'num','weight':'num','lastCloseTime':'str','pnl5':'str','lastTrigSig':'str','lastSkipSig':'str'};\n" +
+          "    var types={'n':'num','startBal':'num','endBal':'num','net':'num','winRate':'num','wins':'num','losses':'num','running':'str','trades':'num','pf':'num','rr':'num','maxProfit':'num','maxDD':'num','tradesTgt':'num','tradesBrk':'num','maxWinStr':'num','maxLossStr':'num','daysTgt':'num','daysBrk':'num','eqProt':'num','weight':'num','lastCloseTime':'str','pnl5':'str','lastTrigSig':'str','lastSkipSig':'str'};\n" +
          "    var isNum=types[key]==='num';\n" +
          "    filtered.sort(function(a,b){var av=a[key],bv=b[key];if(isNum){av=parseFloat(av)||0;bv=parseFloat(bv)||0;return sortAsc?av-bv:bv-av;}return sortAsc?String(av).localeCompare(String(bv)):String(bv).localeCompare(String(av));});\n" +
          "  }\n" +
@@ -6872,7 +7042,8 @@
          "    var pfHtml=r.hasPF?'<span class=\"num\">'+r.pf.toFixed(2)+'</span>':'<span class=\"zero\">n/a</span>';\n" +
          "    var rrHtml=r.hasRR?'<span class=\"num\">'+r.rr.toFixed(2)+'</span>':'<span class=\"zero\">n/a</span>';\n" +
          "    var runHtml=r.running?'<span class=\"badge act\" style=\"background:#dbeafe;color:#1e40af\">YES</span>':'<span class=\"badge\" style=\"background:#f1f5f9;color:#94a3b8\">-</span>';\n" +
-          "    tr.innerHTML='<td class=\"num sticky-col\">'+r.n+'</td><td class=\"sticky-col\">'+r.strat+'</td><td>'+r.startDay+'</td><td><span class=\"badge '+r.status+'\">'+badgeMap[r.status]+'</span></td><td class=reason>'+r.reason+'</td><td class=num>'+r.startBal.toFixed(2)+'</td><td class=num>'+r.endBal.toFixed(2)+'</td><td class=\"num '+nc+'\">'+r.netStr+'</td><td class=num>'+wrHtml+'</td><td class=\"num pos\">'+r.wins+'</td><td class=\"num neg\">'+r.losses+'</td><td>'+runHtml+'</td><td class=num>'+r.trades+'</td><td>'+pfHtml+'</td><td>'+rrHtml+'</td><td class=\"num pos\">'+r.maxProfit.toFixed(2)+'</td><td class=\"num neg\">'+r.maxDD.toFixed(2)+'</td><td class=num>'+r.daysTgt+'</td><td class=num>'+r.daysBrk+'</td><td class=num>'+r.eqProt+'</td>'+(hasWeight?'<td class=num>'+r.weight.toFixed(3)+'</td>':'')+'<td>'+r.lastCloseTime+'</td><td>'+r.pnl5+'</td><td>'+r.lastTrigSig+'</td><td>'+r.lastSkipSig+'</td><td>'+r.ended+'</td>'\n" +
+           "    var tgtBrkStr='';if(r.tradesTgt>0){tgtBrkStr=r.tradesTgt+' (P)';}else if(r.tradesBrk>0){tgtBrkStr=r.tradesBrk+' (B)';}else{tgtBrkStr='-';}\n" +
+          "    tr.innerHTML='<td class=\"num sticky-col\">'+r.n+'</td><td class=\"sticky-col\">'+r.strat+'</td><td>'+r.startDay+'</td><td><span class=\"badge '+r.status+'\">'+badgeMap[r.status]+'</span></td><td class=reason>'+r.reason+'</td><td class=num>'+r.startBal.toFixed(2)+'</td><td class=num>'+r.endBal.toFixed(2)+'</td><td class=\"num '+nc+'\">'+r.netStr+'</td><td class=num>'+wrHtml+'</td><td class=\"num pos\">'+r.wins+'</td><td class=\"num neg\">'+r.losses+'</td><td>'+runHtml+'</td><td class=num>'+r.trades+'</td><td>'+pfHtml+'</td><td>'+rrHtml+'</td><td class=\"num pos\">'+r.maxProfit.toFixed(2)+'</td><td class=\"num neg\">'+r.maxDD.toFixed(2)+'</td><td class=num>'+tgtBrkStr+'</td><td class=num>'+r.daysTgt+'</td><td class=num>'+r.daysBrk+'</td><td class=num>'+r.eqProt+'</td>'+(hasWeight?'<td class=num>'+r.weight.toFixed(3)+'</td>':'')+'<td class=num>'+r.maxWinStr+' (M)</td><td class=num>'+r.maxLossStr+' (M)</td><td>'+r.lastCloseTime+'</td><td>'+r.pnl5+'</td><td>'+r.lastTrigSig+'</td><td>'+r.lastSkipSig+'</td><td>'+r.ended+'</td>'\n" +
          "    return tr;\n" +
          "  }\n" +
          "  function renderPagination(totalPages){\n" +
