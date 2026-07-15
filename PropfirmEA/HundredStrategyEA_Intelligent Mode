@@ -5641,16 +5641,16 @@
       ArrayResize(propActiveIdx, last);
    }
 
-    void PropRollingOpenPosition(const int index, const int type, const datetime now)
-    {
-       propRuns[index].pos.open = true;
-       propRuns[index].pos.type = type;
-       propRuns[index].pos.entry = (type == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-       propRuns[index].pos.lot = VirtualExitLot;
-       propRuns[index].pos.openTime = now;
-       propRuns[index].trades++;
-       propRuns[index].lastTriggeredSignal = TimeToString(now, TIME_DATE | TIME_SECONDS) + " " + (type == ORDER_TYPE_BUY ? "BUY" : "SELL");
-    }
+     void PropRollingOpenPosition(const int index, const int type, const datetime now)
+     {
+        propRuns[index].pos.open = true;
+        propRuns[index].pos.type = type;
+        propRuns[index].pos.entry = (type == ORDER_TYPE_BUY) ? propCacheAsk : propCacheBid;
+        propRuns[index].pos.lot = VirtualExitLot;
+        propRuns[index].pos.openTime = now;
+        propRuns[index].trades++;
+        propRuns[index].lastTriggeredSignal = TimeToString(now, TIME_DATE | TIME_SECONDS) + " " + (type == ORDER_TYPE_BUY ? "BUY" : "SELL");
+     }
 
    double PropRollingPositionProfit(const int index)
    {
