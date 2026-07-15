@@ -1195,56 +1195,26 @@
    input group "Receiver EA Connection"
    input bool   EnableReceiverConnection = false;       // Check receiver status before executing trades
    input string ReceiverCopierKey = "client1";          // CopierKey matching PropfirmReceiverEA
-   input int    ReceiverPollIntervalMs = 500;           // Milliseconds between receiver status file reads
+    input int    ReceiverPollIntervalMs = 500;           // Milliseconds between receiver status file reads
 
-    input group "Intelligent Live Trader"
-     input bool EnableIntelligentTrader = false;
-     input bool IntellScanFromFile = false;              // Chart EA reads the latest PropFirm data file instead of scanning on-chart
-     input string IntellReportDataFile = "Propfirm_Strategy_Data.csv"; // Fixed data file (Common Files) written by the Tester/PropFirm run
-
-    input bool EnableMainDashboard = true;          // Show main H100 dashboard
-    input bool EnableIntellDashboard = true;         // Show Intell dashboard (when IntellTrader enabled)
-    input ENUM_PROP_STRATEGY_MODE IntellStrategyMode = PROP_STRATEGY_ALL;
-   input string IntellCustomStrategies = "";
-   input int IntellMaxStrategies = 100;                // Max strats to scan (0 = all 1000)
-   input int IntellMagicNumber = 100260630;
-   input double IntellStartingBalance = 5000.0;
-   input double IntellMaxTotalDrawdownPercent = 6.0;
-   input double IntellProfitTargetPercent = 10.0;
-   input bool IntellEnableDailyDrawdown = true;
-   input double IntellDailyDrawdownPercent = 4.0;
-   input double IntellDailyProtectionBufferPercent = 1.0;
-   input int IntellDailyResetHourUTC = 0;
-   input int IntellDailyResetMinuteUTC = 0;
-   input int IntellPauseSignalsHourUTC = 18;
-   input int IntellPauseSignalsMinuteUTC = 30;
-   input int IntellCloseAllHourUTC = 19;
-   input int IntellCloseAllMinuteUTC = 30;
-   input int IntellResumeSignalsHourUTC = 1;
-   input int IntellResumeSignalsMinuteUTC = 30;
-   input bool IntellEnableForceClose = true;
-   input bool IntellEnablePauseSignals = true;
-   input bool IntellRollingStartMode = true;
-    input ENUM_PROP_SPAWN_INTERVAL IntellSpawnInterval = SPAWN_DAILY_AT_RESUME;
-     input double IntellRecencyHalfLifeDays = 14.0;
-     input ENUM_TIMEFRAMES IntellTimeframe = PERIOD_M1;
-    input group "Intelligent Trader — Selection"
-   input bool IntellSelectWorst = false;
-   input int IntellMinPassRateOrBlown = 100;
-   input int IntellMaxMinutesSinceLastTrade = 60;
-    input int IntellMinCompletedRuns = 3;
-    input int IntellMinCompletionPercent = 90;              // Min % of total runs that must be completed (passed+blown) for a strategy to be eligible
-     input bool IntellScanToLatest = true;                  // true=scan to latest bar, false=use end date below
-    input int IntellScanStartYear = 0;
-    input int IntellScanStartMonth = 0;
-    input int IntellScanStartDay = 0;
-    input int IntellScanEndYear = 0;                       // Only used when IntellScanToLatest=false
-    input int IntellScanEndMonth = 0;
-    input int IntellScanEndDay = 0;
-     input int IntellRetryMinutes = 1;
-     input int IntellMinHoursBetweenSameStrat = 3;          // Min hours before same strategy can be re-selected after its trade closes
-     input int IntellDashboardRefreshMs = 1000;
-     input int IntellDashboardFontSize = 8;                 // Dashboard text size (pts); matches IntellSetLine font size
+     input bool EnableMainDashboard = true;               // Show main H100 dashboard
+      input group "Intelligent Live Trader"
+        input bool EnableIntelligentTrader = false;
+        input bool EnableIntellDashboard = true;        // Show Intell dashboard (when IntellTrader enabled)
+        input int IntellDashboardRefreshMs = 1000;
+        input int IntellDashboardFontSize = 8;
+       input bool IntellScanFromFile = false;
+       input string IntellReportDataFile = "Propfirm_Strategy_Data.csv";
+       input int IntellMagicNumber = 100260630;
+      input group "Intelligent Trader — Selection"
+     input bool IntellSelectWorst = false;
+     input int IntellMinPassRateOrBlown = 100;
+     input int IntellMaxMinutesSinceLastTrade = 60;
+      input int IntellMinCompletedRuns = 3;
+      input int IntellMinCompletionPercent = 90;
+       input int IntellMinSignalsPerTrade = 10;
+       input int IntellMaxSignalsPerTrade = 20;
+       input int IntellRetrySeconds = 60;
 
    #define PROP_STRATEGY_COUNT 1000
 
@@ -1421,7 +1391,9 @@
      double g_intellTopAvgDaysBreach[10];
      int g_intellLastTradedStratId = 0;
     datetime g_intellLastTradeCloseTime = 0;
-    ENUM_TIMEFRAMES g_intellTimeframe = PERIOD_M1;
+     ENUM_TIMEFRAMES g_intellTimeframe = PERIOD_M1;
+     datetime g_intellScanRangeFrom = 0;
+     datetime g_intellScanRangeTo = 0;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // OPTIMIZATION: Multi-layer cache system (identically preserves logic)
@@ -1474,7 +1446,7 @@
           return INIT_FAILED;
        }
 
-       g_intellTimeframe = IntellTimeframe;
+       g_intellTimeframe = Period();
 
       int selectedStrategyId = (int)SelectedStrategy;
       if(selectedStrategyId < 1 || selectedStrategyId > PROP_STRATEGY_COUNT)
@@ -5958,38 +5930,10 @@
 
     void ExportPropfirmHtmlReport()
     {
-       if(_gPropRollingStartMode)
-       {
-          // When Intelligent Trader drives the selection, regenerate the report
-          // from the EXACT same historical replay Intell uses (same bar range and
-          // same Intell param overrides). This guarantees the report's
-          // Starts/Passed/Blown/Active counts are identical to the dashboard and
-          // the live selection — no live-vs-replay divergence.
-          ENUM_PROP_STRATEGY_MODE savedMode = _gPropStrategyMode;
-          string savedCustom = _gPropCustomStrategies;
-          double savedRecencyHL = _gPropRecencyHalfLifeDays;
-           if(EnableIntelligentTrader)
-           {
-              int startBar = 0, endBar = 0;
-              IntellComputeScanRange(startBar, endBar);
-              PropfirmRunReplay(startBar, endBar, true, false);
-             // PropfirmRunReplay restored _gPropStrategyMode/_gPropCustomStrategies
-             // /_gPropRecencyHalfLifeDays to the H100 values. Re-apply the
-             // Intell scope so the report's ranking/custom filter & recency
-             // display reflect EXACTLY what was scanned (otherwise a custom
-             // strategy can vanish from the ranking while still appearing
-             // elsewhere in the report).
-             _gPropStrategyMode = IntellStrategyMode;
-             _gPropCustomStrategies = IntellCustomStrategies;
-             _gPropRecencyHalfLifeDays = IntellRecencyHalfLifeDays;
-             g_testStartTime = 0;
-             g_testEndTime = 0;
-          }
-          ExportPropfirmRollingReport();
-          _gPropStrategyMode = savedMode;
-          _gPropCustomStrategies = savedCustom;
-          _gPropRecencyHalfLifeDays = savedRecencyHL;
-       }
+       g_testStartTime = 0;
+       g_testEndTime = 0;
+        if(_gPropRollingStartMode)
+           ExportPropfirmRollingReport();
        else
           ExportPropfirmSingleReport();
     }
@@ -7970,12 +7914,10 @@
              case INTELL_RETRY_WAIT:stateStr = "RETRY WAIT"; stateCol = IntellBadColor();   break;
           }
           IntellSetLine(ln++, "STATE: " + stateStr, stateCol);
-          IntellSetLine(ln++, "Override: normal StrategyMode/SingleStrategy is IGNORED", IntellWarnColor());
+           IntellSetLine(ln++, "Override: normal StrategyMode/SingleStrategy is IGNORED", IntellWarnColor());
 
-          datetime ds = iTime(_Symbol, g_intellTimeframe, g_intellScanStartBar);
-          datetime de = iTime(_Symbol, g_intellTimeframe, g_intellScanEndBar);
-           string rangeStr = (ds > 0 && de > 0) ? TimeToString(ds, TIME_DATE|TIME_MINUTES) + "  ->  " + TimeToString(de, TIME_DATE|TIME_MINUTES) : "N/A";
-          IntellSetLine(ln++, "SCAN RANGE: " + rangeStr + "  [" + IntegerToString(g_intellTotalBars) + " bars]", IntellGoodColor());
+           string rangeStr = (g_intellScanRangeFrom > 0 && g_intellScanRangeTo > 0) ? TimeToString(g_intellScanRangeFrom, TIME_DATE|TIME_MINUTES) + "  ->  " + TimeToString(g_intellScanRangeTo, TIME_DATE|TIME_MINUTES) : "N/A";
+           IntellSetLine(ln++, "SCAN RANGE: " + rangeStr + "  [" + IntegerToString(ArraySize(propRuns)) + " runs]", IntellGoodColor());
           IntellSetLine(ln++, " ");
 
           if(g_intellScanning)
@@ -8035,7 +7977,7 @@
                  double iAvgLoss = iLoss > 0 ? MathAbs(iGl) / iLoss : 0.0;
                  double iRR = iAvgLoss > 0.0 ? iAvgWin / iAvgLoss : (iAvgWin > 0.0 ? 999.0 : 0.0);
                  double iTrdPerDay = iDur > 0.0 ? (double)iTrade / iDur : 0.0;
-                 double iAvgSigDay = (double)iSig / (double)iStarts;
+                  double iAvgSigDay = (g_intellScanRangeFrom > 0 && g_intellScanRangeTo > 0) ? (double)iSig / ((double)(g_intellScanRangeTo - g_intellScanRangeFrom) / 86400.0) : 0.0;
                  double iAvgDaysTgt = iDttC > 0 ? iDtt / iDttC : 0.0;
                  double iAvgDaysBr = iDtbC > 0 ? iDtb / iDtbC : 0.0;
 
@@ -8669,8 +8611,8 @@
    // ═══════════════════════════════════════════════════════════════════════════
 
     string IntellSpawnIntervalLabel()
-   {
-      int val = (int)IntellSpawnInterval;
+    {
+       int val = (int)_gPropSpawnInterval;
       if(val == 0) return "daily at resume";
       if(val > 0) return "every " + IntegerToString(val) + "h";
       return "every " + IntegerToString(MathAbs(val)) + "m";
@@ -8680,87 +8622,12 @@
     void IntellComputeScanRange(int &startBar, int &endBar)
     {
        int total = iBars(_Symbol, g_intellTimeframe);
-       datetime now = TimeCurrent();
-       datetime scanEnd = now;
-       if(!IntellScanToLatest && IntellScanEndYear > 0)
-       {
-          MqlDateTime de; ZeroMemory(de);
-          de.year = IntellScanEndYear; de.mon = MathMax(1, IntellScanEndMonth);
-          de.day = MathMax(1, IntellScanEndDay); de.hour = 23; de.min = 59; de.sec = 59;
-          scanEnd = StructToTime(de);
-       }
-       datetime scanStart = iTime(_Symbol, g_intellTimeframe, total - 1);
-       if(IntellScanStartYear > 0)
-       {
-          MqlDateTime ds; ZeroMemory(ds);
-          ds.year = IntellScanStartYear; ds.mon = MathMax(1, IntellScanStartMonth);
-          ds.day = MathMax(1, IntellScanStartDay);
-          scanStart = StructToTime(ds);
-       }
-       if(scanStart >= scanEnd) scanStart = scanEnd - 86400 * 30;
-       if(scanStart < iTime(_Symbol, g_intellTimeframe, total - 1)) scanStart = iTime(_Symbol, g_intellTimeframe, total - 1);
-
-       startBar = iBarShift(_Symbol, g_intellTimeframe, scanStart);
-       endBar = iBarShift(_Symbol, g_intellTimeframe, scanEnd);
-       if(startBar < 0) startBar = total - 1;
-       if(endBar < 0) endBar = 0;
-       if(startBar < endBar) startBar = endBar;
+       startBar = total - 1;
+       endBar = 0;
     }
 
-    // ── Shared replay engine ──
-    // Runs the EXACT same historical PropFirm rolling replay that Intell uses,
-    // filling propRuns identically. useIntellParams applies the Intell overrides
-    // (same as IntellInit); showDashboard drives the live scan progress UI.
-    void PropfirmRunReplay(int startBar, int endBar, bool useIntellParams, bool showDashboard)
-    {
-       double savedStartingBalance = _gPropStartingBalance;
-       double savedMaxDD = _gPropMaxTotalDrawdownPercent;
-       double savedProfitTarget = _gPropProfitTargetPercent;
-       bool savedDailyDD = _gPropEnableDailyDrawdown;
-       double savedDailyDDPct = _gPropDailyDrawdownPercent;
-       double savedDailyBuffer = _gPropDailyProtectionBufferPercent;
-       int savedDailyResetH = _gPropDailyResetHourUTC;
-       int savedDailyResetM = _gPropDailyResetMinuteUTC;
-       int savedPauseH = _gPropPauseSignalsHourUTC;
-       int savedPauseM = _gPropPauseSignalsMinuteUTC;
-       int savedCloseH = _gPropCloseAllHourUTC;
-       int savedCloseM = _gPropCloseAllMinuteUTC;
-       int savedResumeH = _gPropResumeSignalsHourUTC;
-       int savedResumeM = _gPropResumeSignalsMinuteUTC;
-       bool savedForceClose = _gPropEnableForceClose;
-       bool savedPauseSig = _gPropEnablePauseSignals;
-       ENUM_PROP_SPAWN_INTERVAL savedSpawn = _gPropSpawnInterval;
-       int savedMaxDays = _gPropMaxStartDays;
-       ENUM_PROP_STRATEGY_MODE savedStratMode = _gPropStrategyMode;
-       string savedCustom = _gPropCustomStrategies;
-       bool savedRolling = _gPropRollingStartMode;
-       double savedRecencyHL = _gPropRecencyHalfLifeDays;
-
-       if(useIntellParams)
-       {
-          _gPropStartingBalance = IntellStartingBalance;
-          _gPropMaxTotalDrawdownPercent = IntellMaxTotalDrawdownPercent;
-          _gPropProfitTargetPercent = IntellProfitTargetPercent;
-          _gPropEnableDailyDrawdown = IntellEnableDailyDrawdown;
-          _gPropDailyDrawdownPercent = IntellDailyDrawdownPercent;
-          _gPropDailyProtectionBufferPercent = IntellDailyProtectionBufferPercent;
-          _gPropDailyResetHourUTC = IntellDailyResetHourUTC;
-          _gPropDailyResetMinuteUTC = IntellDailyResetMinuteUTC;
-          _gPropPauseSignalsHourUTC = IntellPauseSignalsHourUTC;
-          _gPropPauseSignalsMinuteUTC = IntellPauseSignalsMinuteUTC;
-          _gPropCloseAllHourUTC = IntellCloseAllHourUTC;
-          _gPropCloseAllMinuteUTC = IntellCloseAllMinuteUTC;
-          _gPropResumeSignalsHourUTC = IntellResumeSignalsHourUTC;
-          _gPropResumeSignalsMinuteUTC = IntellResumeSignalsMinuteUTC;
-          _gPropEnableForceClose = IntellEnableForceClose;
-          _gPropEnablePauseSignals = IntellEnablePauseSignals;
-          _gPropSpawnInterval = IntellSpawnInterval;
-          _gPropMaxStartDays = 0;
-          _gPropRollingStartMode = true;
-          _gPropStrategyMode = IntellStrategyMode;
-          _gPropCustomStrategies = IntellCustomStrategies;
-          _gPropRecencyHalfLifeDays = IntellRecencyHalfLifeDays;
-       }
+     void PropfirmRunReplay(int startBar, int endBar, bool showDashboard)
+     {
 
        ArrayResize(propRuns, 0);
        ArrayResize(propActiveIdx, 0);
@@ -8799,30 +8666,7 @@
                 Print("INTELL_SCAN " + IntegerToString(g_intellScanProgress) + "/" + IntegerToString(totalBars) + " bars | " + IntegerToString(ArraySize(propActiveIdx)) + " active runs | " + IntegerToString(ArraySize(propRuns)) + " total runs");
           }
        }
-       if(showDashboard) g_intellScanning = false;
-
-       _gPropStartingBalance = savedStartingBalance;
-       _gPropMaxTotalDrawdownPercent = savedMaxDD;
-       _gPropProfitTargetPercent = savedProfitTarget;
-       _gPropEnableDailyDrawdown = savedDailyDD;
-       _gPropDailyDrawdownPercent = savedDailyDDPct;
-       _gPropDailyProtectionBufferPercent = savedDailyBuffer;
-       _gPropDailyResetHourUTC = savedDailyResetH;
-       _gPropDailyResetMinuteUTC = savedDailyResetM;
-       _gPropPauseSignalsHourUTC = savedPauseH;
-       _gPropPauseSignalsMinuteUTC = savedPauseM;
-       _gPropCloseAllHourUTC = savedCloseH;
-       _gPropCloseAllMinuteUTC = savedCloseM;
-       _gPropResumeSignalsHourUTC = savedResumeH;
-       _gPropResumeSignalsMinuteUTC = savedResumeM;
-       _gPropEnableForceClose = savedForceClose;
-       _gPropEnablePauseSignals = savedPauseSig;
-       _gPropSpawnInterval = savedSpawn;
-       _gPropMaxStartDays = savedMaxDays;
-       _gPropRollingStartMode = savedRolling;
-       _gPropStrategyMode = savedStratMode;
-        _gPropCustomStrategies = savedCustom;
-        _gPropRecencyHalfLifeDays = savedRecencyHL;
+        if(showDashboard) g_intellScanning = false;
         g_intellScanShift = 0;
      }
 
@@ -8833,16 +8677,25 @@
          if(IntellScanFromFile)
          {
             string used = "";
-            if(IntellLoadResultsFromFile(used, false))
-            {
-               LogEvent("INTELL_FILE_SCAN", "Loaded results from " + used + " (" + IntegerToString(ArraySize(propRuns)) + " runs)");
-               IntellPickFromResults();
-            }
+             if(IntellLoadResultsFromFile(used, false))
+             {
+                LogEvent("INTELL_FILE_SCAN", "Loaded results from " + used + " (" + IntegerToString(ArraySize(propRuns)) + " runs)");
+                g_intellScanRangeFrom = 0;
+                g_intellScanRangeTo = 0;
+                for(int ri = 0; ri < ArraySize(propRuns); ri++)
+                {
+                   if(g_intellScanRangeFrom == 0 || propRuns[ri].startDay < g_intellScanRangeFrom)
+                      g_intellScanRangeFrom = propRuns[ri].startDay;
+                   if(propRuns[ri].ended > g_intellScanRangeTo)
+                      g_intellScanRangeTo = propRuns[ri].ended;
+                }
+                IntellPickFromResults();
+             }
             else
             {
                 LogEvent("INTELL_FILE_SCAN", "No report data file found (DIAGv2) (" + IntellReportDataFile + ")");
                g_intellState = INTELL_RETRY_WAIT;
-               g_intellRetryTime = TimeCurrent() + MathMax(60, IntellRetryMinutes * 60);
+               g_intellRetryTime = TimeCurrent() + IntellRetrySeconds;
             }
             return;
          }
@@ -8863,14 +8716,16 @@
        // (Identical engine used by ExportPropfirmHtmlReport, so the report,
        //  dashboard and selection all derive from exactly the same replay.)
        Print("INTELL_SCAN starting: " + IntegerToString(scanStartBar - scanEndBar + 1) + " bars | Range: " + TimeToString(iTime(_Symbol, g_intellTimeframe, scanStartBar), TIME_DATE|TIME_MINUTES) + " -> " + TimeToString(iTime(_Symbol, g_intellTimeframe, scanEndBar), TIME_DATE|TIME_MINUTES));
-       PropfirmRunReplay(scanStartBar, scanEndBar, true, true);
+        PropfirmRunReplay(scanStartBar, scanEndBar, true);
 
+       g_intellScanRangeFrom = iTime(_Symbol, g_intellTimeframe, scanStartBar);
+       g_intellScanRangeTo = iTime(_Symbol, g_intellTimeframe, scanEndBar);
 
-      g_intellScanShift = 0;
+       g_intellScanShift = 0;
 
       if(ArraySize(propRuns) == 0)
       {
-         LogEvent("INTELL_ERR", "No strategies to scan (check IntellStrategyMode / IntellCustomStrategies)");
+         LogEvent("INTELL_ERR", "No strategies to scan (check PropStrategyMode / PropCustomStrategies)");
          g_intellState = INTELL_RETRY_WAIT;
          g_intellRetryTime = TimeCurrent() + 300;
          return;
@@ -8883,23 +8738,9 @@
        IntellPickFromResults();
 
        // Emit a timestamped report written from THIS exact replay, so the HTML
-       // file in the Common Files folder always matches the dashboard and the
-       // live selection (same propRuns). propRuns is already filled by the
-       // PropfirmRunReplay call above, so no re-scan is needed here.
-       // Re-apply the Intell strategy scope for the report's ranking/custom
-       // filter (PropfirmRunReplay restored the H100 values), then restore.
-       ENUM_PROP_STRATEGY_MODE savedMode = _gPropStrategyMode;
-       string savedCustom = _gPropCustomStrategies;
-       double savedRecencyHL = _gPropRecencyHalfLifeDays;
-       _gPropStrategyMode = IntellStrategyMode;
-       _gPropCustomStrategies = IntellCustomStrategies;
-       _gPropRecencyHalfLifeDays = IntellRecencyHalfLifeDays;
-       g_testStartTime = 0;
-       g_testEndTime = 0;
-       ExportPropfirmRollingReport();
-       _gPropStrategyMode = savedMode;
-       _gPropCustomStrategies = savedCustom;
-       _gPropRecencyHalfLifeDays = savedRecencyHL;
+        g_testStartTime = 0;
+        g_testEndTime = 0;
+        ExportPropfirmRollingReport();
     }
 
 
@@ -8940,12 +8781,12 @@
              propRuns[runCount] = r;
              runCount++;
           }
-          else if(parts[0] == "SIG" && n >= 3)
-          {
-             int sid = (int)StringToInteger(parts[1]) - 1;
-             if(sid >= 0 && sid < PROP_STRATEGY_COUNT)
-                propSignalCounts[sid] = (int)StringToInteger(parts[2]);
-          }
+           else if(parts[0] == "SIG" && n >= 3)
+           {
+              int sid = (int)StringToInteger(parts[1]) - 1;
+              if(sid >= 0 && sid < PROP_STRATEGY_COUNT)
+                 propSignalCounts[sid] += (int)StringToInteger(parts[2]);
+           }
        }
 
        bool IntellLoadResultsFromFile(string &outFile, bool onlyIfNewer=false)
@@ -9051,7 +8892,9 @@
        ArrayInitialize(daysToTargetCnt, 0);
        ArrayInitialize(daysToBreachCnt, 0);
 
-       datetime testEnd = TimeCurrent();
+        double testSpanDays = (g_intellScanRangeFrom > 0 && g_intellScanRangeTo > 0) ? (double)(g_intellScanRangeTo - g_intellScanRangeFrom) / 86400.0 : 1.0;
+
+        datetime testEnd = TimeCurrent();
        for(int i = 0; i < ArraySize(propRuns); i++)
           if(propRuns[i].ended > 0 && propRuns[i].ended > testEnd) testEnd = propRuns[i].ended;
 
@@ -9110,9 +8953,9 @@
           double avgLoss = losses[sid] > 0 ? MathAbs(grossLoss[sid]) / losses[sid] : 0.0;
           double rr = avgLoss > 0.0 ? avgWin / avgLoss : (avgWin > 0.0 ? 999.0 : 0.0);
 
-          double tradesPerDay = duration[sid] > 0.0 ? (double)trades[sid] / duration[sid] : 0.0;
-          int totalSignals = propSignalCounts[sid];
-          double avgSigDay = (double)totalSignals / (double)totalRuns;
+           double tradesPerDay = duration[sid] > 0.0 ? (double)trades[sid] / duration[sid] : 0.0;
+           int totalSignals = propSignalCounts[sid];
+           double avgSigDay = (double)totalSignals / testSpanDays;
           double avgDaysTarget = daysToTargetCnt[sid] > 0 ? daysToTargetSum[sid] / daysToTargetCnt[sid] : 0.0;
           double avgDaysBreach = daysToBreachCnt[sid] > 0 ? daysToBreachSum[sid] / daysToBreachCnt[sid] : 0.0;
 
@@ -9138,12 +8981,12 @@
                 isEligible = false;
                 reject += "last " + IntegerToString(minsSince) + "m ago > " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m | ";
              }
-             int hoursSinceLastTrade = (int)((now - g_intellLastTradeCloseTime) / 3600);
-             if(sid + 1 == g_intellLastTradedStratId && g_intellLastTradeCloseTime > 0 && hoursSinceLastTrade < IntellMinHoursBetweenSameStrat)
-             {
-                isEligible = false;
-                reject += "cooldown " + IntegerToString(hoursSinceLastTrade) + "h < " + IntegerToString(IntellMinHoursBetweenSameStrat) + "h | ";
-             }
+              double sigPerTrade = t > 0 ? (double)totalSignals / t : 0.0;
+              if(sigPerTrade < IntellMinSignalsPerTrade || sigPerTrade > IntellMaxSignalsPerTrade)
+              {
+                 isEligible = false;
+                 reject += "sig/trd " + DoubleToString(sigPerTrade, 1) + " not in [" + IntegerToString(IntellMinSignalsPerTrade) + "," + IntegerToString(IntellMaxSignalsPerTrade) + "] | ";
+              }
              if(IntellSelectWorst)
              {
                 if(blownRate < targetRate) { isEligible = false; reject += "blown " + DoubleToString(blownRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
@@ -9238,32 +9081,22 @@
        }
        else
        {
-          g_intellRetryTime = TimeCurrent() + MathMax(60, IntellRetryMinutes * 60);
+          g_intellRetryTime = TimeCurrent() + IntellRetrySeconds;
           g_intellState = INTELL_RETRY_WAIT;
            LogEvent("INTELL_RETRY", "No eligible strategy found (" + IntegerToString(eligibleCount) +
-              " eligible), retry in " + IntegerToString(IntellRetryMinutes) + "m");
+              " eligible), retry in " + IntegerToString(IntellRetrySeconds) + "s");
         }
 
         // ── EXPERT LOG DUMP: full report-style metrics for every strategy with runs ──
-        Print("INTELL_METRICS_SCANPARAMS | NORMAL PropFirm: StartBal=" + DoubleToString(_gPropStartingBalance, 2) +
-              " ProfitTarget%=" + DoubleToString(_gPropProfitTargetPercent, 2) +
-              " MaxDD%=" + DoubleToString(_gPropMaxTotalDrawdownPercent, 2) +
-              " DailyDD=" + (_gPropEnableDailyDrawdown ? "ON" : "OFF") + "%=" + DoubleToString(_gPropDailyDrawdownPercent, 2) +
-              " MaxStartDays=" + IntegerToString(_gPropMaxStartDays) +
-              " Spawn=" + EnumToString(_gPropSpawnInterval) +
-              " StratMode=" + EnumToString(_gPropStrategyMode) +
-              " Rolling=" + (_gPropRollingStartMode ? "ON" : "OFF") +
-              " RecencyHL=" + DoubleToString(_gPropRecencyHalfLifeDays, 1) +
-              " || INTELL SCAN used: StartBal=" + DoubleToString(IntellStartingBalance, 2) +
-              " ProfitTarget%=" + DoubleToString(IntellProfitTargetPercent, 2) +
-              " MaxDD%=" + DoubleToString(IntellMaxTotalDrawdownPercent, 2) +
-              " DailyDD=" + (IntellEnableDailyDrawdown ? "ON" : "OFF") + "%=" + DoubleToString(IntellDailyDrawdownPercent, 2) +
-              " MaxStartDays=0(fixed)" +
-              " Spawn=" + EnumToString(IntellSpawnInterval) +
-              " StratMode=" + EnumToString(IntellStrategyMode) +
-              " Rolling=ON(fixed)" +
-              " RecencyHL=" + DoubleToString(IntellRecencyHalfLifeDays, 1) +
-              " ScanToLatest=" + (IntellScanToLatest ? "ON" : "OFF"));
+         Print("INTELL_METRICS_SCANPARAMS | StartBal=" + DoubleToString(_gPropStartingBalance, 2) +
+               " ProfitTarget%=" + DoubleToString(_gPropProfitTargetPercent, 2) +
+               " MaxDD%=" + DoubleToString(_gPropMaxTotalDrawdownPercent, 2) +
+               " DailyDD=" + (_gPropEnableDailyDrawdown ? "ON" : "OFF") + "%=" + DoubleToString(_gPropDailyDrawdownPercent, 2) +
+               " MaxStartDays=" + IntegerToString(_gPropMaxStartDays) +
+               " Spawn=" + EnumToString(_gPropSpawnInterval) +
+               " StratMode=" + EnumToString(_gPropStrategyMode) +
+               " Rolling=" + (_gPropRollingStartMode ? "ON" : "OFF") +
+               " RecencyHL=" + DoubleToString(_gPropRecencyHalfLifeDays, 1));
 
         int loggedStrats = 0;
         for(int sid = 0; sid < PROP_STRATEGY_COUNT; sid++)
@@ -9281,7 +9114,7 @@
            double rr = avgLoss > 0.0 ? avgWin / avgLoss : (avgWin > 0.0 ? 999.0 : 0.0);
            double trdPerDay = duration[sid] > 0.0 ? (double)trades[sid] / duration[sid] : 0.0;
            int totSig = propSignalCounts[sid];
-           double avgSigDay = (double)totSig / (double)totalRuns;
+            double avgSigDay = (double)totSig / testSpanDays;
            double avgDt = daysToTargetCnt[sid] > 0 ? daysToTargetSum[sid] / daysToTargetCnt[sid] : 0.0;
            double avgDb = daysToBreachCnt[sid] > 0 ? daysToBreachSum[sid] / daysToBreachCnt[sid] : 0.0;
             //Print("INTELL_METRIC sid=" + IntegerToString(sid + 1) +
@@ -9325,7 +9158,7 @@
               " RR=" + DoubleToString(sRR, 2) +
               " || TrdD=" + DoubleToString(duration[sid] > 0.0 ? (double)trades[sid] / duration[sid] : 0.0, 2) +
               " Sig=" + IntegerToString(propSignalCounts[sid]) +
-              " SigD=" + DoubleToString((double)propSignalCounts[sid] / (double)startsCnt[sid], 1) +
+              " SigD=" + DoubleToString((double)propSignalCounts[sid] / testSpanDays, 1) +
               " DTgt=" + DoubleToString(daysToTargetCnt[sid] > 0 ? daysToTargetSum[sid] / daysToTargetCnt[sid] : 0.0, 1) +
               " DBr=" + DoubleToString(daysToBreachCnt[sid] > 0 ? daysToBreachSum[sid] / daysToBreachCnt[sid] : 0.0, 1);
            Print(d);
@@ -9392,22 +9225,11 @@
       }
    }
 
-     void IntellTick()
-     {
-        if(!EnableIntelligentTrader || eaStopped) return;
+      void IntellTick()
+      {
+         if(!EnableIntelligentTrader || eaStopped) return;
 
-        if(IntellScanFromFile && CountOpenPositions() == 0 && ((ulong)TimeCurrent() - g_intellLastFileCheck) > 30)
-        {
-           g_intellLastFileCheck = (ulong)TimeCurrent();
-           string used = "";
-           if(IntellLoadResultsFromFile(used, true) && used != "")
-           {
-              LogEvent("INTELL_FILE_NEW", "Newer report detected (" + used + ") — reselecting strategy");
-              IntellPickFromResults();
-           }
-        }
-
-        switch(g_intellState)
+         switch(g_intellState)
       {
          case INTELL_IDLE:
             if(g_intellSelectedStratId <= 0)
