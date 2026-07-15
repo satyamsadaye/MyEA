@@ -1238,9 +1238,10 @@
     input int IntellScanEndYear = 0;                       // Only used when IntellScanToLatest=false
     input int IntellScanEndMonth = 0;
     input int IntellScanEndDay = 0;
-    input int IntellRetryMinutes = 1;
-    input int IntellMinHoursBetweenSameStrat = 3;          // Min hours before same strategy can be re-selected after its trade closes
-    input int IntellDashboardRefreshMs = 1000;
+     input int IntellRetryMinutes = 1;
+     input int IntellMinHoursBetweenSameStrat = 3;          // Min hours before same strategy can be re-selected after its trade closes
+     input int IntellDashboardRefreshMs = 1000;
+     input int IntellDashboardFontSize = 8;                 // Dashboard text size (pts); matches IntellSetLine font size
 
    #define PROP_STRATEGY_COUNT 1000
 
@@ -1377,9 +1378,10 @@
    datetime g_testStartTime = 0;
    datetime g_testEndTime = 0;
 
-   // Intelligent Live Trader globals
-   int g_intellState = INTELL_IDLE;
-   int g_intellScanShift = 0;
+    // Intelligent Live Trader globals
+    int g_intellState = INTELL_IDLE;
+    int g_intellScanShift = 0;
+    bool g_intellTesterScan = false;
    int g_intellScanStartBar = 0;
    int g_intellScanEndBar = 0;
      int g_intellTotalBars = 0;
@@ -1400,10 +1402,18 @@
     int g_intellTopTotalComps[10];
     int g_intellTopActive[10];
     double g_intellTopWR[10];
-    double g_intellTopPF[10];
-    double g_intellTopRR[10];
-    string g_intellTopRejection[10];
-    int g_intellLastTradedStratId = 0;
+     double g_intellTopPF[10];
+     double g_intellTopRR[10];
+     string g_intellTopRejection[10];
+     int g_intellTopStarts[10];
+     int g_intellTopPassed[10];
+     int g_intellTopBlown[10];
+     double g_intellTopTradesPerDay[10];
+     int g_intellTopTotalSignals[10];
+     double g_intellTopAvgSigDay[10];
+     double g_intellTopAvgDaysTarget[10];
+     double g_intellTopAvgDaysBreach[10];
+     int g_intellLastTradedStratId = 0;
     datetime g_intellLastTradeCloseTime = 0;
     ENUM_TIMEFRAMES g_intellTimeframe = PERIOD_M1;
 
@@ -1539,15 +1549,21 @@
         return INIT_SUCCEEDED;
     }
 
-    void OnDeinit(const int reason)
-    {
-       if(EnablePropfirmBacktestMode)
-       {
-          if(ParallelMode == 1)
-             ExportPartialResults();
-          else if(ParallelMode != 2)
-             ExportPropfirmHtmlReport();
-       }
+     void OnDeinit(const int reason)
+     {
+        if(g_intellTesterScan)
+        {
+           IntellPickFromResults();
+           ExportPropfirmHtmlReport();
+        }
+
+        if(EnablePropfirmBacktestMode)
+        {
+           if(ParallelMode == 1)
+              ExportPartialResults();
+           else if(ParallelMode != 2)
+              ExportPropfirmHtmlReport();
+        }
        if(atrHandle != INVALID_HANDLE)
           IndicatorRelease(atrHandle);
        EventKillTimer();
@@ -1568,11 +1584,17 @@
        if(eaStopped)
           return;
 
-       if(EnablePropfirmBacktestMode)
-       {
-          RunPropfirmBacktestTick();
-          return;
-       }
+        if(g_intellTesterScan)
+        {
+           RunPropfirmBacktestTick();
+           return;
+        }
+
+        if(EnablePropfirmBacktestMode)
+        {
+           RunPropfirmBacktestTick();
+           return;
+        }
 
        if(EnableIntelligentTrader)
        {
@@ -4617,28 +4639,40 @@
    // ═══════════════════════════════════════════════════════════════════════
    void _CacheRefresh(const int simShift = -1)
    {
-      int barIndex = (simShift >= 0) ? simShift : (g_intellScanShift > 0 ? g_intellScanShift : 0);
-      datetime bar = iTime(_Symbol, g_intellTimeframe, barIndex);
-      if(bar == _cacheBarTime && _cacheOHLCVReady) return;
-      _cacheBarTime = bar;
-      _bvCacheCount = 0;
-      _cacheOHLCVReady = false;
-      ArrayResize(_cc, _CACHE_MAX_BARS);
-      ArrayResize(_ch, _CACHE_MAX_BARS);
-      ArrayResize(_cl, _CACHE_MAX_BARS);
-      ArrayResize(_co, _CACHE_MAX_BARS);
-      ArrayResize(_cv, _CACHE_MAX_BARS);
-      CopyClose(_Symbol, g_intellTimeframe, barIndex, _CACHE_MAX_BARS, _cc);
-      CopyHigh(_Symbol, g_intellTimeframe, barIndex, _CACHE_MAX_BARS, _ch);
-      CopyLow(_Symbol, g_intellTimeframe, barIndex, _CACHE_MAX_BARS, _cl);
-      CopyOpen(_Symbol, g_intellTimeframe, barIndex, _CACHE_MAX_BARS, _co);
-      CopyTickVolume(_Symbol, g_intellTimeframe, barIndex, _CACHE_MAX_BARS, _cv);
-      ArraySetAsSeries(_cc, true);
-      ArraySetAsSeries(_ch, true);
-      ArraySetAsSeries(_cl, true);
-      ArraySetAsSeries(_co, true);
-      ArraySetAsSeries(_cv, true);
-      _cacheOHLCVReady = true;
+       int barIndex = (simShift >= 0) ? simShift : (g_intellScanShift > 0 ? g_intellScanShift : 0);
+       bool historical = (simShift >= 0);
+       // Historical (backtest) bar: we want _Close(shift) = close of bar (barIndex - shift),
+       // i.e. index 0 = the bar being processed, increasing index = older bars (no look-ahead).
+       // CopyClose fills forward from copyStart, so start at (barIndex - _CACHE_MAX_BARS + 1) then reverse.
+       int copyStart = barIndex;
+       if(historical)
+          copyStart = barIndex - _CACHE_MAX_BARS + 1;
+       if(copyStart < 0) copyStart = 0;
+       datetime bar = iTime(_Symbol, g_intellTimeframe, barIndex);
+       if(bar == _cacheBarTime && _cacheOHLCVReady) return;
+       _cacheBarTime = bar;
+       _bvCacheCount = 0;
+       _cacheOHLCVReady = false;
+       ArrayResize(_cc, _CACHE_MAX_BARS);
+       ArrayResize(_ch, _CACHE_MAX_BARS);
+       ArrayResize(_cl, _CACHE_MAX_BARS);
+       ArrayResize(_co, _CACHE_MAX_BARS);
+       ArrayResize(_cv, _CACHE_MAX_BARS);
+       CopyClose(_Symbol, g_intellTimeframe, copyStart, _CACHE_MAX_BARS, _cc);
+       CopyHigh(_Symbol, g_intellTimeframe, copyStart, _CACHE_MAX_BARS, _ch);
+       CopyLow(_Symbol, g_intellTimeframe, copyStart, _CACHE_MAX_BARS, _cl);
+       CopyOpen(_Symbol, g_intellTimeframe, copyStart, _CACHE_MAX_BARS, _co);
+       CopyTickVolume(_Symbol, g_intellTimeframe, copyStart, _CACHE_MAX_BARS, _cv);
+       ArraySetAsSeries(_cc, true);
+       ArraySetAsSeries(_ch, true);
+       ArraySetAsSeries(_cl, true);
+       ArraySetAsSeries(_co, true);
+       ArraySetAsSeries(_cv, true);
+       if(historical)
+       {
+          ArrayReverse(_cc); ArrayReverse(_ch); ArrayReverse(_cl); ArrayReverse(_co); ArrayReverse(_cv);
+       }
+       _cacheOHLCVReady = true;
    }
 
    void _IntellCacheRefresh(const int barIndex)
@@ -5415,10 +5449,15 @@
          int sb = simBarShift >= 0 ? simBarShift : iBarShift(_Symbol, g_intellTimeframe, simTime);
          _CacheRefresh(sb);
          g_intellScanShift = sb;
-         propCacheBid = _Close(0);
-         propCacheAsk = _Close(0);
+         double hc = _Close(0);
+         double hp = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+         if(hp <= 0.0) hp = _Point;
+         double hspread = MathMax(hp, hc * 1e-4);
+         propCacheBid = hc - hspread / 2.0;
+         propCacheAsk = hc + hspread / 2.0;
          propCacheTickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
          propCacheTickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+         if(propCacheTickSize <= 0.0) propCacheTickSize = hp;
       }
       else
          _CacheRefresh();
@@ -5719,28 +5758,98 @@
             continue;
          }
 
-          if(propRuns[i].pos.open)
-          {
-             double profit = PropRollingPositionProfit(i);
-             if(VirtualTakeProfitMoney > 0.0 && profit >= VirtualTakeProfitMoney)
-                PropRollingCloseVirtualPosition(i, now);
-             else if(VirtualStopLossMoney > 0.0 && profit <= -VirtualStopLossMoney)
-                PropRollingCloseVirtualPosition(i, now);
-          }
+           double targetMoney = propRuns[i].startingBalance * _gPropProfitTargetPercent / 100.0;
+           double maxDrawdownMoney = propRuns[i].startingBalance * _gPropMaxTotalDrawdownPercent / 100.0;
+           double protectedDailyPercent = MathMax(0.0, _gPropDailyDrawdownPercent - _gPropDailyProtectionBufferPercent);
+           double dailyProtectionMoney = propRuns[i].dayStartReference * protectedDailyPercent / 100.0;
+           double dailyBreachMoney = propRuns[i].dayStartReference * _gPropDailyDrawdownPercent / 100.0;
+           bool finished = false;
 
-          propRuns[i].equity = propRuns[i].balance + (propRuns[i].pos.open ? PropRollingPositionProfit(i) : 0.0);
-          propRuns[i].maxDrawdown = MathMax(propRuns[i].maxDrawdown, propRuns[i].startingBalance - propRuns[i].equity);
-          propRuns[i].maxProfit = MathMax(propRuns[i].maxProfit, propRuns[i].equity - propRuns[i].startingBalance);
+           if(propRuns[i].pos.open)
+           {
+              double entry = propRuns[i].pos.entry;
+              int ptype = propRuns[i].pos.type;
+              double lot = propRuns[i].pos.lot;
+              double tv = propCacheTickValue, ts = propCacheTickSize;
+              if(tv > 0.0 && ts > 0.0)
+              {
+                 double dirSign = (ptype == ORDER_TYPE_BUY) ? 1.0 : -1.0;
+                 double curPrice = (ptype == ORDER_TYPE_BUY) ? propCacheBid : propCacheAsk;
+                 bool replayMode = (g_intellScanShift > 0);
+                 double hi = replayMode ? _High(0) : curPrice;
+                 double lo = replayMode ? _Low(0) : curPrice;
+                 double closePrice = 0.0;
+                 int trigger = 0;
 
-          double totalDrawdown = propRuns[i].startingBalance - propRuns[i].equity;
-          double dailyDrawdown = propRuns[i].dayStartReference - propRuns[i].equity;
-          double targetMoney = propRuns[i].startingBalance * _gPropProfitTargetPercent / 100.0;
-          double maxDrawdownMoney = propRuns[i].startingBalance * _gPropMaxTotalDrawdownPercent / 100.0;
-          double protectedDailyPercent = MathMax(0.0, _gPropDailyDrawdownPercent - _gPropDailyProtectionBufferPercent);
-          double dailyProtectionMoney = propRuns[i].dayStartReference * protectedDailyPercent / 100.0;
-          double dailyBreachMoney = propRuns[i].dayStartReference * _gPropDailyDrawdownPercent / 100.0;
+                 double upLvl[2]; int upCnt = 0;
+                 if(VirtualTakeProfitMoney > 0.0) { upLvl[upCnt] = entry + dirSign * VirtualTakeProfitMoney * ts / (tv * lot); upCnt++; }
+                 double targetProfitNeeded = targetMoney - (propRuns[i].balance - propRuns[i].startingBalance);
+                 if(targetProfitNeeded > 0.0) { upLvl[upCnt] = entry + dirSign * targetProfitNeeded * ts / (tv * lot); upCnt++; }
 
-          bool finished = false;
+                 double dnLvl[3]; int dnCnt = 0;
+                 if(VirtualStopLossMoney > 0.0) { dnLvl[dnCnt] = entry - dirSign * VirtualStopLossMoney * ts / (tv * lot); dnCnt++; }
+                 double totalLossNeeded = maxDrawdownMoney - (propRuns[i].startingBalance - propRuns[i].balance);
+                 if(totalLossNeeded > 0.0) { dnLvl[dnCnt] = entry - dirSign * totalLossNeeded * ts / (tv * lot); dnCnt++; }
+                 double dailyLossNeeded = dailyBreachMoney - (propRuns[i].dayStartReference - propRuns[i].balance);
+                 if(_gPropEnableDailyDrawdown && dailyLossNeeded > 0.0) { dnLvl[dnCnt] = entry - dirSign * dailyLossNeeded * ts / (tv * lot); dnCnt++; }
+
+                 for(int u = 0; u < upCnt && closePrice == 0.0; u++)
+                 {
+                    double lvl = upLvl[u];
+                    bool hit = (dirSign > 0.0) ? (hi >= lvl) : (lo <= lvl);
+                    if(hit) { closePrice = lvl; trigger = (u == 0 && VirtualTakeProfitMoney > 0.0) ? 1 : 2; }
+                 }
+                 if(closePrice == 0.0)
+                 {
+                    for(int d = 0; d < dnCnt; d++)
+                    {
+                       double lvl = dnLvl[d];
+                       bool hit = (dirSign > 0.0) ? (lo <= lvl) : (hi >= lvl);
+                       if(hit) { closePrice = lvl; trigger = (d == 0 && VirtualStopLossMoney > 0.0) ? 3 : (d == 1 ? 4 : 5); break; }
+                    }
+                 }
+
+                 if(closePrice != 0.0)
+                 {
+                    double sb = propCacheBid, sa = propCacheAsk;
+                    if(ptype == ORDER_TYPE_BUY) propCacheBid = closePrice; else propCacheAsk = closePrice;
+                    PropRollingCloseVirtualPosition(i, now);
+                    propCacheBid = sb; propCacheAsk = sa;
+
+                    if(trigger == 2)
+                    {
+                       propRuns[i].passed = true; propRuns[i].ended = now;
+                       propRuns[i].daysToTarget = (int)((now - propRuns[i].startDay) / 86400) + 1;
+                       propRuns[i].tradesToTarget = propRuns[i].trades;
+                       propRuns[i].breachReason = "Target hit";
+                       finished = true;
+                    }
+                    else if(trigger == 4)
+                    {
+                       propRuns[i].breached = true; propRuns[i].ended = now;
+                       propRuns[i].daysToBreach = (int)((now - propRuns[i].startDay) / 86400) + 1;
+                       propRuns[i].tradesToBreach = propRuns[i].trades;
+                       propRuns[i].breachReason = "Total DD";
+                       finished = true;
+                    }
+                    else if(trigger == 5)
+                    {
+                       propRuns[i].breached = true; propRuns[i].ended = now;
+                       propRuns[i].daysToBreach = (int)((now - propRuns[i].startDay) / 86400) + 1;
+                       propRuns[i].tradesToBreach = propRuns[i].trades;
+                       propRuns[i].breachReason = "Daily DD";
+                       finished = true;
+                    }
+                 }
+              }
+           }
+
+           propRuns[i].equity = propRuns[i].balance + (propRuns[i].pos.open ? PropRollingPositionProfit(i) : 0.0);
+           propRuns[i].maxDrawdown = MathMax(propRuns[i].maxDrawdown, propRuns[i].startingBalance - propRuns[i].equity);
+           propRuns[i].maxProfit = MathMax(propRuns[i].maxProfit, propRuns[i].equity - propRuns[i].startingBalance);
+
+           double totalDrawdown = propRuns[i].startingBalance - propRuns[i].equity;
+           double dailyDrawdown = propRuns[i].dayStartReference - propRuns[i].equity;
 
            if(_gPropEnableDailyDrawdown && dailyProtectionMoney > 0.0 && dailyDrawdown >= dailyProtectionMoney && propRuns[i].pos.open && !propRuns[i].protectionTriggeredToday)
            {
@@ -5750,30 +5859,33 @@
               propRuns[i].equity = propRuns[i].balance;
            }
 
-            if(propRuns[i].equity - propRuns[i].startingBalance >= targetMoney)
-            {
-               propRuns[i].passed = true;
-               propRuns[i].ended = now;
-               propRuns[i].daysToTarget = (int)((now - propRuns[i].startDay) / 86400) + 1;
-               propRuns[i].tradesToTarget = propRuns[i].trades;
-               propRuns[i].breachReason = "Target hit";
-               PropRollingCloseVirtualPosition(i, now);
-               finished = true;
-            }
-            else if(totalDrawdown >= maxDrawdownMoney || (_gPropEnableDailyDrawdown && dailyDrawdown >= dailyBreachMoney))
-            {
-               propRuns[i].breached = true;
-               propRuns[i].ended = now;
-               propRuns[i].daysToBreach = (int)((now - propRuns[i].startDay) / 86400) + 1;
-               propRuns[i].tradesToBreach = propRuns[i].trades;
-              if(_gPropEnableDailyDrawdown && totalDrawdown >= maxDrawdownMoney && dailyDrawdown >= dailyBreachMoney)
-                 propRuns[i].breachReason = "Total + Daily DD";
-              else if(totalDrawdown >= maxDrawdownMoney)
-                 propRuns[i].breachReason = "Total DD";
-              else
-                 propRuns[i].breachReason = "Daily DD";
-              PropRollingCloseVirtualPosition(i, now);
-              finished = true;
+           if(!finished && propRuns[i].pos.open)
+           {
+              if(propRuns[i].equity - propRuns[i].startingBalance >= targetMoney)
+              {
+                 propRuns[i].passed = true;
+                 propRuns[i].ended = now;
+                 propRuns[i].daysToTarget = (int)((now - propRuns[i].startDay) / 86400) + 1;
+                 propRuns[i].tradesToTarget = propRuns[i].trades;
+                 propRuns[i].breachReason = "Target hit";
+                 PropRollingCloseVirtualPosition(i, now);
+                 finished = true;
+              }
+              else if(totalDrawdown >= maxDrawdownMoney || (_gPropEnableDailyDrawdown && dailyDrawdown >= dailyBreachMoney))
+              {
+                 propRuns[i].breached = true;
+                 propRuns[i].ended = now;
+                 propRuns[i].daysToBreach = (int)((now - propRuns[i].startDay) / 86400) + 1;
+                 propRuns[i].tradesToBreach = propRuns[i].trades;
+                 if(_gPropEnableDailyDrawdown && totalDrawdown >= maxDrawdownMoney && dailyDrawdown >= dailyBreachMoney)
+                    propRuns[i].breachReason = "Total + Daily DD";
+                 else if(totalDrawdown >= maxDrawdownMoney)
+                    propRuns[i].breachReason = "Total DD";
+                 else
+                    propRuns[i].breachReason = "Daily DD";
+                 PropRollingCloseVirtualPosition(i, now);
+                 finished = true;
+              }
            }
 
          if(finished)
@@ -5847,13 +5959,43 @@
       return StringSubstr(base, 0, dot) + "_" + stamp + StringSubstr(base, dot);
    }
 
-   void ExportPropfirmHtmlReport()
-   {
-      if(_gPropRollingStartMode)
-         ExportPropfirmRollingReport();
-      else
-         ExportPropfirmSingleReport();
-   }
+    void ExportPropfirmHtmlReport()
+    {
+       if(_gPropRollingStartMode)
+       {
+          // When Intelligent Trader drives the selection, regenerate the report
+          // from the EXACT same historical replay Intell uses (same bar range and
+          // same Intell param overrides). This guarantees the report's
+          // Starts/Passed/Blown/Active counts are identical to the dashboard and
+          // the live selection — no live-vs-replay divergence.
+          ENUM_PROP_STRATEGY_MODE savedMode = _gPropStrategyMode;
+          string savedCustom = _gPropCustomStrategies;
+          double savedRecencyHL = _gPropRecencyHalfLifeDays;
+           if(EnableIntelligentTrader && !g_intellTesterScan)
+           {
+              int startBar = 0, endBar = 0;
+              IntellComputeScanRange(startBar, endBar);
+              PropfirmRunReplay(startBar, endBar, true, false);
+             // PropfirmRunReplay restored _gPropStrategyMode/_gPropCustomStrategies
+             // /_gPropRecencyHalfLifeDays to the H100 values. Re-apply the
+             // Intell scope so the report's ranking/custom filter & recency
+             // display reflect EXACTLY what was scanned (otherwise a custom
+             // strategy can vanish from the ranking while still appearing
+             // elsewhere in the report).
+             _gPropStrategyMode = IntellStrategyMode;
+             _gPropCustomStrategies = IntellCustomStrategies;
+             _gPropRecencyHalfLifeDays = IntellRecencyHalfLifeDays;
+             g_testStartTime = 0;
+             g_testEndTime = 0;
+          }
+          ExportPropfirmRollingReport();
+          _gPropStrategyMode = savedMode;
+          _gPropCustomStrategies = savedCustom;
+          _gPropRecencyHalfLifeDays = savedRecencyHL;
+       }
+       else
+          ExportPropfirmSingleReport();
+    }
 
    void ExportPropfirmSingleReport()
    {
@@ -7452,7 +7594,7 @@
    }
 
    #define INTELL_PREFIX "INTL_"
-   #define INTELL_LINE_COUNT 36
+    #define INTELL_LINE_COUNT 52
 
    void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
    {
@@ -7762,33 +7904,37 @@
       ObjectSetString(0, name, OBJPROP_FONT, font);
    }
 
-   void IntellSetLine(int idx, string txt, color clr = clrNONE)
-   {
-      if(idx < 0 || idx >= INTELL_LINE_COUNT) return;
-      string nm = INTELL_PREFIX + "L_" + (string)idx;
-      ObjectSetString(0, nm, OBJPROP_TEXT, txt);
-      ObjectSetInteger(0, nm, OBJPROP_COLOR, (clr == clrNONE ? IntellTextColor() : clr));
-   }
+    void IntellSetLine(int idx, string txt, color clr = clrNONE)
+    {
+       if(idx < 0 || idx >= INTELL_LINE_COUNT) return;
+       string nm = INTELL_PREFIX + "L_" + (string)idx;
+       ObjectSetString(0, nm, OBJPROP_TEXT, txt);
+       ObjectSetInteger(0, nm, OBJPROP_FONTSIZE, IntellDashboardFontSize);
+       ObjectSetInteger(0, nm, OBJPROP_COLOR, (clr == clrNONE ? IntellTextColor() : clr));
+    }
 
-   void IntellCreateDashboard()
-   {
-      if(!EnableIntellDashboard) { IntellDeleteDashboard(); return; }
-      int w = 520;
-      int ls = 14;
-      int h = 88 + INTELL_LINE_COUNT * ls;
-      int x = 16 + 640 + 10;
-      int y = 18;
-      IntellEnsureBox(INTELL_PREFIX + "BG", x, y, w, h, IntellPanelColor(), IntellBorderColor());
-      ObjectSetInteger(0, INTELL_PREFIX + "BG", OBJPROP_ZORDER, 20);
-      IntellEnsureBox(INTELL_PREFIX + "HDR", x, y, w, 40, IntellHeaderColor(), IntellBorderColor());
-      ObjectSetInteger(0, INTELL_PREFIX + "HDR", OBJPROP_ZORDER, 21);
-      IntellEnsureBox(INTELL_PREFIX + "ACC", x, y, 3, h, IntellGoodColor(), IntellGoodColor());
-      ObjectSetInteger(0, INTELL_PREFIX + "ACC", OBJPROP_ZORDER, 22);
-      IntellEnsureLabel(INTELL_PREFIX + "TITLE", x + 16, y + 8, 12, clrWhite, "Arial Bold");
-      ObjectSetInteger(0, INTELL_PREFIX + "TITLE", OBJPROP_ZORDER, 23);
-      for(int i = 0; i < INTELL_LINE_COUNT; i++)
-         IntellEnsureLabel(INTELL_PREFIX + "L_" + (string)i, x + 16, y + 54 + i * ls, 8, IntellTextColor());
-   }
+    void IntellCreateDashboard()
+    {
+       if(!EnableIntellDashboard) { IntellDeleteDashboard(); return; }
+       int fs = IntellDashboardFontSize;
+       if(fs < 6) fs = 6;
+       if(fs > 20) fs = 20;
+       int w = 540;
+       int ls = fs + 6;
+       int h = 88 + INTELL_LINE_COUNT * ls;
+       int x = 16 + 640 + 10;
+       int y = 18;
+       IntellEnsureBox(INTELL_PREFIX + "BG", x, y, w, h, IntellPanelColor(), IntellBorderColor());
+       ObjectSetInteger(0, INTELL_PREFIX + "BG", OBJPROP_ZORDER, 20);
+       IntellEnsureBox(INTELL_PREFIX + "HDR", x, y, w, 40, IntellHeaderColor(), IntellBorderColor());
+       ObjectSetInteger(0, INTELL_PREFIX + "HDR", OBJPROP_ZORDER, 21);
+       IntellEnsureBox(INTELL_PREFIX + "ACC", x, y, 3, h, IntellGoodColor(), IntellGoodColor());
+       ObjectSetInteger(0, INTELL_PREFIX + "ACC", OBJPROP_ZORDER, 22);
+       IntellEnsureLabel(INTELL_PREFIX + "TITLE", x + 16, y + 8, 12, clrWhite, "Arial Bold");
+       ObjectSetInteger(0, INTELL_PREFIX + "TITLE", OBJPROP_ZORDER, 23);
+       for(int i = 0; i < INTELL_LINE_COUNT; i++)
+          IntellEnsureLabel(INTELL_PREFIX + "L_" + (string)i, x + 16, y + 54 + i * ls, fs, IntellTextColor());
+    }
 
    void IntellDeleteDashboard()
    {
@@ -7850,34 +7996,64 @@
 
           if(g_intellState == INTELL_READY || g_intellState == INTELL_TRADING || g_intellState == INTELL_RETRY_WAIT)
           {
-             if(g_intellSelectedStratId > 0)
-             {
-                int sid = g_intellSelectedStratId;
-                IntellSetLine(ln++, "SELECTED: #" + IntegerToString(sid) + " " + StrategyName(sid), IntellGoodColor());
-                int tc = 0, tw = 0, tl = 0, tp = 0;
-                datetime lastClose = 0;
-                for(int r = 0; r < ArraySize(propRuns); r++)
-                {
-                   if(propRuns[r].strategyId == sid)
-                   {
-                      tc += propRuns[r].trades;
-                      tw += propRuns[r].wins;
-                      tl += propRuns[r].losses;
-                      if(propRuns[r].passed) tp++;
-                      if(propRuns[r].lastClosedTradeTime > lastClose)
-                         lastClose = propRuns[r].lastClosedTradeTime;
-                   }
-                }
-                int closed = tw + tl;
-                double wr = closed > 0 ? (double)tw / closed * 100.0 : 0.0;
-                IntellSetLine(ln++, "Passes: " + IntegerToString(tp) + " / Trades: " + IntegerToString(tc));
-                IntellSetLine(ln++, "Win Rate: " + DoubleToString(wr, 1) + "% (" + IntegerToString(tw) + "W " + IntegerToString(tl) + "L)");
-                if(lastClose > 0)
-                   IntellSetLine(ln++, "Last Trade: " + TimeToString(lastClose, TIME_DATE | TIME_MINUTES) + " (" + IntegerToString((int)((TimeCurrent() - lastClose) / 60)) + "m ago)");
-                else
-                   IntellSetLine(ln++, "Last Trade: --");
-                IntellSetLine(ln++, " ");
-             }
+              if(g_intellSelectedStratId > 0)
+              {
+                 int sid = g_intellSelectedStratId;
+                 IntellSetLine(ln++, "SELECTED: #" + IntegerToString(sid) + " " + StrategyName(sid), IntellGoodColor());
+                 int iStarts = 0, iPassed = 0, iBlown = 0, iActive = 0;
+                 int iTrade = 0, iWin = 0, iLoss = 0, iSig = 0;
+                 double iDur = 0.0, iDtt = 0.0, iDtb = 0.0;
+                 int iDttC = 0, iDtbC = 0;
+                 double iGp = 0.0, iGl = 0.0;
+                 datetime lastClose = 0;
+                 datetime tEnd = TimeCurrent();
+                 for(int r = 0; r < ArraySize(propRuns); r++)
+                 {
+                    if(propRuns[r].strategyId != sid) continue;
+                    iStarts++;
+                    if(propRuns[r].passed) iPassed++;
+                    else if(propRuns[r].breached) iBlown++;
+                    else iActive++;
+                    iTrade += propRuns[r].trades;
+                    iWin += propRuns[r].wins;
+                    iLoss += propRuns[r].losses;
+                    iGp += propRuns[r].grossProfit;
+                    iGl += propRuns[r].grossLoss;
+                    datetime rEnd = (propRuns[r].ended > 0) ? propRuns[r].ended : tEnd;
+                    double rDays = (double)(rEnd - propRuns[r].startDay) / 86400.0 + 1.0;
+                    if(rDays < 1.0) rDays = 1.0;
+                    iDur += rDays;
+                    if(propRuns[r].passed && propRuns[r].daysToTarget > 0) { iDtt += propRuns[r].daysToTarget; iDttC++; }
+                    if(propRuns[r].breached && propRuns[r].daysToBreach > 0) { iDtb += propRuns[r].daysToBreach; iDtbC++; }
+                    if(propRuns[r].lastClosedTradeTime > lastClose) lastClose = propRuns[r].lastClosedTradeTime;
+                 }
+                 iSig = propSignalCounts[sid - 1];
+                 int iComps = iPassed + iBlown;
+                 double iPassRate = iComps > 0 ? (double)iPassed / iComps * 100.0 : 0.0;
+                 double iBlownRate = iComps > 0 ? (double)iBlown / iComps * 100.0 : 0.0;
+                 int iCd = iWin + iLoss;
+                 double iWR = iCd > 0 ? (double)iWin / iCd * 100.0 : 0.0;
+                 double iPF = iLoss > 0 ? (double)iWin / iLoss : (iWin > 0 ? 999.0 : 0.0);
+                 double iAvgWin = iWin > 0 ? iGp / iWin : 0.0;
+                 double iAvgLoss = iLoss > 0 ? MathAbs(iGl) / iLoss : 0.0;
+                 double iRR = iAvgLoss > 0.0 ? iAvgWin / iAvgLoss : (iAvgWin > 0.0 ? 999.0 : 0.0);
+                 double iTrdPerDay = iDur > 0.0 ? (double)iTrade / iDur : 0.0;
+                 double iAvgSigDay = (double)iSig / (double)iStarts;
+                 double iAvgDaysTgt = iDttC > 0 ? iDtt / iDttC : 0.0;
+                 double iAvgDaysBr = iDtbC > 0 ? iDtb / iDtbC : 0.0;
+
+                 IntellSetLine(ln++, "Starts:" + IntegerToString(iStarts) + " Passed:" + IntegerToString(iPassed) +
+                    " Blown:" + IntegerToString(iBlown) + " Active:" + IntegerToString(iActive), IntellGoodColor());
+                  IntellSetLine(ln++, "WR:" + DoubleToString(iWR, 1) + "%  PF:" + DoubleToString(iPF, 2), IntellTextColor());
+                 IntellSetLine(ln++, "RR:" + DoubleToString(iRR, 2) + "  Trd/D:" + DoubleToString(iTrdPerDay, 2) +
+                    "  Sig:" + IntegerToString(iSig) + "  Sig/D:" + DoubleToString(iAvgSigDay, 1), IntellTextColor());
+                 IntellSetLine(ln++, "AvgDays-Tgt:" + DoubleToString(iAvgDaysTgt, 1) + "  AvgDays-Br:" + DoubleToString(iAvgDaysBr, 1), IntellTextColor());
+                 if(lastClose > 0)
+                    IntellSetLine(ln++, "Last Trade: " + TimeToString(lastClose, TIME_DATE | TIME_MINUTES) + " (" + IntegerToString((int)((TimeCurrent() - lastClose) / 60)) + "m ago)");
+                 else
+                    IntellSetLine(ln++, "Last Trade: --");
+                 IntellSetLine(ln++, " ");
+              }
              else if(g_intellState != INTELL_RETRY_WAIT)
              {
                 IntellSetLine(ln++, "No strategy selected yet");
@@ -7925,24 +8101,28 @@
              IntellSetLine(ln++, " ", IntellMutedColor());
              string modeLabel = IntellSelectWorst ? "WORST CANDIDATES" : "BEST CANDIDATES";
              IntellSetLine(ln++, modeLabel + " (top " + IntegerToString(g_intellTopCount) + ")", IntellMutedColor());
-             int showCount = MathMin(g_intellTopCount, 3);
-             for(int ti = 0; ti < showCount; ti++)
-             {
-                int sid = g_intellTopIds[ti];
-                string name = StrategyName(sid);
-                if(StringLen(name) > 8) name = StringSubstr(name, 0, 8);
-                 string line = "#" + IntegerToString(ti + 1) + " #" + IntegerToString(sid) + " " + name +
-                    " R" + IntegerToString(g_intellTopTotalComps[ti] + g_intellTopActive[ti]) +
-                    " P" + DoubleToString(g_intellTopPassRate[ti], 1) +
-                    "% B" + DoubleToString(g_intellTopBlownRate[ti], 1) +
-                    "% A" + IntegerToString(g_intellTopActive[ti]) +
-                    " WR" + DoubleToString(g_intellTopWR[ti], 1) +
-                    "% PF" + DoubleToString(g_intellTopPF[ti], 1);
-                 string reject = g_intellTopRejection[ti];
-                color clr = (reject == "✓ QUALIFIED") ? IntellGoodColor() : IntellWarnColor();
-                IntellSetLine(ln++, line, clr);
-                if(reject != "") IntellSetLine(ln++, reject, IntellMutedColor());
-             }
+              int showCount = MathMin(g_intellTopCount, 3);
+              for(int ti = 0; ti < showCount; ti++)
+              {
+                 int sid = g_intellTopIds[ti];
+                 string name = StrategyName(sid);
+                 if(StringLen(name) > 8) name = StringSubstr(name, 0, 8);
+                   string line = "#" + IntegerToString(ti + 1) + " #" + IntegerToString(sid) + " " + name +
+                      " R" + IntegerToString(g_intellTopStarts[ti]) +
+                      " P" + IntegerToString(g_intellTopPassed[ti]) +
+                      " B" + IntegerToString(g_intellTopBlown[ti]) +
+                      " A" + IntegerToString(g_intellTopActive[ti]);
+                  string line2 = "WR" + DoubleToString(g_intellTopWR[ti], 1) + "% PF" + DoubleToString(g_intellTopPF[ti], 2) +
+                     " RR" + DoubleToString(g_intellTopRR[ti], 2) + " Trd/D" + DoubleToString(g_intellTopTradesPerDay[ti], 1);
+                  string line3 = "Sig" + IntegerToString(g_intellTopTotalSignals[ti]) + " Sig/D" + DoubleToString(g_intellTopAvgSigDay[ti], 1) +
+                     " D-Tgt" + DoubleToString(g_intellTopAvgDaysTarget[ti], 1) + " D-Br" + DoubleToString(g_intellTopAvgDaysBreach[ti], 1);
+                  string reject = g_intellTopRejection[ti];
+                 color clr = (reject == "✓ QUALIFIED") ? IntellGoodColor() : IntellWarnColor();
+                 IntellSetLine(ln++, line, clr);
+                 IntellSetLine(ln++, line2, IntellTextColor());
+                 IntellSetLine(ln++, line3, IntellMutedColor());
+                 if(reject != "") IntellSetLine(ln++, reject, IntellMutedColor());
+              }
              IntellSetLine(ln++, " ", IntellMutedColor());
           }
 
@@ -8499,37 +8679,212 @@
       return "every " + IntegerToString(MathAbs(val)) + "m";
    }
 
-   void IntellInit()
-   {
-      if(!EnableIntelligentTrader) return;
-      int total = iBars(_Symbol, g_intellTimeframe);
-      if(total < 100) { Print("Not enough history for Intelligent scan"); return; }
+    // ── Shared: compute the exact scan bar range used by Intell and the report ──
+    void IntellComputeScanRange(int &startBar, int &endBar)
+    {
+       int total = iBars(_Symbol, g_intellTimeframe);
+       datetime now = TimeCurrent();
+       datetime scanEnd = now;
+       if(!IntellScanToLatest && IntellScanEndYear > 0)
+       {
+          MqlDateTime de; ZeroMemory(de);
+          de.year = IntellScanEndYear; de.mon = MathMax(1, IntellScanEndMonth);
+          de.day = MathMax(1, IntellScanEndDay); de.hour = 23; de.min = 59; de.sec = 59;
+          scanEnd = StructToTime(de);
+       }
+       datetime scanStart = iTime(_Symbol, g_intellTimeframe, total - 1);
+       if(IntellScanStartYear > 0)
+       {
+          MqlDateTime ds; ZeroMemory(ds);
+          ds.year = IntellScanStartYear; ds.mon = MathMax(1, IntellScanStartMonth);
+          ds.day = MathMax(1, IntellScanStartDay);
+          scanStart = StructToTime(ds);
+       }
+       if(scanStart >= scanEnd) scanStart = scanEnd - 86400 * 30;
+       if(scanStart < iTime(_Symbol, g_intellTimeframe, total - 1)) scanStart = iTime(_Symbol, g_intellTimeframe, total - 1);
 
-      datetime now = TimeCurrent();
-      datetime scanEnd = now;
-      if(!IntellScanToLatest && IntellScanEndYear > 0)
-      {
-         MqlDateTime de; ZeroMemory(de);
-         de.year = IntellScanEndYear; de.mon = MathMax(1, IntellScanEndMonth);
-         de.day = MathMax(1, IntellScanEndDay); de.hour = 23; de.min = 59; de.sec = 59;
-         scanEnd = StructToTime(de);
-      }
-      datetime scanStart = iTime(_Symbol, g_intellTimeframe, total - 1);
-      if(IntellScanStartYear > 0)
-      {
-         MqlDateTime ds; ZeroMemory(ds);
-         ds.year = IntellScanStartYear; ds.mon = MathMax(1, IntellScanStartMonth);
-         ds.day = MathMax(1, IntellScanStartDay);
-         scanStart = StructToTime(ds);
-      }
-      if(scanStart >= scanEnd) scanStart = scanEnd - 86400 * 30;
-      if(scanStart < iTime(_Symbol, g_intellTimeframe, total - 1)) scanStart = iTime(_Symbol, g_intellTimeframe, total - 1);
+       startBar = iBarShift(_Symbol, g_intellTimeframe, scanStart);
+       endBar = iBarShift(_Symbol, g_intellTimeframe, scanEnd);
+       if(startBar < 0) startBar = total - 1;
+       if(endBar < 0) endBar = 0;
+       if(startBar < endBar) startBar = endBar;
+    }
 
-      int scanStartBar = iBarShift(_Symbol, g_intellTimeframe, scanStart);
-      int scanEndBar = iBarShift(_Symbol, g_intellTimeframe, scanEnd);
-      if(scanStartBar < 0) scanStartBar = total - 1;
-      if(scanEndBar < 0) scanEndBar = 0;
-      if(scanStartBar < scanEndBar) scanStartBar = scanEndBar;
+    // ── Shared replay engine ──
+    // Runs the EXACT same historical PropFirm rolling replay that Intell uses,
+    // filling propRuns identically. useIntellParams applies the Intell overrides
+    // (same as IntellInit); showDashboard drives the live scan progress UI.
+    void PropfirmRunReplay(int startBar, int endBar, bool useIntellParams, bool showDashboard)
+    {
+       double savedStartingBalance = _gPropStartingBalance;
+       double savedMaxDD = _gPropMaxTotalDrawdownPercent;
+       double savedProfitTarget = _gPropProfitTargetPercent;
+       bool savedDailyDD = _gPropEnableDailyDrawdown;
+       double savedDailyDDPct = _gPropDailyDrawdownPercent;
+       double savedDailyBuffer = _gPropDailyProtectionBufferPercent;
+       int savedDailyResetH = _gPropDailyResetHourUTC;
+       int savedDailyResetM = _gPropDailyResetMinuteUTC;
+       int savedPauseH = _gPropPauseSignalsHourUTC;
+       int savedPauseM = _gPropPauseSignalsMinuteUTC;
+       int savedCloseH = _gPropCloseAllHourUTC;
+       int savedCloseM = _gPropCloseAllMinuteUTC;
+       int savedResumeH = _gPropResumeSignalsHourUTC;
+       int savedResumeM = _gPropResumeSignalsMinuteUTC;
+       bool savedForceClose = _gPropEnableForceClose;
+       bool savedPauseSig = _gPropEnablePauseSignals;
+       ENUM_PROP_SPAWN_INTERVAL savedSpawn = _gPropSpawnInterval;
+       int savedMaxDays = _gPropMaxStartDays;
+       ENUM_PROP_STRATEGY_MODE savedStratMode = _gPropStrategyMode;
+       string savedCustom = _gPropCustomStrategies;
+       bool savedRolling = _gPropRollingStartMode;
+       double savedRecencyHL = _gPropRecencyHalfLifeDays;
+
+       if(useIntellParams)
+       {
+          _gPropStartingBalance = IntellStartingBalance;
+          _gPropMaxTotalDrawdownPercent = IntellMaxTotalDrawdownPercent;
+          _gPropProfitTargetPercent = IntellProfitTargetPercent;
+          _gPropEnableDailyDrawdown = IntellEnableDailyDrawdown;
+          _gPropDailyDrawdownPercent = IntellDailyDrawdownPercent;
+          _gPropDailyProtectionBufferPercent = IntellDailyProtectionBufferPercent;
+          _gPropDailyResetHourUTC = IntellDailyResetHourUTC;
+          _gPropDailyResetMinuteUTC = IntellDailyResetMinuteUTC;
+          _gPropPauseSignalsHourUTC = IntellPauseSignalsHourUTC;
+          _gPropPauseSignalsMinuteUTC = IntellPauseSignalsMinuteUTC;
+          _gPropCloseAllHourUTC = IntellCloseAllHourUTC;
+          _gPropCloseAllMinuteUTC = IntellCloseAllMinuteUTC;
+          _gPropResumeSignalsHourUTC = IntellResumeSignalsHourUTC;
+          _gPropResumeSignalsMinuteUTC = IntellResumeSignalsMinuteUTC;
+          _gPropEnableForceClose = IntellEnableForceClose;
+          _gPropEnablePauseSignals = IntellEnablePauseSignals;
+          _gPropSpawnInterval = IntellSpawnInterval;
+          _gPropMaxStartDays = 0;
+          _gPropRollingStartMode = true;
+          _gPropStrategyMode = IntellStrategyMode;
+          _gPropCustomStrategies = IntellCustomStrategies;
+          _gPropRecencyHalfLifeDays = IntellRecencyHalfLifeDays;
+       }
+
+       ArrayResize(propRuns, 0);
+       ArrayResize(propActiveIdx, 0);
+       ArrayResize(propPosInActive, 0);
+       ArrayInitialize(propSignalCache, 0);
+       ArrayInitialize(propSignalCounts, 0);
+       propSignalCacheBar = 0;
+       propLastResumeSpawn = 0;
+       propCurrentDayReset = 0;
+       lastBarTime = 0;
+
+       int totalBars = startBar - endBar + 1;
+       if(showDashboard)
+       {
+          g_intellTotalBars = totalBars;
+          g_intellScanProgress = 0;
+          g_intellScanning = true;
+          g_intellLastDashboardTick = 0;
+          IntellUpdateDashboard();
+       }
+
+       for(int bar = startBar; bar >= endBar; bar--)
+       {
+          datetime barTime = iTime(_Symbol, g_intellTimeframe, bar);
+          if(barTime <= 0) continue;
+          RunPropfirmRollingTick(barTime, bar);
+          if(showDashboard)
+          {
+             g_intellScanProgress++;
+             if(g_intellScanProgress % 50 == 0 || g_intellScanProgress == totalBars)
+             {
+                g_intellLastDashboardTick = 0;
+                IntellUpdateDashboard();
+             }
+             if(g_intellScanProgress % 1000 == 0 || g_intellScanProgress == totalBars)
+                Print("INTELL_SCAN " + IntegerToString(g_intellScanProgress) + "/" + IntegerToString(totalBars) + " bars | " + IntegerToString(ArraySize(propActiveIdx)) + " active runs | " + IntegerToString(ArraySize(propRuns)) + " total runs");
+          }
+       }
+       if(showDashboard) g_intellScanning = false;
+
+       _gPropStartingBalance = savedStartingBalance;
+       _gPropMaxTotalDrawdownPercent = savedMaxDD;
+       _gPropProfitTargetPercent = savedProfitTarget;
+       _gPropEnableDailyDrawdown = savedDailyDD;
+       _gPropDailyDrawdownPercent = savedDailyDDPct;
+       _gPropDailyProtectionBufferPercent = savedDailyBuffer;
+       _gPropDailyResetHourUTC = savedDailyResetH;
+       _gPropDailyResetMinuteUTC = savedDailyResetM;
+       _gPropPauseSignalsHourUTC = savedPauseH;
+       _gPropPauseSignalsMinuteUTC = savedPauseM;
+       _gPropCloseAllHourUTC = savedCloseH;
+       _gPropCloseAllMinuteUTC = savedCloseM;
+       _gPropResumeSignalsHourUTC = savedResumeH;
+       _gPropResumeSignalsMinuteUTC = savedResumeM;
+       _gPropEnableForceClose = savedForceClose;
+       _gPropEnablePauseSignals = savedPauseSig;
+       _gPropSpawnInterval = savedSpawn;
+       _gPropMaxStartDays = savedMaxDays;
+       _gPropRollingStartMode = savedRolling;
+       _gPropStrategyMode = savedStratMode;
+        _gPropCustomStrategies = savedCustom;
+        _gPropRecencyHalfLifeDays = savedRecencyHL;
+        g_intellScanShift = 0;
+     }
+
+     // When Intell runs inside the Strategy Tester, use the EXACT same native
+     // tick engine PropFirm uses (RunPropfirmBacktestTick -> RunPropfirmRollingTick
+     // reading real SYMBOL_BID/SYMBOL_ASK every tick). Scans all 1000 strategies
+     // tick-by-tick, identical to PropFirm's all-strategy backtest.
+     void IntellSetupTesterScan()
+     {
+        _gPropStrategyMode = PROP_STRATEGY_ALL;
+        _gPropCustomStrategies = "";
+        _gPropStartingBalance = IntellStartingBalance;
+        _gPropMaxTotalDrawdownPercent = IntellMaxTotalDrawdownPercent;
+        _gPropProfitTargetPercent = IntellProfitTargetPercent;
+        _gPropEnableDailyDrawdown = IntellEnableDailyDrawdown;
+        _gPropDailyDrawdownPercent = IntellDailyDrawdownPercent;
+        _gPropDailyProtectionBufferPercent = IntellDailyProtectionBufferPercent;
+        _gPropDailyResetHourUTC = IntellDailyResetHourUTC;
+        _gPropDailyResetMinuteUTC = IntellDailyResetMinuteUTC;
+        _gPropPauseSignalsHourUTC = IntellPauseSignalsHourUTC;
+        _gPropPauseSignalsMinuteUTC = IntellPauseSignalsMinuteUTC;
+        _gPropCloseAllHourUTC = IntellCloseAllHourUTC;
+        _gPropCloseAllMinuteUTC = IntellCloseAllMinuteUTC;
+        _gPropResumeSignalsHourUTC = IntellResumeSignalsHourUTC;
+        _gPropResumeSignalsMinuteUTC = IntellResumeSignalsMinuteUTC;
+        _gPropEnableForceClose = IntellEnableForceClose;
+        _gPropEnablePauseSignals = IntellEnablePauseSignals;
+        _gPropSpawnInterval = IntellSpawnInterval;
+        _gPropMaxStartDays = 0;
+        _gPropRollingStartMode = true;
+        _gPropRecencyHalfLifeDays = IntellRecencyHalfLifeDays;
+
+        propCurrentDayReset = PropCurrentResetTime(TimeCurrent());
+        ArrayResize(propRuns, 0);
+        ArrayResize(propActiveIdx, 0);
+        ArrayResize(propPosInActive, 0);
+        ArrayInitialize(propSignalCache, 0);
+        ArrayInitialize(propSignalCounts, 0);
+        propSignalCacheBar = 0;
+        propLastResumeSpawn = 0;
+        lastBarTime = 0;
+
+        g_intellTesterScan = true;
+        LogEvent("INTELL_TESTER_SCAN", "Tester scan enabled: all " + IntegerToString(PROP_STRATEGY_COUNT) + " strategies on native tick engine (identical to PropFirm).");
+     }
+
+     void IntellInit()
+     {
+        if(!EnableIntelligentTrader) return;
+        if(MQLInfoInteger(MQL_TESTER))
+        {
+           IntellSetupTesterScan();
+           return;
+        }
+        int total = iBars(_Symbol, g_intellTimeframe);
+       if(total < 100) { Print("Not enough history for Intelligent scan"); return; }
+
+       int scanStartBar = 0, scanEndBar = 0;
+       IntellComputeScanRange(scanStartBar, scanEndBar);
 
       g_intellScanStartBar = scanStartBar;
       g_intellScanEndBar = scanEndBar;
@@ -8537,113 +8892,12 @@
       g_intellSelectedStratId = 0;
       g_intellTradeTicket = 0;
 
-      // ── FAST SCAN using propfirm rolling engine ──
-      // Save original propfirm params
-      double savedStartingBalance = _gPropStartingBalance;
-      double savedMaxDD = _gPropMaxTotalDrawdownPercent;
-      double savedProfitTarget = _gPropProfitTargetPercent;
-      bool savedDailyDD = _gPropEnableDailyDrawdown;
-      double savedDailyDDPct = _gPropDailyDrawdownPercent;
-      double savedDailyBuffer = _gPropDailyProtectionBufferPercent;
-      int savedDailyResetH = _gPropDailyResetHourUTC;
-      int savedDailyResetM = _gPropDailyResetMinuteUTC;
-      int savedPauseH = _gPropPauseSignalsHourUTC;
-      int savedPauseM = _gPropPauseSignalsMinuteUTC;
-      int savedCloseH = _gPropCloseAllHourUTC;
-      int savedCloseM = _gPropCloseAllMinuteUTC;
-      int savedResumeH = _gPropResumeSignalsHourUTC;
-      int savedResumeM = _gPropResumeSignalsMinuteUTC;
-      bool savedForceClose = _gPropEnableForceClose;
-      bool savedPauseSig = _gPropEnablePauseSignals;
-      ENUM_PROP_SPAWN_INTERVAL savedSpawn = _gPropSpawnInterval;
-      int savedMaxDays = _gPropMaxStartDays;
-      ENUM_PROP_STRATEGY_MODE savedStratMode = _gPropStrategyMode;
-      string savedCustom = _gPropCustomStrategies;
-      bool savedRolling = _gPropRollingStartMode;
-      double savedRecencyHL = _gPropRecencyHalfLifeDays;
+       // ── FAST SCAN using the shared propfirm rolling replay ──
+       // (Identical engine used by ExportPropfirmHtmlReport, so the report,
+       //  dashboard and selection all derive from exactly the same replay.)
+       Print("INTELL_SCAN starting: " + IntegerToString(scanStartBar - scanEndBar + 1) + " bars | Range: " + TimeToString(iTime(_Symbol, g_intellTimeframe, scanStartBar), TIME_DATE|TIME_MINUTES) + " -> " + TimeToString(iTime(_Symbol, g_intellTimeframe, scanEndBar), TIME_DATE|TIME_MINUTES));
+       PropfirmRunReplay(scanStartBar, scanEndBar, true, true);
 
-      // Set propfirm params to intell params for the scan
-      _gPropStartingBalance = IntellStartingBalance;
-      _gPropMaxTotalDrawdownPercent = IntellMaxTotalDrawdownPercent;
-      _gPropProfitTargetPercent = IntellProfitTargetPercent;
-      _gPropEnableDailyDrawdown = IntellEnableDailyDrawdown;
-      _gPropDailyDrawdownPercent = IntellDailyDrawdownPercent;
-      _gPropDailyProtectionBufferPercent = IntellDailyProtectionBufferPercent;
-      _gPropDailyResetHourUTC = IntellDailyResetHourUTC;
-      _gPropDailyResetMinuteUTC = IntellDailyResetMinuteUTC;
-      _gPropPauseSignalsHourUTC = IntellPauseSignalsHourUTC;
-      _gPropPauseSignalsMinuteUTC = IntellPauseSignalsMinuteUTC;
-      _gPropCloseAllHourUTC = IntellCloseAllHourUTC;
-      _gPropCloseAllMinuteUTC = IntellCloseAllMinuteUTC;
-      _gPropResumeSignalsHourUTC = IntellResumeSignalsHourUTC;
-      _gPropResumeSignalsMinuteUTC = IntellResumeSignalsMinuteUTC;
-      _gPropEnableForceClose = IntellEnableForceClose;
-      _gPropEnablePauseSignals = IntellEnablePauseSignals;
-      _gPropSpawnInterval = IntellSpawnInterval;
-      _gPropMaxStartDays = 0;
-      _gPropRollingStartMode = true;
-      _gPropStrategyMode = IntellStrategyMode;
-      _gPropCustomStrategies = IntellCustomStrategies;
-      _gPropRecencyHalfLifeDays = IntellRecencyHalfLifeDays;
-
-      // Clear propfirm runs — start fresh
-      ArrayResize(propRuns, 0);
-      ArrayResize(propActiveIdx, 0);
-      ArrayResize(propPosInActive, 0);
-      ArrayInitialize(propSignalCache, 0);
-      ArrayInitialize(propSignalCounts, 0);
-      propSignalCacheBar = 0;
-      propLastResumeSpawn = 0;
-      propCurrentDayReset = 0;
-      lastBarTime = 0;
-
-      int totalBars = scanStartBar - scanEndBar + 1;
-      g_intellTotalBars = totalBars;
-      g_intellScanProgress = 0;
-      g_intellScanning = true;
-      g_intellLastDashboardTick = 0;
-      IntellUpdateDashboard();
-      Print("INTELL_SCAN starting: " + IntegerToString(totalBars) + " bars | Range: " + TimeToString(iTime(_Symbol, g_intellTimeframe, scanStartBar), TIME_DATE|TIME_MINUTES) + " -> " + TimeToString(iTime(_Symbol, g_intellTimeframe, scanEndBar), TIME_DATE|TIME_MINUTES));
-
-      for(int bar = scanStartBar; bar >= scanEndBar; bar--)
-      {
-         datetime barTime = iTime(_Symbol, g_intellTimeframe, bar);
-         if(barTime <= 0) continue;
-         RunPropfirmRollingTick(barTime, bar);
-         g_intellScanProgress++;
-         if(g_intellScanProgress % 50 == 0 || g_intellScanProgress == totalBars)
-         {
-            g_intellLastDashboardTick = 0;
-            IntellUpdateDashboard();
-         }
-         if(g_intellScanProgress % 1000 == 0 || g_intellScanProgress == totalBars)
-            Print("INTELL_SCAN " + IntegerToString(g_intellScanProgress) + "/" + IntegerToString(totalBars) + " bars | " + IntegerToString(ArraySize(propActiveIdx)) + " active runs | " + IntegerToString(ArraySize(propRuns)) + " total runs");
-      }
-      g_intellScanning = false;
-
-      // Restore propfirm params
-      _gPropStartingBalance = savedStartingBalance;
-      _gPropMaxTotalDrawdownPercent = savedMaxDD;
-      _gPropProfitTargetPercent = savedProfitTarget;
-      _gPropEnableDailyDrawdown = savedDailyDD;
-      _gPropDailyDrawdownPercent = savedDailyDDPct;
-      _gPropDailyProtectionBufferPercent = savedDailyBuffer;
-      _gPropDailyResetHourUTC = savedDailyResetH;
-      _gPropDailyResetMinuteUTC = savedDailyResetM;
-      _gPropPauseSignalsHourUTC = savedPauseH;
-      _gPropPauseSignalsMinuteUTC = savedPauseM;
-      _gPropCloseAllHourUTC = savedCloseH;
-      _gPropCloseAllMinuteUTC = savedCloseM;
-      _gPropResumeSignalsHourUTC = savedResumeH;
-      _gPropResumeSignalsMinuteUTC = savedResumeM;
-      _gPropEnableForceClose = savedForceClose;
-      _gPropEnablePauseSignals = savedPauseSig;
-      _gPropSpawnInterval = savedSpawn;
-      _gPropMaxStartDays = savedMaxDays;
-      _gPropRollingStartMode = savedRolling;
-      _gPropStrategyMode = savedStratMode;
-      _gPropCustomStrategies = savedCustom;
-      _gPropRecencyHalfLifeDays = savedRecencyHL;
 
       g_intellScanShift = 0;
 
@@ -8658,196 +8912,371 @@
       Print("INTELL_SCAN DONE | " + IntegerToString(g_intellScanProgress) + " bars | " + IntegerToString(ArraySize(propRuns)) + " runs");
       LogEvent("INTELL_SCAN_DONE", "Processed " + IntegerToString(g_intellScanProgress) + " bars, " + IntegerToString(ArraySize(propRuns)) + " runs");
 
-      // Select best/worst from propRuns results
-      IntellPickFromResults();
-   }
+       // Select best/worst from propRuns results
+       IntellPickFromResults();
+
+       // Emit a timestamped report written from THIS exact replay, so the HTML
+       // file in the Common Files folder always matches the dashboard and the
+       // live selection (same propRuns). propRuns is already filled by the
+       // PropfirmRunReplay call above, so no re-scan is needed here.
+       // Re-apply the Intell strategy scope for the report's ranking/custom
+       // filter (PropfirmRunReplay restored the H100 values), then restore.
+       ENUM_PROP_STRATEGY_MODE savedMode = _gPropStrategyMode;
+       string savedCustom = _gPropCustomStrategies;
+       double savedRecencyHL = _gPropRecencyHalfLifeDays;
+       _gPropStrategyMode = IntellStrategyMode;
+       _gPropCustomStrategies = IntellCustomStrategies;
+       _gPropRecencyHalfLifeDays = IntellRecencyHalfLifeDays;
+       g_testStartTime = 0;
+       g_testEndTime = 0;
+       ExportPropfirmRollingReport();
+       _gPropStrategyMode = savedMode;
+       _gPropCustomStrategies = savedCustom;
+       _gPropRecencyHalfLifeDays = savedRecencyHL;
+    }
 
 
 
-   void IntellPickFromResults()
-   {
-      g_intellSelectedStratId = 0;
-      g_intellTopCount = 0;
+    void IntellPickFromResults()
+    {
+       g_intellSelectedStratId = 0;
+       g_intellTopCount = 0;
 
-      int passes[PROP_STRATEGY_COUNT];
-      int trades[PROP_STRATEGY_COUNT];
-      int wins[PROP_STRATEGY_COUNT];
-      int losses[PROP_STRATEGY_COUNT];
-      datetime lastClose[PROP_STRATEGY_COUNT];
-      double netPL[PROP_STRATEGY_COUNT];
-      double grossProfit[PROP_STRATEGY_COUNT];
-      double grossLoss[PROP_STRATEGY_COUNT];
-      int closed[PROP_STRATEGY_COUNT];
-      int breached[PROP_STRATEGY_COUNT];
-      int actives[PROP_STRATEGY_COUNT];
-      ArrayInitialize(passes, 0); ArrayInitialize(trades, 0);
-      ArrayInitialize(wins, 0); ArrayInitialize(losses, 0);
-      ArrayInitialize(lastClose, 0);
-      ArrayInitialize(netPL, 0.0);
-      ArrayInitialize(grossProfit, 0.0); ArrayInitialize(grossLoss, 0.0);
-      ArrayInitialize(closed, 0);
-      ArrayInitialize(breached, 0);
-      ArrayInitialize(actives, 0);
+       int startsCnt[PROP_STRATEGY_COUNT];
+       int passes[PROP_STRATEGY_COUNT];
+       int breached[PROP_STRATEGY_COUNT];
+       int actives[PROP_STRATEGY_COUNT];
+       int trades[PROP_STRATEGY_COUNT];
+       int wins[PROP_STRATEGY_COUNT];
+       int losses[PROP_STRATEGY_COUNT];
+       datetime lastClose[PROP_STRATEGY_COUNT];
+       double netPL[PROP_STRATEGY_COUNT];
+       double grossProfit[PROP_STRATEGY_COUNT];
+       double grossLoss[PROP_STRATEGY_COUNT];
+       double duration[PROP_STRATEGY_COUNT];
+       double daysToTargetSum[PROP_STRATEGY_COUNT];
+       double daysToBreachSum[PROP_STRATEGY_COUNT];
+       int daysToTargetCnt[PROP_STRATEGY_COUNT];
+       int daysToBreachCnt[PROP_STRATEGY_COUNT];
+       ArrayInitialize(startsCnt, 0);
+       ArrayInitialize(passes, 0);
+       ArrayInitialize(breached, 0);
+       ArrayInitialize(actives, 0);
+       ArrayInitialize(trades, 0);
+       ArrayInitialize(wins, 0);
+       ArrayInitialize(losses, 0);
+       ArrayInitialize(lastClose, 0);
+       ArrayInitialize(netPL, 0.0);
+       ArrayInitialize(grossProfit, 0.0);
+       ArrayInitialize(grossLoss, 0.0);
+       ArrayInitialize(duration, 0.0);
+       ArrayInitialize(daysToTargetSum, 0.0);
+       ArrayInitialize(daysToBreachSum, 0.0);
+       ArrayInitialize(daysToTargetCnt, 0);
+       ArrayInitialize(daysToBreachCnt, 0);
 
-      datetime now = TimeCurrent();
+       datetime testEnd = TimeCurrent();
+       for(int i = 0; i < ArraySize(propRuns); i++)
+          if(propRuns[i].ended > 0 && propRuns[i].ended > testEnd) testEnd = propRuns[i].ended;
 
-      for(int i = 0; i < ArraySize(propRuns); i++)
-      {
-         int sid = propRuns[i].strategyId - 1;
-         if(sid < 0 || sid >= PROP_STRATEGY_COUNT) continue;
-         if(propRuns[i].passed) passes[sid]++;
-         if(propRuns[i].breached) breached[sid]++;
-         if(propRuns[i].passed || propRuns[i].breached) closed[sid]++;
-         if(!propRuns[i].passed && !propRuns[i].breached) actives[sid]++;
-         trades[sid] += propRuns[i].trades;
-         wins[sid] += propRuns[i].wins;
-         losses[sid] += propRuns[i].losses;
-         netPL[sid] += propRuns[i].balance - propRuns[i].startingBalance;
-         grossProfit[sid] += propRuns[i].grossProfit;
-         grossLoss[sid] += propRuns[i].grossLoss;
-         if(propRuns[i].lastClosedTradeTime > lastClose[sid])
-            lastClose[sid] = propRuns[i].lastClosedTradeTime;
-      }
+       datetime now = TimeCurrent();
 
-      int bestId = 0;
-      double bestScore = IntellSelectWorst ? -1e99 : 1e99;
-      int eligibleCount = 0;
-      double targetRate = (double)IntellMinPassRateOrBlown;
+       for(int i = 0; i < ArraySize(propRuns); i++)
+       {
+          int sid = propRuns[i].strategyId - 1;
+          if(sid < 0 || sid >= PROP_STRATEGY_COUNT) continue;
+          startsCnt[sid]++;
+          if(propRuns[i].passed) passes[sid]++;
+          if(propRuns[i].breached) breached[sid]++;
+          if(!propRuns[i].passed && !propRuns[i].breached) actives[sid]++;
+          trades[sid] += propRuns[i].trades;
+          wins[sid] += propRuns[i].wins;
+          losses[sid] += propRuns[i].losses;
+          netPL[sid] += propRuns[i].balance - propRuns[i].startingBalance;
+          grossProfit[sid] += propRuns[i].grossProfit;
+          grossLoss[sid] += propRuns[i].grossLoss;
+          datetime runEnd = (propRuns[i].ended > 0) ? propRuns[i].ended : testEnd;
+          double runDays = (double)(runEnd - propRuns[i].startDay) / 86400.0 + 1.0;
+          if(runDays < 1.0) runDays = 1.0;
+          duration[sid] += runDays;
+          if(propRuns[i].passed && propRuns[i].daysToTarget > 0)
+             { daysToTargetSum[sid] += propRuns[i].daysToTarget; daysToTargetCnt[sid]++; }
+          if(propRuns[i].breached && propRuns[i].daysToBreach > 0)
+             { daysToBreachSum[sid] += propRuns[i].daysToBreach; daysToBreachCnt[sid]++; }
+          if(propRuns[i].lastClosedTradeTime > lastClose[sid])
+             lastClose[sid] = propRuns[i].lastClosedTradeTime;
+       }
 
-      for(int sid = 0; sid < PROP_STRATEGY_COUNT; sid++)
-      {
-         int totalComps = closed[sid];
-         int activeCount = actives[sid];
-         int totalRuns = totalComps + activeCount;
-         if(totalRuns == 0) continue;
+       int bestId = 0;
+       double bestScore = IntellSelectWorst ? -1e99 : 1e99;
+       int eligibleCount = 0;
+       double targetRate = (double)IntellMinPassRateOrBlown;
 
-         double passRate = totalComps > 0 ? (double)passes[sid] / totalComps * 100.0 : 0.0;
-         double blownRate = totalComps > 0 ? (double)breached[sid] / totalComps * 100.0 : 0.0;
+       for(int sid = 0; sid < PROP_STRATEGY_COUNT; sid++)
+       {
+          int totalRuns = startsCnt[sid];
+          if(totalRuns == 0) continue;
+          int totalComps = passes[sid] + breached[sid];
+          int activeCount = actives[sid];
 
-         int minsSince = lastClose[sid] > 0 ? (int)((now - lastClose[sid]) / 60) : 999999;
+          double passRate = totalComps > 0 ? (double)passes[sid] / totalComps * 100.0 : 0.0;
+          double blownRate = totalComps > 0 ? (double)breached[sid] / totalComps * 100.0 : 0.0;
 
-         int t = trades[sid];
-         int w = wins[sid];
-         int l = losses[sid];
-         int cd = w + l;
-         double wr = cd > 0 ? (double)w / cd * 100.0 : 0.0;
-         double pf = l > 0 ? (double)w / l : (w > 0 ? 999.0 : 0.0);
-         double avgWin = wins[sid] > 0 ? grossProfit[sid] / wins[sid] : 0.0;
-         double avgLoss = losses[sid] > 0 ? MathAbs(grossLoss[sid]) / losses[sid] : 0.0;
-         double rr = avgLoss > 0.0 ? avgWin / avgLoss : (avgWin > 0.0 ? 999.0 : 0.0);
+          int minsSince = lastClose[sid] > 0 ? (int)((now - lastClose[sid]) / 60) : 999999;
 
-         double candidateScore = IntellSelectWorst ? blownRate : passRate;
+          int t = trades[sid];
+          int w = wins[sid];
+          int l = losses[sid];
+          int cd = w + l;
+          double wr = cd > 0 ? (double)w / cd * 100.0 : 0.0;
+          double pf = l > 0 ? (double)w / l : (w > 0 ? 999.0 : 0.0);
+          double avgWin = wins[sid] > 0 ? grossProfit[sid] / wins[sid] : 0.0;
+          double avgLoss = losses[sid] > 0 ? MathAbs(grossLoss[sid]) / losses[sid] : 0.0;
+          double rr = avgLoss > 0.0 ? avgWin / avgLoss : (avgWin > 0.0 ? 999.0 : 0.0);
 
-          bool isEligible = true;
-          string reject = "";
-          if(totalComps == 0)
-          {
-             isEligible = false;
-             reject = IntegerToString(totalRuns) + " active, 0 completed";
-          }
-          else
-          {
-             double completionPct = (double)totalComps / totalRuns * 100.0;
-             if(completionPct < (double)IntellMinCompletionPercent)
+          double tradesPerDay = duration[sid] > 0.0 ? (double)trades[sid] / duration[sid] : 0.0;
+          int totalSignals = propSignalCounts[sid];
+          double avgSigDay = (double)totalSignals / (double)totalRuns;
+          double avgDaysTarget = daysToTargetCnt[sid] > 0 ? daysToTargetSum[sid] / daysToTargetCnt[sid] : 0.0;
+          double avgDaysBreach = daysToBreachCnt[sid] > 0 ? daysToBreachSum[sid] / daysToBreachCnt[sid] : 0.0;
+
+          double candidateScore = IntellSelectWorst ? blownRate : passRate;
+
+           bool isEligible = true;
+           string reject = "";
+           if(totalComps == 0)
+           {
+              isEligible = false;
+              reject = IntegerToString(totalRuns) + " active, 0 completed";
+           }
+           else
+           {
+              double completionPct = (double)totalComps / totalRuns * 100.0;
+              if(completionPct < (double)IntellMinCompletionPercent)
+              {
+                 isEligible = false;
+                 reject += "completion " + DoubleToString(completionPct, 1) + "% < " + IntegerToString(IntellMinCompletionPercent) + "% | ";
+              }
+              if(minsSince > IntellMaxMinutesSinceLastTrade)
              {
                 isEligible = false;
-                reject += "completion " + DoubleToString(completionPct, 1) + "% < " + IntegerToString(IntellMinCompletionPercent) + "% | ";
+                reject += "last " + IntegerToString(minsSince) + "m ago > " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m | ";
              }
-             if(minsSince > IntellMaxMinutesSinceLastTrade)
-            {
-               isEligible = false;
-               reject += "last " + IntegerToString(minsSince) + "m ago > " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m | ";
-            }
-            int hoursSinceLastTrade = (int)((now - g_intellLastTradeCloseTime) / 3600);
-            if(sid + 1 == g_intellLastTradedStratId && g_intellLastTradeCloseTime > 0 && hoursSinceLastTrade < IntellMinHoursBetweenSameStrat)
-            {
-               isEligible = false;
-               reject += "cooldown " + IntegerToString(hoursSinceLastTrade) + "h < " + IntegerToString(IntellMinHoursBetweenSameStrat) + "h | ";
-            }
-            if(IntellSelectWorst)
-            {
-               if(blownRate < targetRate) { isEligible = false; reject += "blown " + DoubleToString(blownRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
-               if(passes[sid] > 0) reject += IntegerToString(passes[sid]) + " passed | ";
-            }
-            else
-            {
-               if(passRate < targetRate) { isEligible = false; reject += "pass " + DoubleToString(passRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
-               if(breached[sid] > 0) reject += IntegerToString(breached[sid]) + " blown | ";
-            }
-         }
-         if(activeCount > 0) reject += IntegerToString(activeCount) + " active | ";
-         if(reject != "") reject = "✗ " + reject;
-         if(isEligible) reject = "✓ QUALIFIED";
+             int hoursSinceLastTrade = (int)((now - g_intellLastTradeCloseTime) / 3600);
+             if(sid + 1 == g_intellLastTradedStratId && g_intellLastTradeCloseTime > 0 && hoursSinceLastTrade < IntellMinHoursBetweenSameStrat)
+             {
+                isEligible = false;
+                reject += "cooldown " + IntegerToString(hoursSinceLastTrade) + "h < " + IntegerToString(IntellMinHoursBetweenSameStrat) + "h | ";
+             }
+             if(IntellSelectWorst)
+             {
+                if(blownRate < targetRate) { isEligible = false; reject += "blown " + DoubleToString(blownRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
+                if(passes[sid] > 0) reject += IntegerToString(passes[sid]) + " passed | ";
+             }
+             else
+             {
+                if(passRate < targetRate) { isEligible = false; reject += "pass " + DoubleToString(passRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
+                if(breached[sid] > 0) reject += IntegerToString(breached[sid]) + " blown | ";
+             }
+          }
+          if(activeCount > 0) reject += IntegerToString(activeCount) + " active | ";
+          if(reject != "") reject = "✗ " + reject;
+          if(isEligible) reject = "✓ QUALIFIED";
 
-         if(isEligible)
-         {
-            eligibleCount++;
-            if(IntellSelectWorst)
-            {
-               double score = candidateScore * 10000.0 - netPL[sid];
-               if(score > bestScore) { bestScore = score; bestId = sid + 1; }
-            }
-            else
-            {
-               double score = candidateScore * 10000.0 + netPL[sid];
-               if(score < bestScore) { bestScore = score; bestId = sid + 1; }
-            }
-         }
+          if(isEligible)
+          {
+             eligibleCount++;
+             if(IntellSelectWorst)
+             {
+                double score = candidateScore * 10000.0 - netPL[sid];
+                if(score > bestScore) { bestScore = score; bestId = sid + 1; }
+             }
+             else
+             {
+                double score = candidateScore * 10000.0 + netPL[sid];
+                if(score < bestScore) { bestScore = score; bestId = sid + 1; }
+             }
+          }
 
-         int ins = g_intellTopCount;
-         for(int ti = 0; ti < g_intellTopCount; ti++)
-         {
-            bool better = IntellSelectWorst ?
-               (candidateScore > g_intellTopScore[ti] || (totalComps > 0 && g_intellTopTotalComps[ti] == 0)) :
-               (candidateScore < g_intellTopScore[ti] || (totalComps > 0 && g_intellTopTotalComps[ti] == 0));
-            if(better) { ins = ti; break; }
-         }
-         if(ins < 10)
-         {
-            for(int ti = 9; ti > ins; ti--)
-            {
-               g_intellTopIds[ti] = g_intellTopIds[ti-1];
-               g_intellTopScore[ti] = g_intellTopScore[ti-1];
-               g_intellTopPassRate[ti] = g_intellTopPassRate[ti-1];
-               g_intellTopBlownRate[ti] = g_intellTopBlownRate[ti-1];
-               g_intellTopTotalComps[ti] = g_intellTopTotalComps[ti-1];
-               g_intellTopActive[ti] = g_intellTopActive[ti-1];
-               g_intellTopWR[ti] = g_intellTopWR[ti-1];
-               g_intellTopPF[ti] = g_intellTopPF[ti-1];
-               g_intellTopRR[ti] = g_intellTopRR[ti-1];
-               g_intellTopRejection[ti] = g_intellTopRejection[ti-1];
-            }
-            g_intellTopIds[ins] = sid + 1;
-            g_intellTopScore[ins] = candidateScore;
-            g_intellTopPassRate[ins] = passRate;
-            g_intellTopBlownRate[ins] = blownRate;
-            g_intellTopTotalComps[ins] = totalComps;
-            g_intellTopActive[ins] = activeCount;
-            g_intellTopWR[ins] = wr;
-            g_intellTopPF[ins] = pf;
-            g_intellTopRR[ins] = rr;
-            g_intellTopRejection[ins] = reject;
-            if(g_intellTopCount < 10) g_intellTopCount++;
-         }
-      }
+          int ins = g_intellTopCount;
+          for(int ti = 0; ti < g_intellTopCount; ti++)
+          {
+             bool better = IntellSelectWorst ?
+                (candidateScore > g_intellTopScore[ti] || (totalComps > 0 && g_intellTopTotalComps[ti] == 0)) :
+                (candidateScore < g_intellTopScore[ti] || (totalComps > 0 && g_intellTopTotalComps[ti] == 0));
+             if(better) { ins = ti; break; }
+          }
+          if(ins < 10)
+          {
+             for(int ti = 9; ti > ins; ti--)
+             {
+                g_intellTopIds[ti] = g_intellTopIds[ti-1];
+                g_intellTopScore[ti] = g_intellTopScore[ti-1];
+                g_intellTopPassRate[ti] = g_intellTopPassRate[ti-1];
+                g_intellTopBlownRate[ti] = g_intellTopBlownRate[ti-1];
+                g_intellTopTotalComps[ti] = g_intellTopTotalComps[ti-1];
+                g_intellTopActive[ti] = g_intellTopActive[ti-1];
+                g_intellTopWR[ti] = g_intellTopWR[ti-1];
+                g_intellTopPF[ti] = g_intellTopPF[ti-1];
+                g_intellTopRR[ti] = g_intellTopRR[ti-1];
+                g_intellTopRejection[ti] = g_intellTopRejection[ti-1];
+                g_intellTopStarts[ti] = g_intellTopStarts[ti-1];
+                g_intellTopPassed[ti] = g_intellTopPassed[ti-1];
+                g_intellTopBlown[ti] = g_intellTopBlown[ti-1];
+                g_intellTopTradesPerDay[ti] = g_intellTopTradesPerDay[ti-1];
+                g_intellTopTotalSignals[ti] = g_intellTopTotalSignals[ti-1];
+                g_intellTopAvgSigDay[ti] = g_intellTopAvgSigDay[ti-1];
+                g_intellTopAvgDaysTarget[ti] = g_intellTopAvgDaysTarget[ti-1];
+                g_intellTopAvgDaysBreach[ti] = g_intellTopAvgDaysBreach[ti-1];
+             }
+             g_intellTopIds[ins] = sid + 1;
+             g_intellTopScore[ins] = candidateScore;
+             g_intellTopPassRate[ins] = passRate;
+             g_intellTopBlownRate[ins] = blownRate;
+             g_intellTopTotalComps[ins] = totalComps;
+             g_intellTopActive[ins] = activeCount;
+             g_intellTopWR[ins] = wr;
+             g_intellTopPF[ins] = pf;
+             g_intellTopRR[ins] = rr;
+             g_intellTopRejection[ins] = reject;
+             g_intellTopStarts[ins] = startsCnt[sid];
+             g_intellTopPassed[ins] = passes[sid];
+             g_intellTopBlown[ins] = breached[sid];
+             g_intellTopTradesPerDay[ins] = tradesPerDay;
+             g_intellTopTotalSignals[ins] = totalSignals;
+             g_intellTopAvgSigDay[ins] = avgSigDay;
+             g_intellTopAvgDaysTarget[ins] = avgDaysTarget;
+             g_intellTopAvgDaysBreach[ins] = avgDaysBreach;
+             if(g_intellTopCount < 10) g_intellTopCount++;
+          }
+       }
 
-      if(bestId > 0)
-      {
-         g_intellSelectedStratId = bestId;
-         g_intellState = INTELL_READY;
-         string mode = IntellSelectWorst ? "WORST" : "BEST";
-         Print("SELECTED #" + IntegerToString(bestId) + " " + StrategyName(bestId) + " | " + IntegerToString(eligibleCount) + " eligible out of " + IntegerToString(g_intellTopCount) + " candidates");
-         LogEvent("INTELL_SELECT", "Selected " + mode + " strategy #" + IntegerToString(bestId) +
-            " " + StrategyName(bestId) + " (" + IntegerToString(eligibleCount) + " eligible)");
-      }
-      else
-      {
-         g_intellRetryTime = TimeCurrent() + MathMax(60, IntellRetryMinutes * 60);
-         g_intellState = INTELL_RETRY_WAIT;
-         LogEvent("INTELL_RETRY", "No eligible strategy found (" + IntegerToString(eligibleCount) +
-            " eligible), retry in " + IntegerToString(IntellRetryMinutes) + "m");
-      }
-   }
+       if(bestId > 0)
+       {
+          g_intellSelectedStratId = bestId;
+          g_intellState = INTELL_READY;
+          string mode = IntellSelectWorst ? "WORST" : "BEST";
+          Print("SELECTED #" + IntegerToString(bestId) + " " + StrategyName(bestId) + " | " + IntegerToString(eligibleCount) + " eligible out of " + IntegerToString(g_intellTopCount) + " candidates");
+          LogEvent("INTELL_SELECT", "Selected " + mode + " strategy #" + IntegerToString(bestId) +
+             " " + StrategyName(bestId) + " (" + IntegerToString(eligibleCount) + " eligible)");
+       }
+       else
+       {
+          g_intellRetryTime = TimeCurrent() + MathMax(60, IntellRetryMinutes * 60);
+          g_intellState = INTELL_RETRY_WAIT;
+           LogEvent("INTELL_RETRY", "No eligible strategy found (" + IntegerToString(eligibleCount) +
+              " eligible), retry in " + IntegerToString(IntellRetryMinutes) + "m");
+        }
+
+        // ── EXPERT LOG DUMP: full report-style metrics for every strategy with runs ──
+        Print("INTELL_METRICS_SCANPARAMS | NORMAL PropFirm: StartBal=" + DoubleToString(_gPropStartingBalance, 2) +
+              " ProfitTarget%=" + DoubleToString(_gPropProfitTargetPercent, 2) +
+              " MaxDD%=" + DoubleToString(_gPropMaxTotalDrawdownPercent, 2) +
+              " DailyDD=" + (_gPropEnableDailyDrawdown ? "ON" : "OFF") + "%=" + DoubleToString(_gPropDailyDrawdownPercent, 2) +
+              " MaxStartDays=" + IntegerToString(_gPropMaxStartDays) +
+              " Spawn=" + EnumToString(_gPropSpawnInterval) +
+              " StratMode=" + EnumToString(_gPropStrategyMode) +
+              " Rolling=" + (_gPropRollingStartMode ? "ON" : "OFF") +
+              " RecencyHL=" + DoubleToString(_gPropRecencyHalfLifeDays, 1) +
+              " || INTELL SCAN used: StartBal=" + DoubleToString(IntellStartingBalance, 2) +
+              " ProfitTarget%=" + DoubleToString(IntellProfitTargetPercent, 2) +
+              " MaxDD%=" + DoubleToString(IntellMaxTotalDrawdownPercent, 2) +
+              " DailyDD=" + (IntellEnableDailyDrawdown ? "ON" : "OFF") + "%=" + DoubleToString(IntellDailyDrawdownPercent, 2) +
+              " MaxStartDays=0(fixed)" +
+              " Spawn=" + EnumToString(IntellSpawnInterval) +
+              " StratMode=" + EnumToString(IntellStrategyMode) +
+              " Rolling=ON(fixed)" +
+              " RecencyHL=" + DoubleToString(IntellRecencyHalfLifeDays, 1) +
+              " ScanToLatest=" + (IntellScanToLatest ? "ON" : "OFF"));
+
+        int loggedStrats = 0;
+        for(int sid = 0; sid < PROP_STRATEGY_COUNT; sid++)
+        {
+           int totalRuns = startsCnt[sid];
+           if(totalRuns == 0) continue;
+           int totalComps = passes[sid] + breached[sid];
+           double passRate = totalComps > 0 ? (double)passes[sid] / totalComps * 100.0 : 0.0;
+           double blownRate = totalComps > 0 ? (double)breached[sid] / totalComps * 100.0 : 0.0;
+           int w = wins[sid]; int l = losses[sid]; int cd = w + l;
+           double wr = cd > 0 ? (double)w / cd * 100.0 : 0.0;
+           double pf = l > 0 ? (double)w / l : (w > 0 ? 999.0 : 0.0);
+           double avgWin = w > 0 ? grossProfit[sid] / w : 0.0;
+           double avgLoss = l > 0 ? MathAbs(grossLoss[sid]) / l : 0.0;
+           double rr = avgLoss > 0.0 ? avgWin / avgLoss : (avgWin > 0.0 ? 999.0 : 0.0);
+           double trdPerDay = duration[sid] > 0.0 ? (double)trades[sid] / duration[sid] : 0.0;
+           int totSig = propSignalCounts[sid];
+           double avgSigDay = (double)totSig / (double)totalRuns;
+           double avgDt = daysToTargetCnt[sid] > 0 ? daysToTargetSum[sid] / daysToTargetCnt[sid] : 0.0;
+           double avgDb = daysToBreachCnt[sid] > 0 ? daysToBreachSum[sid] / daysToBreachCnt[sid] : 0.0;
+           Print("INTELL_METRIC sid=" + IntegerToString(sid + 1) +
+                 " name=" + StrategyName(sid + 1) +
+                 " S=" + IntegerToString(totalRuns) +
+                 " P=" + IntegerToString(passes[sid]) +
+                 " B=" + IntegerToString(breached[sid]) +
+                 " A=" + IntegerToString(actives[sid]) +
+                 " passR=" + DoubleToString(passRate, 1) + "%" +
+                 " blownR=" + DoubleToString(blownRate, 1) + "%" +
+                 " WR=" + DoubleToString(wr, 1) + "%" +
+                 " PF=" + DoubleToString(pf, 2) +
+                 " RR=" + DoubleToString(rr, 2) +
+                 " TrdD=" + DoubleToString(trdPerDay, 2) +
+                 " Sig=" + IntegerToString(totSig) +
+                 " SigD=" + DoubleToString(avgSigDay, 1) +
+                 " DTgt=" + DoubleToString(avgDt, 1) +
+                 " DBr=" + DoubleToString(avgDb, 1));
+           loggedStrats++;
+        }
+        Print("INTELL_METRICS_DONE | logged " + IntegerToString(loggedStrats) + " strategies with runs");
+
+        // Detailed block for SELECTED strategy
+        if(bestId > 0)
+        {
+           int sid = bestId - 1;
+           int sTot = passes[sid] + breached[sid];
+           int sCd = wins[sid] + losses[sid];
+           double sAvgWin = wins[sid] > 0 ? grossProfit[sid] / wins[sid] : 0.0;
+           double sAvgLoss = losses[sid] > 0 ? MathAbs(grossLoss[sid]) / losses[sid] : 0.0;
+           double sRR = sAvgLoss > 0.0 ? sAvgWin / sAvgLoss : (sAvgWin > 0.0 ? 999.0 : 0.0);
+           string d = "INTELL_SELECTED #" + IntegerToString(bestId) + " " + StrategyName(bestId) +
+              " || Starts=" + IntegerToString(startsCnt[sid]) +
+              " Passed=" + IntegerToString(passes[sid]) +
+              " Blown=" + IntegerToString(breached[sid]) +
+              " Active=" + IntegerToString(actives[sid]) +
+              " || passR=" + DoubleToString(sTot > 0 ? (double)passes[sid] / sTot * 100.0 : 0.0, 1) + "%" +
+              " blownR=" + DoubleToString(sTot > 0 ? (double)breached[sid] / sTot * 100.0 : 0.0, 1) + "%" +
+              " || WR=" + DoubleToString(sCd > 0 ? (double)wins[sid] / sCd * 100.0 : 0.0, 1) + "%" +
+              " PF=" + DoubleToString(losses[sid] > 0 ? (double)wins[sid] / losses[sid] : (wins[sid] > 0 ? 999.0 : 0.0), 2) +
+              " RR=" + DoubleToString(sRR, 2) +
+              " || TrdD=" + DoubleToString(duration[sid] > 0.0 ? (double)trades[sid] / duration[sid] : 0.0, 2) +
+              " Sig=" + IntegerToString(propSignalCounts[sid]) +
+              " SigD=" + DoubleToString((double)propSignalCounts[sid] / (double)startsCnt[sid], 1) +
+              " DTgt=" + DoubleToString(daysToTargetCnt[sid] > 0 ? daysToTargetSum[sid] / daysToTargetCnt[sid] : 0.0, 1) +
+              " DBr=" + DoubleToString(daysToBreachCnt[sid] > 0 ? daysToBreachSum[sid] / daysToBreachCnt[sid] : 0.0, 1);
+           Print(d);
+        }
+
+        // Detailed block for TOP CANDIDATES
+        for(int ti = 0; ti < g_intellTopCount; ti++)
+        {
+           Print("INTELL_CANDIDATE #" + IntegerToString(ti + 1) +
+              " sid=" + IntegerToString(g_intellTopIds[ti]) + " " + StrategyName(g_intellTopIds[ti]) +
+              " || S=" + IntegerToString(g_intellTopStarts[ti]) +
+              " P=" + IntegerToString(g_intellTopPassed[ti]) +
+              " B=" + IntegerToString(g_intellTopBlown[ti]) +
+              " A=" + IntegerToString(g_intellTopActive[ti]) +
+              " passR=" + DoubleToString(g_intellTopPassRate[ti], 1) + "%" +
+              " blownR=" + DoubleToString(g_intellTopBlownRate[ti], 1) + "%" +
+              " WR=" + DoubleToString(g_intellTopWR[ti], 1) + "%" +
+              " PF=" + DoubleToString(g_intellTopPF[ti], 2) +
+              " RR=" + DoubleToString(g_intellTopRR[ti], 2) +
+              " TrdD=" + DoubleToString(g_intellTopTradesPerDay[ti], 2) +
+              " Sig=" + IntegerToString(g_intellTopTotalSignals[ti]) +
+              " SigD=" + DoubleToString(g_intellTopAvgSigDay[ti], 1) +
+              " DTgt=" + DoubleToString(g_intellTopAvgDaysTarget[ti], 1) +
+              " DBr=" + DoubleToString(g_intellTopAvgDaysBreach[ti], 1) +
+              " || " + g_intellTopRejection[ti]);
+        }
+     }
 
    void IntellTradeTick()
    {
