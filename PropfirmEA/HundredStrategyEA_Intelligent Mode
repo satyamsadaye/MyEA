@@ -1362,7 +1362,6 @@
    int g_intellScanCurrentBar = 0;
     int g_intellTotalBars = 0;
     int g_intellProcessedBars = 0;
-    datetime g_intellScanLastProcessedTime = 0;
     int g_intellSelectedStratId = 0;
    ulong g_intellTradeTicket = 0;
    datetime g_intellLastRescanTime = 0;
@@ -8723,8 +8722,7 @@
       g_intellTotalBars = g_intellScanStartBar - g_intellScanEndBar + 1;
        g_intellProcessedBars = 0;
        g_intellScanShift = 0;
-       g_intellScanLastProcessedTime = 0;
-       g_intellSelectedStratId = 0;
+        g_intellSelectedStratId = 0;
       g_intellTradeTicket = 0;
 
       ArrayResize(intellRuns, 0);
@@ -8751,8 +8749,7 @@
       g_intellProcessedBars = 0;
       g_intellScanShift = 0;
       g_intellState = INTELL_SCANNING;
-      Print("INTELL state set to SCANNING, calling IntellTick");
-      IntellTick();
+      Print("INTELL state set to SCANNING");
    }
 
    void IntellPreSpawn()
@@ -8821,27 +8818,11 @@
     void IntellProcessNextBar()
     {
        int barIdx = g_intellScanCurrentBar;
-       if(barIdx < g_intellScanEndBar || barIdx < 0)
-       {
-          // Scan completed — check if new bars have formed since last processed time
-           if(g_intellScanLastProcessedTime > 0)
-           {
-              int lastIdx = iBarShift(_Symbol, g_intellTimeframe, g_intellScanLastProcessedTime);
-              if(lastIdx > 0)
-              {
-                 // New bars available — extend scan range to cover only the new bars
-                 g_intellScanCurrentBar = lastIdx - 1;
-                 g_intellScanEndBar = 0;
-                 g_intellTotalBars = lastIdx;
-                 g_intellProcessedBars = 0;
-                 barIdx = g_intellScanCurrentBar;
-                // Fall through to process this new bar
-             }
-             else { g_intellState = INTELL_SCAN_DONE; return; }
-          }
-          else { g_intellState = INTELL_SCAN_DONE; return; }
-       }
-       else if(barIdx >= iBars(_Symbol, g_intellTimeframe)) { g_intellState = INTELL_SCAN_DONE; return; }
+        if(barIdx < g_intellScanEndBar || barIdx < 0 || barIdx >= iBars(_Symbol, g_intellTimeframe))
+        {
+           g_intellState = INTELL_SCAN_DONE;
+           return;
+        }
 
       g_intellScanShift = barIdx;
       _IntellCacheRefresh(barIdx);
@@ -8990,11 +8971,10 @@
           Print("SCAN " + IntegerToString(g_intellProcessedBars) + "/" + IntegerToString(g_intellTotalBars) + " bars | " + IntegerToString(ArraySize(intellActiveIdx)) + " active runs");
        g_intellScanShift = 0;
 
-      if(g_intellScanCurrentBar < g_intellScanEndBar || g_intellProcessedBars >= g_intellTotalBars)
-       {
-          g_intellScanLastProcessedTime = iTime(_Symbol, g_intellTimeframe, g_intellScanEndBar);
-          g_intellState = INTELL_SCAN_DONE;
-          string modeStr = IntellSelectWorst ? "WORST" : "BEST";
+       if(g_intellScanCurrentBar < g_intellScanEndBar || g_intellProcessedBars >= g_intellTotalBars)
+        {
+           g_intellState = INTELL_SCAN_DONE;
+           string modeStr = IntellSelectWorst ? "WORST" : "BEST";
            Print("SCAN DONE | " + IntegerToString(g_intellProcessedBars) + " bars | " + IntegerToString(ArraySize(intellRuns)) + " runs | Select " + modeStr + " @" + IntegerToString(IntellMinPassRateOrBlown) + "% | MaxAge=" + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m | Spawn=" + IntellSpawnIntervalLabel());
           LogEvent("INTELL_SCAN_DONE", "Processed " + IntegerToString(g_intellProcessedBars) + " bars, " +
              IntegerToString(ArraySize(intellRuns)) + " runs");
@@ -9411,24 +9391,27 @@
                if(CheckProtectionStops()) return;
                if(GlobalIsCloseTime()) { CloseAllEaPositions(); }
             }
-            else
-             {
-                // Trade closed, rescan
-                g_intellTradeTicket = 0;
-                g_intellLastTradeCloseTime = TimeCurrent();
-                g_intellState = INTELL_SCANNING;
-                LogEvent("INTELL_TRADE_CLOSE", "Trade closed, rescanning");
-             }
+             else
+              {
+                 // Trade closed — full fresh re-scan from scratch
+                 g_intellTradeTicket = 0;
+                 g_intellLastTradeCloseTime = TimeCurrent();
+                 g_intellSelectedStratId = 0;
+                 LogEvent("INTELL_TRADE_CLOSE", "Trade closed, full rescan from scratch");
+                 IntellInit();
+                 return;
+              }
             break;
          }
 
-          case INTELL_RETRY_WAIT:
-             if(TimeCurrent() >= g_intellRetryTime)
-             {
-                g_intellState = INTELL_SCANNING;
-                g_intellSelectedStratId = 0;
-                LogEvent("INTELL_RETRY_END", "Retry timer expired, rescanning");
-             }
-             break;
+           case INTELL_RETRY_WAIT:
+              if(TimeCurrent() >= g_intellRetryTime)
+              {
+                 g_intellSelectedStratId = 0;
+                 LogEvent("INTELL_RETRY_END", "Retry timer expired, full rescan");
+                 IntellInit();
+                 return;
+              }
+              break;
       }
    }
