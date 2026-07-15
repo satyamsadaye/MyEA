@@ -8749,7 +8749,7 @@
       g_intellProcessedBars = 0;
       g_intellScanShift = 0;
       g_intellState = INTELL_SCANNING;
-      Print("INTELL state set to SCANNING");
+      Print("INTELL SCANNING " + IntegerToString(g_intellTotalBars) + " bars (" + IntegerToString(ArraySize(intellRuns)) + " runs)...");
    }
 
    void IntellPreSpawn()
@@ -8967,8 +8967,11 @@
 
        g_intellScanCurrentBar--;
        g_intellProcessedBars++;
-       if(g_intellProcessedBars % 50 == 0 || g_intellProcessedBars <= 3)
-          Print("SCAN " + IntegerToString(g_intellProcessedBars) + "/" + IntegerToString(g_intellTotalBars) + " bars | " + IntegerToString(ArraySize(intellActiveIdx)) + " active runs");
+        if(g_intellProcessedBars == g_intellTotalBars || g_intellTotalBars <= 10 || g_intellProcessedBars <= 3)
+        {
+           double pct = g_intellTotalBars > 0 ? (double)g_intellProcessedBars / g_intellTotalBars * 100.0 : 0.0;
+           Print("SCAN " + IntegerToString(g_intellProcessedBars) + "/" + IntegerToString(g_intellTotalBars) + " bars (" + DoubleToString(pct, 1) + "%) | " + IntegerToString(ArraySize(intellActiveIdx)) + " active runs");
+        }
        g_intellScanShift = 0;
 
        if(g_intellScanCurrentBar < g_intellScanEndBar || g_intellProcessedBars >= g_intellTotalBars)
@@ -9359,8 +9362,12 @@
             break;
 
          case INTELL_SCANNING:
-            IntellProcessNextBar();
+         {
+            int batchMax = 500;
+            for(int b = 0; b < batchMax && g_intellState == INTELL_SCANNING; b++)
+               IntellProcessNextBar();
             break;
+         }
 
           case INTELL_SCAN_DONE:
              IntellSelectStrategy();
