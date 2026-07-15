@@ -1198,7 +1198,10 @@
    input int    ReceiverPollIntervalMs = 500;           // Milliseconds between receiver status file reads
 
     input group "Intelligent Live Trader"
-    input bool EnableIntelligentTrader = false;
+     input bool EnableIntelligentTrader = false;
+     input bool IntellScanFromFile = false;              // Chart EA reads the latest PropFirm data file instead of scanning on-chart
+     input string IntellReportDataFile = "Propfirm_Strategy_Data.csv"; // Fixed data file (Common Files) written by the Tester/PropFirm run
+
     input bool EnableMainDashboard = true;          // Show main H100 dashboard
     input bool EnableIntellDashboard = true;         // Show Intell dashboard (when IntellTrader enabled)
     input ENUM_PROP_STRATEGY_MODE IntellStrategyMode = PROP_STRATEGY_ALL;
@@ -1381,7 +1384,10 @@
     // Intelligent Live Trader globals
     int g_intellState = INTELL_IDLE;
     int g_intellScanShift = 0;
-    bool g_intellTesterScan = false;
+     string g_intellLoadedFile = "";
+     datetime g_intellLoadedFileTime = 0;
+     ulong g_intellLastFileCheck = 0;
+
    int g_intellScanStartBar = 0;
    int g_intellScanEndBar = 0;
      int g_intellTotalBars = 0;
@@ -1551,18 +1557,15 @@
 
      void OnDeinit(const int reason)
      {
-        if(g_intellTesterScan)
-        {
-           IntellPickFromResults();
-           ExportPropfirmHtmlReport();
-        }
-
         if(EnablePropfirmBacktestMode)
         {
            if(ParallelMode == 1)
               ExportPartialResults();
            else if(ParallelMode != 2)
+           {
               ExportPropfirmHtmlReport();
+              ExportPropfirmDataFile();
+           }
         }
        if(atrHandle != INVALID_HANDLE)
           IndicatorRelease(atrHandle);
@@ -1583,12 +1586,6 @@
     {
        if(eaStopped)
           return;
-
-        if(g_intellTesterScan)
-        {
-           RunPropfirmBacktestTick();
-           return;
-        }
 
         if(EnablePropfirmBacktestMode)
         {
@@ -5971,7 +5968,7 @@
           ENUM_PROP_STRATEGY_MODE savedMode = _gPropStrategyMode;
           string savedCustom = _gPropCustomStrategies;
           double savedRecencyHL = _gPropRecencyHalfLifeDays;
-           if(EnableIntelligentTrader && !g_intellTesterScan)
+           if(EnableIntelligentTrader)
            {
               int startBar = 0, endBar = 0;
               IntellComputeScanRange(startBar, endBar);
@@ -8829,58 +8826,28 @@
         g_intellScanShift = 0;
      }
 
-     // When Intell runs inside the Strategy Tester, use the EXACT same native
-     // tick engine PropFirm uses (RunPropfirmBacktestTick -> RunPropfirmRollingTick
-     // reading real SYMBOL_BID/SYMBOL_ASK every tick). Scans all 1000 strategies
-     // tick-by-tick, identical to PropFirm's all-strategy backtest.
-     void IntellSetupTesterScan()
-     {
-        _gPropStrategyMode = PROP_STRATEGY_ALL;
-        _gPropCustomStrategies = "";
-        _gPropStartingBalance = IntellStartingBalance;
-        _gPropMaxTotalDrawdownPercent = IntellMaxTotalDrawdownPercent;
-        _gPropProfitTargetPercent = IntellProfitTargetPercent;
-        _gPropEnableDailyDrawdown = IntellEnableDailyDrawdown;
-        _gPropDailyDrawdownPercent = IntellDailyDrawdownPercent;
-        _gPropDailyProtectionBufferPercent = IntellDailyProtectionBufferPercent;
-        _gPropDailyResetHourUTC = IntellDailyResetHourUTC;
-        _gPropDailyResetMinuteUTC = IntellDailyResetMinuteUTC;
-        _gPropPauseSignalsHourUTC = IntellPauseSignalsHourUTC;
-        _gPropPauseSignalsMinuteUTC = IntellPauseSignalsMinuteUTC;
-        _gPropCloseAllHourUTC = IntellCloseAllHourUTC;
-        _gPropCloseAllMinuteUTC = IntellCloseAllMinuteUTC;
-        _gPropResumeSignalsHourUTC = IntellResumeSignalsHourUTC;
-        _gPropResumeSignalsMinuteUTC = IntellResumeSignalsMinuteUTC;
-        _gPropEnableForceClose = IntellEnableForceClose;
-        _gPropEnablePauseSignals = IntellEnablePauseSignals;
-        _gPropSpawnInterval = IntellSpawnInterval;
-        _gPropMaxStartDays = 0;
-        _gPropRollingStartMode = true;
-        _gPropRecencyHalfLifeDays = IntellRecencyHalfLifeDays;
+      void IntellInit()
+      {
+         if(!EnableIntelligentTrader) return;
 
-        propCurrentDayReset = PropCurrentResetTime(TimeCurrent());
-        ArrayResize(propRuns, 0);
-        ArrayResize(propActiveIdx, 0);
-        ArrayResize(propPosInActive, 0);
-        ArrayInitialize(propSignalCache, 0);
-        ArrayInitialize(propSignalCounts, 0);
-        propSignalCacheBar = 0;
-        propLastResumeSpawn = 0;
-        lastBarTime = 0;
+         if(IntellScanFromFile)
+         {
+            string used = "";
+            if(IntellLoadResultsFromFile(used, false))
+            {
+               LogEvent("INTELL_FILE_SCAN", "Loaded results from " + used + " (" + IntegerToString(ArraySize(propRuns)) + " runs)");
+               IntellPickFromResults();
+            }
+            else
+            {
+                LogEvent("INTELL_FILE_SCAN", "No report data file found (DIAGv2) (" + IntellReportDataFile + ")");
+               g_intellState = INTELL_RETRY_WAIT;
+               g_intellRetryTime = TimeCurrent() + MathMax(60, IntellRetryMinutes * 60);
+            }
+            return;
+         }
 
-        g_intellTesterScan = true;
-        LogEvent("INTELL_TESTER_SCAN", "Tester scan enabled: all " + IntegerToString(PROP_STRATEGY_COUNT) + " strategies on native tick engine (identical to PropFirm).");
-     }
-
-     void IntellInit()
-     {
-        if(!EnableIntelligentTrader) return;
-        if(MQLInfoInteger(MQL_TESTER))
-        {
-           IntellSetupTesterScan();
-           return;
-        }
-        int total = iBars(_Symbol, g_intellTimeframe);
+         int total = iBars(_Symbol, g_intellTimeframe);
        if(total < 100) { Print("Not enough history for Intelligent scan"); return; }
 
        int scanStartBar = 0, scanEndBar = 0;
@@ -8937,7 +8904,116 @@
 
 
 
-    void IntellPickFromResults()
+       // ── Read the latest PropFirm data file (Common Files) into propRuns[]
+       // so IntellPickFromResults() can select on EXACT-tick results.
+       // Uses FILE_COMMON + the relative file name (IntellReportDataFile),
+       // which is exactly the path the Tester writes to. ──
+
+       void IntellParseRunLine(string line, int &runCount, int &cap)
+       {
+          int ll = StringLen(line);
+          if(ll > 0 && line[ll - 1] == '\r') line = StringSubstr(line, 0, ll - 1);
+          if(StringLen(line) == 0) return;
+          string parts[];
+          int n = StringSplit(line, ';', parts);
+          if(n < 2) return;
+          if(parts[0] == "RUN" && n >= 16)
+          {
+             if(runCount >= cap) { cap *= 2; ArrayResize(propRuns, cap); }
+             PropRunResult r;
+             ArrayInitialize(r.closedTradePnL, 0.0);
+             r.strategyId = (int)StringToInteger(parts[1]);
+             r.passed = (StringToInteger(parts[2]) != 0);
+             r.breached = (StringToInteger(parts[3]) != 0);
+             r.trades = (int)StringToInteger(parts[4]);
+             r.wins = (int)StringToInteger(parts[5]);
+             r.losses = (int)StringToInteger(parts[6]);
+             r.balance = StringToDouble(parts[7]);
+             r.startingBalance = StringToDouble(parts[8]);
+             r.grossProfit = StringToDouble(parts[9]);
+             r.grossLoss = StringToDouble(parts[10]);
+             r.startDay = (datetime)StringToInteger(parts[11]);
+             r.ended = (datetime)StringToInteger(parts[12]);
+             r.daysToTarget = (int)StringToInteger(parts[13]);
+             r.daysToBreach = (int)StringToInteger(parts[14]);
+             r.lastClosedTradeTime = (datetime)StringToInteger(parts[15]);
+             propRuns[runCount] = r;
+             runCount++;
+          }
+          else if(parts[0] == "SIG" && n >= 3)
+          {
+             int sid = (int)StringToInteger(parts[1]) - 1;
+             if(sid >= 0 && sid < PROP_STRATEGY_COUNT)
+                propSignalCounts[sid] = (int)StringToInteger(parts[2]);
+          }
+       }
+
+       bool IntellLoadResultsFromFile(string &outFile, bool onlyIfNewer=false)
+       {
+          outFile = "";
+          string commonDir = TerminalInfoString(TERMINAL_COMMONDATA_PATH);
+          bool existCommon = FileIsExist(IntellReportDataFile, FILE_COMMON);
+          if(!existCommon)
+          {
+             LogEvent("INTELL_FILE_SCAN", "DIAGv4 missing: commonDir=[" + commonDir + "] file=[" + IntellReportDataFile + "]");
+             return false;
+          }
+
+          int h = FileOpen(IntellReportDataFile, FILE_READ | FILE_TXT | FILE_UNICODE | FILE_COMMON);
+          if(h == INVALID_HANDLE)
+          {
+             LogEvent("INTELL_FILE_SCAN", "DIAGv4 openFAILED err=" + IntegerToString(GetLastError()));
+             return false;
+          }
+
+          datetime mod = (datetime)FileGetInteger(h, FILE_MODIFY_DATE);
+          if(onlyIfNewer && mod <= g_intellLoadedFileTime) { FileClose(h); return false; }
+
+          ArrayInitialize(propSignalCounts, 0);
+          int cap = 4096;
+          ArrayResize(propRuns, cap);
+          int runCount = 0;
+
+           while(!FileIsEnding(h))
+           {
+              string line = FileReadString(h);
+              if(StringLen(line) == 0) continue;
+              IntellParseRunLine(line, runCount, cap);
+           }
+           FileClose(h);
+
+           ArrayResize(propRuns, runCount);
+
+           LogEvent("INTELL_FILE_SCAN", "DIAGv4 readDone runCount=" + IntegerToString(runCount));
+          g_intellLoadedFile = IntellReportDataFile;
+          g_intellLoadedFileTime = mod;
+          outFile = IntellReportDataFile;
+          return (runCount > 0);
+       }
+
+      // ── Write the exact-tick results (one row per run) for the chart EA to read. ──
+       void ExportPropfirmDataFile()
+       {
+          int h = FileOpen(IntellReportDataFile, FILE_WRITE | FILE_CSV | FILE_UNICODE | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE, ';');
+         if(h == INVALID_HANDLE) { Print("ExportPropfirmDataFile: cannot open ", IntellReportDataFile); return; }
+         FileWrite(h, "TYPE", "strategyId", "passed", "breached", "trades", "wins", "losses",
+                   "balance", "startingBalance", "grossProfit", "grossLoss",
+                   "startDay", "ended", "daysToTarget", "daysToBreach", "lastClosedTradeTime");
+         for(int i = 0; i < ArraySize(propRuns); i++)
+         {
+            PropRunResult r = propRuns[i];
+            FileWrite(h, "RUN", r.strategyId, (int)r.passed, (int)r.breached, r.trades, r.wins, r.losses,
+                      r.balance, r.startingBalance, r.grossProfit, r.grossLoss,
+                      (long)r.startDay, (long)r.ended, r.daysToTarget, r.daysToBreach, (long)r.lastClosedTradeTime);
+         }
+         for(int sid = 0; sid < PROP_STRATEGY_COUNT; sid++)
+            if(propSignalCounts[sid] > 0)
+               FileWrite(h, "SIG", sid + 1, propSignalCounts[sid]);
+         FileClose(h);
+         Print("Propfirm data file exported to Common Files: ", IntellReportDataFile, " (", IntegerToString(ArraySize(propRuns)), " runs)");
+      }
+
+     void IntellPickFromResults()
     {
        g_intellSelectedStratId = 0;
        g_intellTopCount = 0;
@@ -9208,25 +9284,25 @@
            double avgSigDay = (double)totSig / (double)totalRuns;
            double avgDt = daysToTargetCnt[sid] > 0 ? daysToTargetSum[sid] / daysToTargetCnt[sid] : 0.0;
            double avgDb = daysToBreachCnt[sid] > 0 ? daysToBreachSum[sid] / daysToBreachCnt[sid] : 0.0;
-           Print("INTELL_METRIC sid=" + IntegerToString(sid + 1) +
-                 " name=" + StrategyName(sid + 1) +
-                 " S=" + IntegerToString(totalRuns) +
-                 " P=" + IntegerToString(passes[sid]) +
-                 " B=" + IntegerToString(breached[sid]) +
-                 " A=" + IntegerToString(actives[sid]) +
-                 " passR=" + DoubleToString(passRate, 1) + "%" +
-                 " blownR=" + DoubleToString(blownRate, 1) + "%" +
-                 " WR=" + DoubleToString(wr, 1) + "%" +
-                 " PF=" + DoubleToString(pf, 2) +
-                 " RR=" + DoubleToString(rr, 2) +
-                 " TrdD=" + DoubleToString(trdPerDay, 2) +
-                 " Sig=" + IntegerToString(totSig) +
-                 " SigD=" + DoubleToString(avgSigDay, 1) +
-                 " DTgt=" + DoubleToString(avgDt, 1) +
-                 " DBr=" + DoubleToString(avgDb, 1));
+            //Print("INTELL_METRIC sid=" + IntegerToString(sid + 1) +
+            //      " name=" + StrategyName(sid + 1) +
+            //      " S=" + IntegerToString(totalRuns) +
+            //      " P=" + IntegerToString(passes[sid]) +
+            //      " B=" + IntegerToString(breached[sid]) +
+            //      " A=" + IntegerToString(actives[sid]) +
+            //      " passR=" + DoubleToString(passRate, 1) + "%" +
+            //      " blownR=" + DoubleToString(blownRate, 1) + "%" +
+            //      " WR=" + DoubleToString(wr, 1) + "%" +
+            //      " PF=" + DoubleToString(pf, 2) +
+            //      " RR=" + DoubleToString(rr, 2) +
+            //      " TrdD=" + DoubleToString(trdPerDay, 2) +
+            //      " Sig=" + IntegerToString(totSig) +
+            //      " SigD=" + DoubleToString(avgSigDay, 1) +
+            //      " DTgt=" + DoubleToString(avgDt, 1) +
+            //      " DBr=" + DoubleToString(avgDb, 1));
            loggedStrats++;
         }
-        Print("INTELL_METRICS_DONE | logged " + IntegerToString(loggedStrats) + " strategies with runs");
+         //Print("INTELL_METRICS_DONE | logged " + IntegerToString(loggedStrats) + " strategies with runs");
 
         // Detailed block for SELECTED strategy
         if(bestId > 0)
@@ -9316,11 +9392,22 @@
       }
    }
 
-   void IntellTick()
-   {
-      if(!EnableIntelligentTrader || eaStopped) return;
+     void IntellTick()
+     {
+        if(!EnableIntelligentTrader || eaStopped) return;
 
-      switch(g_intellState)
+        if(IntellScanFromFile && CountOpenPositions() == 0 && ((ulong)TimeCurrent() - g_intellLastFileCheck) > 30)
+        {
+           g_intellLastFileCheck = (ulong)TimeCurrent();
+           string used = "";
+           if(IntellLoadResultsFromFile(used, true) && used != "")
+           {
+              LogEvent("INTELL_FILE_NEW", "Newer report detected (" + used + ") — reselecting strategy");
+              IntellPickFromResults();
+           }
+        }
+
+        switch(g_intellState)
       {
          case INTELL_IDLE:
             if(g_intellSelectedStratId <= 0)
