@@ -1150,8 +1150,14 @@
     input bool PropEnablePauseSignals = true;             // If false, ignore pause signals window (trade continuously)
     input bool PropRollingStartMode = true;               // If true, spawns a fresh run per strategy (interval controlled below)
    input ENUM_PROP_SPAWN_INTERVAL PropSpawnInterval = SPAWN_DAILY_AT_RESUME; // How often to spawn a fresh batch of 500 runs
-   input int PropMaxStartDays = 0;                       // 0 = unlimited spawn batches per strategy
-   input string PropHtmlReportFileName = "Propfirm_100_Strategy_Report.html";
+    input int PropMaxStartDays = 0;                       // 0 = unlimited spawn batches per strategy
+    enum ENUM_PROP_REPORT_MODE
+    {
+       REPORT_UNIQUE = 0,
+       REPORT_OVERWRITE = 1
+    };
+    input ENUM_PROP_REPORT_MODE PropHtmlReportMode = REPORT_UNIQUE; // REPORT_UNIQUE=timestamped file, REPORT_OVERWRITE=same filename each run
+    input string PropHtmlReportFileName = "Propfirm_100_Strategy_Report.html";
     input double PropRecencyHalfLifeDays = 14.0;            // Half-life in days for recency weighting (0=disabled, ranks by raw pass rate)
 
     // Writable shadow copies of the Prop* inputs (engine uses these; IntellInit can override them during scans)
@@ -5918,19 +5924,21 @@
       return "every " + IntegerToString(MathAbs(val)) + "m";
    }
 
-   string PropTimestampedReportFileName()
-   {
-      MqlDateTime dt;
-      TimeToStruct(TimeLocal(), dt);
-      string stamp = StringFormat("%04d%02d%02d_%02d%02d%02d_%03d",
-                                 dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec,
-                                 GetTickCount() % 1000);
-      string base = PropHtmlReportFileName;
-      int dot = StringFind(base, ".", 0);
-      if(dot <= 0)
-         return base + "_" + stamp;
-      return StringSubstr(base, 0, dot) + "_" + stamp + StringSubstr(base, dot);
-   }
+    string PropTimestampedReportFileName()
+    {
+       if(PropHtmlReportMode == REPORT_OVERWRITE)
+          return "Intelligent Live Trader Report.html";
+       MqlDateTime dt;
+       TimeToStruct(TimeLocal(), dt);
+       string stamp = StringFormat("%04d%02d%02d_%02d%02d%02d_%03d",
+                                  dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec,
+                                  GetTickCount() % 1000);
+       string base = PropHtmlReportFileName;
+       int dot = StringFind(base, ".", 0);
+       if(dot <= 0)
+          return base + "_" + stamp;
+       return StringSubstr(base, 0, dot) + "_" + stamp + StringSubstr(base, dot);
+    }
 
     void ExportPropfirmHtmlReport()
     {
