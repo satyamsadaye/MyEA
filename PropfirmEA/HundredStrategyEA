@@ -1300,6 +1300,38 @@
    datetime g_testStartTime = 0;
    datetime g_testEndTime = 0;
 
+   // ═══════════════════════════════════════════════════════════════════════════
+   // OPTIMIZATION: Multi-layer cache system (identically preserves logic)
+   // ═══════════════════════════════════════════════════════════════════════════
+   #define _CACHE_MAX_BARS 60
+   datetime _cacheBarTime = 0;
+   double _cc[], _ch[], _cl[], _co[];
+   long   _cv[];
+   bool   _cacheOHLCVReady = false;
+
+   // BufferValue cache: keyed by (handle, buffer, shift, barTime)
+   struct _BVCacheEntry {
+      int   handle;
+      int   buffer;
+      int   shift;
+      double value;
+      datetime barTime;
+   };
+   _BVCacheEntry _bvCache[8000];
+   int _bvCacheCount = 0;
+
+   // AverageRange cache
+    double _avgRangeCache[100];
+    datetime _avgRangeCacheBar = 0;
+
+   // iHighest / iLowest cache
+    int _highestCache[100], _lowestCache[100];
+    datetime _hlCacheBar = 0;
+
+   // Strategy activity tracking (rolling mode)
+   bool _stratActive[PROP_STRATEGY_COUNT];
+   // ═══════════════════════════════════════════════════════════════════════════
+
    struct StrategySignal
    {
       int buyVotes;
@@ -1611,6 +1643,8 @@
 
    void EvaluateStrategies(StrategySignal &signal)
    {
+      _CacheRefresh();
+      _CacheHL();
       if(StrategyMode == STRATEGY_SINGLE)
       {
          EvaluateStrategy((int)SelectedStrategy, signal);
@@ -2777,12 +2811,12 @@
 
    int BreakoutSignal(const int lookback)
    {
-      int hi = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
-      int lo = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
+      int hi = _iHighest(lookback);
+      int lo = _iLowest(lookback);
       if(hi < 0 || lo < 0) return 0;
-      double close1 = iClose(_Symbol, _Period, 1);
-      if(close1 > iHigh(_Symbol, _Period, hi)) return 1;
-      if(close1 < iLow(_Symbol, _Period, lo)) return -1;
+      double close1 = _Close(1);
+      if(close1 > _High(hi)) return 1;
+      if(close1 < _Low(lo)) return -1;
       return 0;
    }
 
@@ -2791,8 +2825,8 @@
       int handle = iBands(_Symbol, _Period, period, 0, deviation, PRICE_CLOSE);
       double upper = BufferValue(handle, 1, 1);
       double lower = BufferValue(handle, 2, 1);
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
+      double close1 = _Close(1);
+      double close2 = _Close(2);
       if(close2 < lower && close1 > lower) return 1;
       if(close2 > upper && close1 < upper) return -1;
       return 0;
@@ -2844,7 +2878,7 @@
    {
       double atr = IndicatorValue(iATR(_Symbol, _Period, period), 1);
       double ma = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_SMA, PRICE_CLOSE), 1);
-      double close1 = iClose(_Symbol, _Period, 1);
+      double close1 = _Close(1);
       if(close1 > ma + atr * multiplier) return 1;
       if(close1 < ma - atr * multiplier) return -1;
       return 0;
@@ -2852,10 +2886,10 @@
 
    int PriceActionSignal(const int lookback)
    {
-      double close1 = iClose(_Symbol, _Period, 1);
-      double open1 = iOpen(_Symbol, _Period, 1);
-      double high2 = iHigh(_Symbol, _Period, 2);
-      double low2 = iLow(_Symbol, _Period, 2);
+      double close1 = _Close(1);
+      double open1 = _Open(1);
+      double high2 = _High(2);
+      double low2 = _Low(2);
       double rangeAvg = AverageRange(lookback);
       if(close1 > open1 && close1 > high2 && (close1 - open1) > rangeAvg * 0.35) return 1;
       if(close1 < open1 && close1 < low2 && (open1 - close1) > rangeAvg * 0.35) return -1;
@@ -2866,7 +2900,7 @@
    {
       double m1 = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_EMA, PRICE_CLOSE), 1);
       double m3 = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_EMA, PRICE_CLOSE), 3);
-      double close1 = iClose(_Symbol, _Period, 1);
+      double close1 = _Close(1);
       if(m1 > m3 && close1 > m1) return 1;
       if(m1 < m3 && close1 < m1) return -1;
       return 0;
@@ -2879,7 +2913,7 @@
       double s1 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 1);
       double s2 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 2);
       double filt = IndicatorValue(iMA(_Symbol, _Period, filterPeriod, 0, MODE_SMA, PRICE_CLOSE), 1);
-      double close1 = iClose(_Symbol, _Period, 1);
+      double close1 = _Close(1);
       if(f2 <= s2 && f1 > s1 && close1 > filt) return 1;
       if(f2 >= s2 && f1 < s1 && close1 < filt) return -1;
       return 0;
@@ -2890,7 +2924,7 @@
       double e1 = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_EMA, PRICE_CLOSE), 1);
       double e2 = IndicatorValue(iMA(_Symbol, _Period, period + 5, 0, MODE_EMA, PRICE_CLOSE), 1);
       double e3 = IndicatorValue(iMA(_Symbol, _Period, period + 10, 0, MODE_EMA, PRICE_CLOSE), 1);
-      double close1 = iClose(_Symbol, _Period, 1);
+      double close1 = _Close(1);
       if(close1 > e1 && e1 > e2 && e2 > e3) return 1;
       if(close1 < e1 && e1 < e2 && e2 < e3) return -1;
       return 0;
@@ -2901,8 +2935,8 @@
       int handle = iEnvelopes(_Symbol, _Period, period, 0, MODE_SMA, PRICE_CLOSE, deviation);
       double upper = BufferValue(handle, 0, 1);
       double lower = BufferValue(handle, 1, 1);
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
+      double close1 = _Close(1);
+      double close2 = _Close(2);
       if(close2 <= upper && close1 > upper) return 1;
       if(close2 >= lower && close1 < lower) return -1;
       return 0;
@@ -2916,7 +2950,7 @@
       double jaws = BufferValue(handle, 0, 1);
       double teeth = BufferValue(handle, 1, 1);
       double lips = BufferValue(handle, 2, 1);
-      double close1 = iClose(_Symbol, _Period, 1);
+      double close1 = _Close(1);
       if(close1 > lips && lips > teeth && teeth > jaws) return 1;
       if(close1 < lips && lips < teeth && teeth < jaws) return -1;
       return 0;
@@ -2943,8 +2977,8 @@
    int RsiTrendSignal(const int period, const double level)
    {
       double r1 = IndicatorValue(iRSI(_Symbol, _Period, period, PRICE_CLOSE), 1);
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
+      double close1 = _Close(1);
+      double close2 = _Close(2);
       if(r1 > level && close1 > close2) return 1;
       if(r1 < 100.0 - level && close1 < close2) return -1;
       return 0;
@@ -3042,10 +3076,10 @@
       int hi = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 1);
       int lo = iLowest(_Symbol, _Period, MODE_LOW, lookback, 1);
       if(hi < 0 || lo < 0) return 0;
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
-      if(close2 <= iHigh(_Symbol, _Period, hi) && close1 > iHigh(_Symbol, _Period, hi)) return 1;
-      if(close2 >= iLow(_Symbol, _Period, lo) && close1 < iLow(_Symbol, _Period, lo)) return -1;
+      double close1 = _Close(1);
+      double close2 = _Close(2);
+      if(close2 <= _High(hi) && close1 > _High(hi)) return 1;
+      if(close2 >= _Low(lo) && close1 < _Low(lo)) return -1;
       return 0;
    }
 
@@ -3059,7 +3093,7 @@
       double lower2 = BufferValue(handle, 2, 2);
       double bw1 = upper1 - lower1;
       double bw2 = upper2 - lower2;
-      double close1 = iClose(_Symbol, _Period, 1);
+      double close1 = _Close(1);
       if(bw2 < bw1 && close1 > middle1) return 1;
       if(bw2 < bw1 && close1 < middle1) return -1;
       return 0;
@@ -3069,8 +3103,8 @@
    {
       double atr = IndicatorValue(iATR(_Symbol, _Period, period), 1);
       double ma = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_EMA, PRICE_CLOSE), 1);
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
+      double close1 = _Close(1);
+      double close2 = _Close(2);
       if(close2 <= ma + multiplier * atr && close1 > ma + multiplier * atr) return 1;
       if(close2 >= ma - multiplier * atr && close1 < ma - multiplier * atr) return -1;
       return 0;
@@ -3081,8 +3115,8 @@
       int handle = iBands(_Symbol, _Period, period, 0, deviation, PRICE_CLOSE);
       double upper1 = BufferValue(handle, 1, 1);
       double lower1 = BufferValue(handle, 2, 1);
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
+      double close1 = _Close(1);
+      double close2 = _Close(2);
       if(close2 > upper1 && close1 > upper1) return 1;
       if(close2 < lower1 && close1 < lower1) return -1;
       return 0;
@@ -3093,8 +3127,8 @@
       int handle = iEnvelopes(_Symbol, _Period, period, 0, MODE_SMA, PRICE_CLOSE, deviation);
       double upper = BufferValue(handle, 0, 1);
       double lower = BufferValue(handle, 1, 1);
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
+      double close1 = _Close(1);
+      double close2 = _Close(2);
       if(close2 < lower && close1 > lower) return 1;
       if(close2 > upper && close1 < upper) return -1;
       return 0;
@@ -3118,8 +3152,8 @@
       int handle = iSAR(_Symbol, _Period, step, maximum);
       double sar1 = BufferValue(handle, 0, 1);
       double sar2 = BufferValue(handle, 0, 2);
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
+      double close1 = _Close(1);
+      double close2 = _Close(2);
       if(close2 < sar2 && close1 > sar1) return 1;
       if(close2 > sar2 && close1 < sar1) return -1;
       return 0;
@@ -3128,9 +3162,9 @@
    int SuperTrendSignal(const int period, const double multiplier)
    {
       double atr = IndicatorValue(iATR(_Symbol, _Period, period), 1);
-      double hl2 = (iHigh(_Symbol, _Period, 1) + iLow(_Symbol, _Period, 1)) / 2.0;
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
+      double hl2 = (_High(1) + _Low(1)) / 2.0;
+      double close1 = _Close(1);
+      double close2 = _Close(2);
       double upperBand = hl2 + multiplier * atr;
       double lowerBand = hl2 - multiplier * atr;
       if(close2 <= upperBand && close1 > upperBand) return 1;
@@ -3171,8 +3205,8 @@
       int handle = iOBV(_Symbol, _Period, VOLUME_TICK);
       double obv1 = BufferValue(handle, 0, 1);
       double obv2 = BufferValue(handle, 0, lookback + 1);
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
+      double close1 = _Close(1);
+      double close2 = _Close(2);
       if(obv1 > obv2 && close1 > close2) return 1;
       if(obv1 < obv2 && close1 < close2) return -1;
       return 0;
@@ -3190,17 +3224,17 @@
 
    int VolumeBreakoutSignal(const int lookback)
    {
-      int hi = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
-      int lo = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
+      int hi = _iHighest(lookback);
+      int lo = _iLowest(lookback);
       if(hi < 0 || lo < 0) return 0;
-      double close1 = iClose(_Symbol, _Period, 1);
-      double vol1 = (double)iVolume(_Symbol, _Period, 1);
+      double close1 = _Close(1);
+      double vol1 = (double)_Volume(1);
       double avgVol = 0.0;
       for(int i = 2; i <= lookback + 1; i++)
-         avgVol += (double)iVolume(_Symbol, _Period, i);
+         avgVol += (double)_Volume(i);
       avgVol /= lookback;
-      if(close1 > iHigh(_Symbol, _Period, hi) && vol1 > avgVol) return 1;
-      if(close1 < iLow(_Symbol, _Period, lo) && vol1 > avgVol) return -1;
+      if(close1 > _High(hi) && vol1 > avgVol) return 1;
+      if(close1 < _Low(lo) && vol1 > avgVol) return -1;
       return 0;
    }
 
@@ -3216,10 +3250,10 @@
 
    int EngulfingSignal(const int lookback)
    {
-      double open1 = iOpen(_Symbol, _Period, 1);
-      double close1 = iClose(_Symbol, _Period, 1);
-      double open2 = iOpen(_Symbol, _Period, 2);
-      double close2 = iClose(_Symbol, _Period, 2);
+      double open1 = _Open(1);
+      double close1 = _Close(1);
+      double open2 = _Open(2);
+      double close2 = _Close(2);
       double rangeAvg = AverageRange(lookback);
       if(close2 < open2 && close1 > open2 && close1 > open1 && (close1 - open1) > rangeAvg * 0.3) return 1;
       if(close2 > open2 && close1 < open2 && close1 < open1 && (open1 - close1) > rangeAvg * 0.3) return -1;
@@ -3228,10 +3262,10 @@
 
    int PinBarSignal(const int lookback)
    {
-      double open1 = iOpen(_Symbol, _Period, 1);
-      double close1 = iClose(_Symbol, _Period, 1);
-      double high1 = iHigh(_Symbol, _Period, 1);
-      double low1 = iLow(_Symbol, _Period, 1);
+      double open1 = _Open(1);
+      double close1 = _Close(1);
+      double high1 = _High(1);
+      double low1 = _Low(1);
       double range = high1 - low1;
       double rangeAvg = AverageRange(lookback);
       if(range < rangeAvg * 0.5) return 0;
@@ -3246,11 +3280,11 @@
 
    int InsideBarSignal(const int lookback)
    {
-      double high1 = iHigh(_Symbol, _Period, 1);
-      double low1 = iLow(_Symbol, _Period, 1);
-      double high2 = iHigh(_Symbol, _Period, 2);
-      double low2 = iLow(_Symbol, _Period, 2);
-      double close1 = iClose(_Symbol, _Period, 1);
+      double high1 = _High(1);
+      double low1 = _Low(1);
+      double high2 = _High(2);
+      double low2 = _Low(2);
+      double close1 = _Close(1);
       if(high1 < high2 && low1 > low2)
       {
          double rangeAvg = AverageRange(lookback);
@@ -3262,10 +3296,10 @@
 
    int ThreeBarReversalSignal(const int lookback)
    {
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close3 = iClose(_Symbol, _Period, 3);
-      double high3 = iHigh(_Symbol, _Period, 3);
-      double low3 = iLow(_Symbol, _Period, 3);
+      double close1 = _Close(1);
+      double close3 = _Close(3);
+      double high3 = _High(3);
+      double low3 = _Low(3);
       double rangeAvg = AverageRange(lookback);
       if(close3 < low3 && close1 > high3 && (close1 - close3) > rangeAvg * 0.3) return 1;
       if(close3 > high3 && close1 < low3 && (close3 - close1) > rangeAvg * 0.3) return -1;
@@ -3274,13 +3308,13 @@
 
    int KeyLevelSignal(const int lookback)
    {
-      int hi = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
-      int lo = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
+      int hi = _iHighest(lookback);
+      int lo = _iLowest(lookback);
       if(hi < 0 || lo < 0) return 0;
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
-      double resLevel = iHigh(_Symbol, _Period, hi);
-      double supLevel = iLow(_Symbol, _Period, lo);
+      double close1 = _Close(1);
+      double close2 = _Close(2);
+      double resLevel = _High(hi);
+      double supLevel = _Low(lo);
       if(close2 < resLevel && close1 > resLevel) return 1;
       if(close2 > supLevel && close1 < supLevel) return -1;
       return 0;
@@ -3306,7 +3340,7 @@
       int bbHandle = iBands(_Symbol, _Period, bbPeriod, 0, 2.0, PRICE_CLOSE);
       double upper = BufferValue(bbHandle, 1, 1);
       double lower = BufferValue(bbHandle, 2, 1);
-      double close1 = iClose(_Symbol, _Period, 1);
+      double close1 = _Close(1);
       if(main2 <= 0.0 && main1 > 0.0 && close1 < upper) return 1;
       if(main2 >= 0.0 && main1 < 0.0 && close1 > lower) return -1;
       return 0;
@@ -3329,9 +3363,9 @@
    int AtrBreakoutSignal(const int period, const double multiplier)
    {
       double atr = IndicatorValue(iATR(_Symbol, _Period, period), 1);
-      double close1 = iClose(_Symbol, _Period, 1);
-      double close2 = iClose(_Symbol, _Period, 2);
-      double open1 = iOpen(_Symbol, _Period, 1);
+      double close1 = _Close(1);
+      double close2 = _Close(2);
+      double open1 = _Open(1);
       if(close2 < open1 && close1 > open1 + multiplier * atr) return 1;
       if(close2 > open1 && close1 < open1 - multiplier * atr) return -1;
       return 0;
@@ -3342,7 +3376,7 @@
       double ma = IndicatorValue(iMA(_Symbol, _Period, maPeriod, 0, MODE_EMA, PRICE_CLOSE), 1);
       double mom1 = IndicatorValue(iMomentum(_Symbol, _Period, momPeriod, PRICE_CLOSE), 1);
       double mom2 = IndicatorValue(iMomentum(_Symbol, _Period, momPeriod, PRICE_CLOSE), 2);
-      double close1 = iClose(_Symbol, _Period, 1);
+      double close1 = _Close(1);
       if(close1 > ma && mom2 <= 100.0 && mom1 > 100.0) return 1;
       if(close1 < ma && mom2 >= 100.0 && mom1 < 100.0) return -1;
       return 0;
@@ -3357,7 +3391,7 @@
        double kj1 = BufferValue(h, 1, 1);
        double kj2 = BufferValue(h, 1, 2);
        double cloud1 = BufferValue(h, 2, 1);
-       double close1 = iClose(_Symbol, _Period, 1);
+       double close1 = _Close(1);
        if(tk2 <= kj2 && tk1 > kj1 && close1 > cloud1) return 1;
        if(tk2 >= kj2 && tk1 < kj1 && close1 < cloud1) return -1;
        return 0;
@@ -3395,9 +3429,9 @@
        if(h == INVALID_HANDLE) return 0;
        double up = BufferValue(h, 0, 2);
        double dn = BufferValue(h, 1, 2);
-       double close1 = iClose(_Symbol, _Period, 1);
-       if(up > 0.0 && close1 < up && close1 > iClose(_Symbol, _Period, lookback)) return -1;
-       if(dn > 0.0 && close1 > dn && close1 < iClose(_Symbol, _Period, lookback)) return 1;
+       double close1 = _Close(1);
+       if(up > 0.0 && close1 < up && close1 > _Close(lookback)) return -1;
+       if(dn > 0.0 && close1 > dn && close1 < _Close(lookback)) return 1;
        return 0;
     }
 
@@ -3408,8 +3442,8 @@
        if(sd <= 0.0) return 0;
        double upper = ma + sd * dev;
        double lower = ma - sd * dev;
-       double close1 = iClose(_Symbol, _Period, 1);
-       double close2 = iClose(_Symbol, _Period, 2);
+       double close1 = _Close(1);
+       double close2 = _Close(2);
        if(close2 >= lower && close1 < lower) return -1;
        if(close2 <= upper && close1 > upper) return 1;
        if(close2 < lower && close1 > lower) return 1;
@@ -3518,7 +3552,7 @@
     int VidyaSignal(const int period, const int cmo)
     {
        double v1 = VidyaValue(period, cmo);
-       double close1 = iClose(_Symbol, _Period, 1);
+       double close1 = _Close(1);
        if(close1 > v1) return 1;
        if(close1 < v1) return -1;
        return 0;
@@ -3540,23 +3574,23 @@
        double bp1 = 0.0, tr1 = 0.0, bp2 = 0.0, tr2 = 0.0, bp3 = 0.0, tr3 = 0.0;
        for(int i = 1; i <= c1; i++)
        {
-          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double l = _Low(i), c = _Close(i + 1);
           double bp = c - MathMin(l, c);
-          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          double tr = MathMax(_High(i) - l, MathMax(MathAbs(_High(i) - c), MathAbs(l - c)));
           bp1 += bp; tr1 += tr;
        }
        for(int i = 1; i <= c2; i++)
        {
-          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double l = _Low(i), c = _Close(i + 1);
           double bp = c - MathMin(l, c);
-          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          double tr = MathMax(_High(i) - l, MathMax(MathAbs(_High(i) - c), MathAbs(l - c)));
           bp2 += bp; tr2 += tr;
        }
        for(int i = 1; i <= c3; i++)
        {
-          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double l = _Low(i), c = _Close(i + 1);
           double bp = c - MathMin(l, c);
-          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          double tr = MathMax(_High(i) - l, MathMax(MathAbs(_High(i) - c), MathAbs(l - c)));
           bp3 += bp; tr3 += tr;
        }
        double avg1 = (tr1 > 0.0) ? bp1 / tr1 : 0.0;
@@ -3566,23 +3600,23 @@
        double bp1p = 0.0, tr1p = 0.0, bp2p = 0.0, tr2p = 0.0, bp3p = 0.0, tr3p = 0.0;
        for(int i = 2; i <= c1 + 1; i++)
        {
-          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double l = _Low(i), c = _Close(i + 1);
           double bp = c - MathMin(l, c);
-          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          double tr = MathMax(_High(i) - l, MathMax(MathAbs(_High(i) - c), MathAbs(l - c)));
           bp1p += bp; tr1p += tr;
        }
        for(int i = 2; i <= c2 + 1; i++)
        {
-          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double l = _Low(i), c = _Close(i + 1);
           double bp = c - MathMin(l, c);
-          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          double tr = MathMax(_High(i) - l, MathMax(MathAbs(_High(i) - c), MathAbs(l - c)));
           bp2p += bp; tr2p += tr;
        }
        for(int i = 2; i <= c3 + 1; i++)
        {
-          double l = iLow(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i + 1);
+          double l = _Low(i), c = _Close(i + 1);
           double bp = c - MathMin(l, c);
-          double tr = MathMax(iHigh(_Symbol, _Period, i) - l, MathMax(MathAbs(iHigh(_Symbol, _Period, i) - c), MathAbs(l - c)));
+          double tr = MathMax(_High(i) - l, MathMax(MathAbs(_High(i) - c), MathAbs(l - c)));
           bp3p += bp; tr3p += tr;
        }
        double avg1p = (tr1p > 0.0) ? bp1p / tr1p : 0.0;
@@ -3596,12 +3630,12 @@
 
     int HeikenAshiSignal(const int smoothing)
     {
-       double haOpen1, haClose1, haHigh1, haLow1;
+        double haOpen1, haClose1;
        double haOpen2, haClose2;
-       double o1 = iOpen(_Symbol, _Period, 1), c1 = iClose(_Symbol, _Period, 1);
-       double h1 = iHigh(_Symbol, _Period, 1), l1 = iLow(_Symbol, _Period, 1);
-       double o2 = iOpen(_Symbol, _Period, 2), c2 = iClose(_Symbol, _Period, 2);
-       double o3 = iOpen(_Symbol, _Period, 3), c3 = iClose(_Symbol, _Period, 3);
+       double o1 = _Open(1), c1 = _Close(1);
+       double h1 = _High(1), l1 = _Low(1);
+       double o2 = _Open(2), c2 = _Close(2);
+       double o3 = _Open(3), c3 = _Close(3);
        haClose1 = (o1 + h1 + l1 + c1) / 4.0;
        haClose2 = (o2 + h1 + l1 + c2) / 4.0;
        haOpen1 = (o2 + c2) / 2.0;
@@ -3623,8 +3657,8 @@
        int loBar = iLowest(_Symbol, _Period, MODE_LOW, period, 1);
        if(hiBar >= 0) aroonUp = (double)(period - hiBar + 1) / period * 100.0;
        if(loBar >= 0) aroonDn = (double)(period - loBar + 1) / period * 100.0;
-       int hiBar2 = iHighest(_Symbol, _Period, MODE_HIGH, period, 2);
-       int loBar2 = iLowest(_Symbol, _Period, MODE_LOW, period, 2);
+        int hiBar2 = _iHighest(period);
+        int loBar2 = _iLowest(period);
        double aroonUp2 = 0.0, aroonDn2 = 0.0;
        if(hiBar2 >= 0) aroonUp2 = (double)(period - hiBar2 + 1) / period * 100.0;
        if(loBar2 >= 0) aroonDn2 = (double)(period - loBar2 + 1) / period * 100.0;
@@ -3655,11 +3689,11 @@
        double vmSumPos1 = 0.0, vmSumNeg1 = 0.0, trSum1 = 0.0;
        for(int i = 1; i <= period; i++)
        {
-          double hh = iHigh(_Symbol, _Period, i);
-          double ll = iLow(_Symbol, _Period, i);
-          double hc = iHigh(_Symbol, _Period, i + 1);
-          double lc = iLow(_Symbol, _Period, i + 1);
-          double oc = iClose(_Symbol, _Period, i + 1);
+          double hh = _High(i);
+          double ll = _Low(i);
+          double hc = _High(i + 1);
+          double lc = _Low(i + 1);
+          double oc = _Close(i + 1);
           double vmPos = MathAbs(hh - lc);
           double vmNeg = MathAbs(ll - hc);
           double tr = MathMax(hh - ll, MathMax(MathAbs(hh - oc), MathAbs(ll - oc)));
@@ -3673,11 +3707,11 @@
        double vmSumPos2 = 0.0, vmSumNeg2 = 0.0, trSum2 = 0.0;
        for(int i = 2; i <= period + 1; i++)
        {
-          double hh = iHigh(_Symbol, _Period, i);
-          double ll = iLow(_Symbol, _Period, i);
-          double hc = iHigh(_Symbol, _Period, i + 1);
-          double lc = iLow(_Symbol, _Period, i + 1);
-          double oc = iClose(_Symbol, _Period, i + 1);
+          double hh = _High(i);
+          double ll = _Low(i);
+          double hc = _High(i + 1);
+          double lc = _Low(i + 1);
+          double oc = _Close(i + 1);
           double vmPos = MathAbs(hh - lc);
           double vmNeg = MathAbs(ll - hc);
           double tr = MathMax(hh - ll, MathMax(MathAbs(hh - oc), MathAbs(ll - oc)));
@@ -3700,7 +3734,7 @@
        double prevClose = 0.0;
        for(int i = 1; i <= streak + 2; i++)
        {
-          double c = iClose(_Symbol, _Period, i);
+          double c = _Close(i);
           if(i == 1) { prevClose = c; continue; }
           if(c > prevClose && streakVal >= 0) streakVal++;
           else if(c < prevClose && streakVal <= 0) streakVal--;
@@ -3710,7 +3744,7 @@
        int upDays = 0;
        for(int i = 1; i <= magLookback; i++)
        {
-          if(iClose(_Symbol, _Period, i) > iClose(_Symbol, _Period, i + 1))
+          if(_Close(i) > _Close(i + 1))
              upDays++;
        }
        double mag = (magLookback > 0) ? (double)upDays / magLookback * 100.0 : 50.0;
@@ -3725,8 +3759,8 @@
        double sumPV = 0.0, sumV = 0.0;
        for(int i = 1; i <= 20; i++)
        {
-          double tp = (iHigh(_Symbol, _Period, i) + iLow(_Symbol, _Period, i) + iClose(_Symbol, _Period, i)) / 3.0;
-          double vol = (double)iVolume(_Symbol, _Period, i);
+          double tp = (_High(i) + _Low(i) + _Close(i)) / 3.0;
+          double vol = (double)_Volume(i);
           sumPV += tp * vol;
           sumV += vol;
        }
@@ -3735,37 +3769,37 @@
        double sqSum = 0.0;
        for(int i = 1; i <= 20; i++)
        {
-          double tp = (iHigh(_Symbol, _Period, i) + iLow(_Symbol, _Period, i) + iClose(_Symbol, _Period, i)) / 3.0;
+          double tp = (_High(i) + _Low(i) + _Close(i)) / 3.0;
           sqSum += (tp - vwap) * (tp - vwap);
        }
        double std = MathSqrt(sqSum / 20.0);
        double upper = vwap + std * dev;
        double lower = vwap - std * dev;
-       double close1 = iClose(_Symbol, _Period, 1);
-       double close2 = iClose(_Symbol, _Period, 2);
+       double close1 = _Close(1);
+       double close2 = _Close(2);
        if(close2 < lower && close1 > lower) return 1;
        if(close2 > upper && close1 < upper) return -1;
        return 0;
     }
 
-    int PivotSignal(const int lookback)
-    {
-       int hiBar = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
-       int loBar = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
-       if(hiBar < 0 || loBar < 0) return 0;
-       double pivotH = iHigh(_Symbol, _Period, hiBar);
-       double pivotL = iLow(_Symbol, _Period, loBar);
-       double pp = (pivotH + pivotL + iClose(_Symbol, _Period, hiBar)) / 3.0;
-       double r1 = 2.0 * pp - pivotL;
-       double s1 = 2.0 * pp - pivotH;
-       double close1 = iClose(_Symbol, _Period, 1);
-       double close2 = iClose(_Symbol, _Period, 2);
-       if(close2 <= r1 && close1 > r1) return 1;
-       if(close2 >= s1 && close1 < s1) return -1;
-       if(close1 > r1) return 1;
-       if(close1 < s1) return -1;
-       return 0;
-    }
+     int PivotSignal(const int lookback)
+     {
+        int hiBar = _iHighest(lookback);
+        int loBar = _iLowest(lookback);
+        if(hiBar < 0 || loBar < 0) return 0;
+        double pivotH = _High(hiBar);
+        double pivotL = _Low(loBar);
+        double pp = (pivotH + pivotL + _Close(hiBar)) / 3.0;
+        double r1 = 2.0 * pp - pivotL;
+        double s1 = 2.0 * pp - pivotH;
+        double close1 = _Close(1);
+        double close2 = _Close(2);
+        if(close2 <= r1 && close1 > r1) return 1;
+        if(close2 >= s1 && close1 < s1) return -1;
+        if(close1 > r1) return 1;
+        if(close1 < s1) return -1;
+        return 0;
+     }
 
     int RegChannelSignal(const int period, const double dev)
     {
@@ -3773,7 +3807,7 @@
        int n = period;
        for(int i = 1; i <= n; i++)
        {
-          double y = iClose(_Symbol, _Period, i);
+          double y = _Close(i);
           sumX += i;
           sumY += y;
           sumXY += i * y;
@@ -3782,12 +3816,12 @@
        double slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
        double intercept = (sumY - slope * sumX) / n;
        double reg1 = slope * 1 + intercept;
-       double close1 = iClose(_Symbol, _Period, 1);
+       double close1 = _Close(1);
        double errSum = 0.0;
        for(int i = 1; i <= n; i++)
        {
           double yhat = slope * i + intercept;
-          errSum += (iClose(_Symbol, _Period, i) - yhat) * (iClose(_Symbol, _Period, i) - yhat);
+          errSum += (_Close(i) - yhat) * (_Close(i) - yhat);
        }
        double stderr = MathSqrt(errSum / n);
        double upper = reg1 + stderr * dev;
@@ -3804,8 +3838,8 @@
        double ma = IndicatorValue(iMA(_Symbol, _Period, period, 0, MODE_SMA, PRICE_CLOSE), 1);
        double upper = ma * (1.0 + pct / 100.0);
        double lower = ma * (1.0 - pct / 100.0);
-       double close1 = iClose(_Symbol, _Period, 1);
-       double close2 = iClose(_Symbol, _Period, 2);
+       double close1 = _Close(1);
+       double close2 = _Close(2);
        if(close2 < lower && close1 > lower) return 1;
        if(close2 > upper && close1 < upper) return -1;
        if(close2 <= ma && close1 > ma) return 1;
@@ -3878,7 +3912,7 @@
        if(h == INVALID_HANDLE) return 0;
        for(int i = 0; i < lookback; i++)
        {
-          price[i] = iClose(_Symbol, _Period, i + 1);
+          price[i] = _Close(i + 1);
           rsi[i] = BufferValue(h, 0, i + 1);
        }
        if(DetectBullDivergence(price, rsi, lookback)) return 1;
@@ -3896,7 +3930,7 @@
        ArrayResize(macd, lookback);
        for(int i = 0; i < lookback; i++)
        {
-          price[i] = iClose(_Symbol, _Period, i + 1);
+          price[i] = _Close(i + 1);
           macd[i] = BufferValue(h, 0, i + 1);
        }
        if(DetectBullDivergence(price, macd, lookback)) return 1;
@@ -3913,7 +3947,7 @@
        if(h == INVALID_HANDLE) return 0;
        for(int i = 0; i < lookback; i++)
        {
-          price[i] = iClose(_Symbol, _Period, i + 1);
+          price[i] = _Close(i + 1);
           cci[i] = BufferValue(h, 0, i + 1);
        }
        if(DetectBullDivergence(price, cci, lookback)) return 1;
@@ -3930,7 +3964,7 @@
        if(h == INVALID_HANDLE) return 0;
        for(int i = 0; i < lookback; i++)
        {
-          price[i] = iClose(_Symbol, _Period, i + 1);
+          price[i] = _Close(i + 1);
           stoch[i] = BufferValue(h, 0, i + 1);
        }
        if(DetectBullDivergence(price, stoch, lookback)) return 1;
@@ -3947,7 +3981,7 @@
        if(h == INVALID_HANDLE) return 0;
        for(int i = 0; i < lookback; i++)
        {
-          price[i] = iClose(_Symbol, _Period, i + 1);
+          price[i] = _Close(i + 1);
           obv[i] = BufferValue(h, 0, i + 1);
        }
        if(DetectBullDivergence(price, obv, lookback)) return 1;
@@ -4015,9 +4049,9 @@
        double f2 = IndicatorValue(iMA(_Symbol, _Period, fast, 0, MODE_EMA, PRICE_CLOSE), 2);
        double s1 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 1);
        double s2 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 2);
-       double vol1 = (double)iVolume(_Symbol, _Period, 1);
+       double vol1 = (double)_Volume(1);
        double avgVol = 0.0;
-       for(int i = 1; i <= 20; i++) avgVol += (double)iVolume(_Symbol, _Period, i);
+       for(int i = 1; i <= 20; i++) avgVol += (double)_Volume(i);
        avgVol /= 20.0;
        if(avgVol <= 0.0) return 0;
        if(f2 <= s2 && f1 > s1 && vol1 > avgVol * volMult) return 1;
@@ -4032,8 +4066,8 @@
        double s1 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 1);
        double s2 = IndicatorValue(iMA(_Symbol, _Period, slow, 0, MODE_EMA, PRICE_CLOSE), 2);
        double atr = IndicatorValue(iATR(_Symbol, _Period, 14), 1);
-       double close1 = iClose(_Symbol, _Period, 1);
-       double range1 = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
+       double close1 = _Close(1);
+       double range1 = _High(1) - _Low(1);
        if(atr <= 0.0) return 0;
        if(f2 <= s2 && f1 > s1 && range1 > atr * atrMult) return 1;
        if(f2 >= s2 && f1 < s1 && range1 > atr * atrMult) return -1;
@@ -4046,7 +4080,7 @@
        double f1 = IndicatorValue(iMA(_Symbol, _Period, f, 0, MODE_EMA, PRICE_CLOSE), 1);
        double m1 = IndicatorValue(iMA(_Symbol, _Period, m, 0, MODE_EMA, PRICE_CLOSE), 1);
        double s1 = IndicatorValue(iMA(_Symbol, _Period, s, 0, MODE_EMA, PRICE_CLOSE), 1);
-       double close1 = iClose(_Symbol, _Period, 1);
+       double close1 = _Close(1);
        if(f1 > m1 && m1 > s1 && close1 > f1) return 1;
        if(f1 < m1 && m1 < s1 && close1 < f1) return -1;
        return 0;
@@ -4072,39 +4106,39 @@
        return 0;
     }
 
-    int BreakoutPullbackSignal(const int lookback, const double pullbackPct)
-    {
-       int hiBar = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
-       int loBar = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
-       if(hiBar < 0 || loBar < 0) return 0;
-       double rangeHigh = iHigh(_Symbol, _Period, hiBar);
-       double rangeLow = iLow(_Symbol, _Period, loBar);
-       double range = rangeHigh - rangeLow;
-       double breakoutLevel = rangeHigh;
-       double pullbackTarget = rangeHigh - range * pullbackPct;
-       double close1 = iClose(_Symbol, _Period, 1);
-       double close2 = iClose(_Symbol, _Period, 2);
-       double high1 = iHigh(_Symbol, _Period, 1);
-       if(close2 <= breakoutLevel && high1 > breakoutLevel && close1 >= pullbackTarget) return 1;
-       double bearBreakout = rangeLow;
-       double bearPullback = rangeLow + range * pullbackPct;
-       if(close2 >= bearBreakout && iLow(_Symbol, _Period, 1) < bearBreakout && close1 <= bearPullback) return -1;
-       return 0;
-    }
+     int BreakoutPullbackSignal(const int lookback, const double pullbackPct)
+     {
+        int hiBar = _iHighest(lookback);
+        int loBar = _iLowest(lookback);
+        if(hiBar < 0 || loBar < 0) return 0;
+        double rangeHigh = _High(hiBar);
+        double rangeLow = _Low(loBar);
+        double range = rangeHigh - rangeLow;
+        double breakoutLevel = rangeHigh;
+        double pullbackTarget = rangeHigh - range * pullbackPct;
+        double close1 = _Close(1);
+        double close2 = _Close(2);
+        double high1 = _High(1);
+        if(close2 <= breakoutLevel && high1 > breakoutLevel && close1 >= pullbackTarget) return 1;
+        double bearBreakout = rangeLow;
+        double bearPullback = rangeLow + range * pullbackPct;
+        if(close2 >= bearBreakout && _Low(1) < bearBreakout && close1 <= bearPullback) return -1;
+        return 0;
+     }
 
-    int TrendPullbackSignal(const int maPeriod, const int oscLookback)
-    {
-       double ma = IndicatorValue(iMA(_Symbol, _Period, maPeriod, 0, MODE_EMA, PRICE_CLOSE), 1);
-       double close1 = iClose(_Symbol, _Period, 1);
-       double atr = IndicatorValue(iATR(_Symbol, _Period, 14), 1);
-       double highest = iHigh(_Symbol, _Period, iHighest(_Symbol, _Period, MODE_HIGH, oscLookback, 2));
-       double lowest = iLow(_Symbol, _Period, iLowest(_Symbol, _Period, MODE_LOW, oscLookback, 2));
-       if(atr <= 0.0) return 0;
-        double stoch = IndicatorValue(iStochastic(_Symbol, _Period, 5, 3, 3, MODE_SMA, STO_CLOSECLOSE), 1);
-       if(close1 > ma && close1 >= highest - atr * 0.5 && stoch < 30.0) return 1;
-       if(close1 < ma && close1 <= lowest + atr * 0.5 && stoch > 70.0) return -1;
-       return 0;
-    }
+     int TrendPullbackSignal(const int maPeriod, const int oscLookback)
+     {
+        double ma = IndicatorValue(iMA(_Symbol, _Period, maPeriod, 0, MODE_EMA, PRICE_CLOSE), 1);
+        double close1 = _Close(1);
+        double atr = IndicatorValue(iATR(_Symbol, _Period, 14), 1);
+        double highest = _High(_iHighest(oscLookback));
+        double lowest = _Low(_iLowest(oscLookback));
+        if(atr <= 0.0) return 0;
+         double stoch = IndicatorValue(iStochastic(_Symbol, _Period, 5, 3, 3, MODE_SMA, STO_CLOSECLOSE), 1);
+        if(close1 > ma && close1 >= highest - atr * 0.5 && stoch < 30.0) return 1;
+        if(close1 < ma && close1 <= lowest + atr * 0.5 && stoch > 70.0) return -1;
+        return 0;
+     }
 
     int RsiMacdConfirmSignal(const int rsiPeriod, const int macdFast, const int macdSlow, const int macdSignal)
     {
@@ -4141,11 +4175,11 @@
 
     int HaramiSignal(const double bodyRatio)
     {
-       double o1 = iOpen(_Symbol, _Period, 1), c1 = iClose(_Symbol, _Period, 1);
-       double o2 = iOpen(_Symbol, _Period, 2), c2 = iClose(_Symbol, _Period, 2);
+       double o1 = _Open(1), c1 = _Close(1);
+       double o2 = _Open(2), c2 = _Close(2);
        double body1 = MathAbs(c1 - o1), body2 = MathAbs(c2 - o2);
-       double range1 = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
-       double range2 = iHigh(_Symbol, _Period, 2) - iLow(_Symbol, _Period, 2);
+       double range1 = _High(1) - _Low(1);
+       double range2 = _High(2) - _Low(2);
        if(range2 <= 0.0 || range1 <= 0.0) return 0;
        double bodyPct1 = body1 / range1, bodyPct2 = body2 / range2;
        if(c2 < o2 && c1 > o1 && bodyPct2 > bodyRatio && bodyPct1 < bodyRatio && body1 < body2 * 0.5) return 1;
@@ -4155,10 +4189,10 @@
 
     int DojiStarSignal(const double dojiBodyRatio, const int confirmBars)
     {
-       double o1 = iOpen(_Symbol, _Period, 1), c1 = iClose(_Symbol, _Period, 1);
-       double o2 = iOpen(_Symbol, _Period, 2), c2 = iClose(_Symbol, _Period, 2);
-       double o3 = iOpen(_Symbol, _Period, 3), c3 = iClose(_Symbol, _Period, 3);
-       double body2 = MathAbs(c2 - o2), range2 = iHigh(_Symbol, _Period, 2) - iLow(_Symbol, _Period, 2);
+       double o1 = _Open(1), c1 = _Close(1);
+       double o2 = _Open(2), c2 = _Close(2);
+       double o3 = _Open(3), c3 = _Close(3);
+       double body2 = MathAbs(c2 - o2), range2 = _High(2) - _Low(2);
        if(range2 <= 0.0) return 0;
        bool doji = (body2 / range2) < dojiBodyRatio;
        if(!doji) return 0;
@@ -4171,13 +4205,13 @@
 
     int StarSignal(const double bodyMin, const double gapMin)
     {
-       double o1 = iOpen(_Symbol, _Period, 1), c1 = iClose(_Symbol, _Period, 1);
-       double o2 = iOpen(_Symbol, _Period, 2), c2 = iClose(_Symbol, _Period, 2);
-       double o3 = iOpen(_Symbol, _Period, 3), c3 = iClose(_Symbol, _Period, 3);
+       double o1 = _Open(1), c1 = _Close(1);
+       double o2 = _Open(2), c2 = _Close(2);
+       double o3 = _Open(3), c3 = _Close(3);
        double body1 = MathAbs(c1 - o1), body2 = MathAbs(c2 - o2), body3 = MathAbs(c3 - o3);
-       double range1 = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
-       double range2 = iHigh(_Symbol, _Period, 2) - iLow(_Symbol, _Period, 2);
-       double range3 = iHigh(_Symbol, _Period, 3) - iLow(_Symbol, _Period, 3);
+       double range1 = _High(1) - _Low(1);
+       double range2 = _High(2) - _Low(2);
+       double range3 = _High(3) - _Low(3);
        if(range1 <= 0.0 || range2 <= 0.0 || range3 <= 0.0) return 0;
        double pct1 = body1 / range1, pct2 = body2 / range2, pct3 = body3 / range3;
        bool morning = (c3 < o3) && pct3 > bodyMin && (c2 < o2) && pct2 < bodyMin && (c1 > o1) && pct1 > bodyMin;
@@ -4194,8 +4228,8 @@
        int bullCount = 0, bearCount = 0;
        for(int i = 1; i <= 3; i++)
        {
-          double o = iOpen(_Symbol, _Period, i), c = iClose(_Symbol, _Period, i);
-          double h = iHigh(_Symbol, _Period, i), l = iLow(_Symbol, _Period, i);
+          double o = _Open(i), c = _Close(i);
+          double h = _High(i), l = _Low(i);
           double body = MathAbs(c - o), range = h - l;
           if(range <= 0.0) return 0;
           double upWick = h - MathMax(o, c);
@@ -4206,12 +4240,12 @@
        }
        if(bullCount == 3)
        {
-          double c1 = iClose(_Symbol, _Period, 1), c2 = iClose(_Symbol, _Period, 2), c3 = iClose(_Symbol, _Period, 3);
+          double c1 = _Close(1), c2 = _Close(2), c3 = _Close(3);
           if(c1 > c2 && c2 > c3) return 1;
        }
        if(bearCount == 3)
        {
-          double c1 = iClose(_Symbol, _Period, 1), c2 = iClose(_Symbol, _Period, 2), c3 = iClose(_Symbol, _Period, 3);
+          double c1 = _Close(1), c2 = _Close(2), c3 = _Close(3);
           if(c1 < c2 && c2 < c3) return -1;
        }
        return 0;
@@ -4219,8 +4253,8 @@
 
     int MarubozuSignal(const double bodyRatio)
     {
-       double o1 = iOpen(_Symbol, _Period, 1), c1 = iClose(_Symbol, _Period, 1);
-       double h1 = iHigh(_Symbol, _Period, 1), l1 = iLow(_Symbol, _Period, 1);
+       double o1 = _Open(1), c1 = _Close(1);
+       double h1 = _High(1), l1 = _Low(1);
        double body = MathAbs(c1 - o1), range = h1 - l1;
        if(range <= 0.0) return 0;
        double upWick = h1 - MathMax(o1, c1);
@@ -4230,12 +4264,12 @@
           if(c1 > o1) return 1;
           if(c1 < o1) return -1;
        }
-       double o2 = iOpen(_Symbol, _Period, 2), c2 = iClose(_Symbol, _Period, 2);
-       double o3 = iOpen(_Symbol, _Period, 3), c3 = iClose(_Symbol, _Period, 3);
-       double body2 = MathAbs(c2 - o2), range2 = iHigh(_Symbol, _Period, 2) - iLow(_Symbol, _Period, 2);
+       double o2 = _Open(2), c2 = _Close(2);
+       double o3 = _Open(3), c3 = _Close(3);
+       double body2 = MathAbs(c2 - o2), range2 = _High(2) - _Low(2);
        if(range2 <= 0.0) return 0;
-       double upWick2 = iHigh(_Symbol, _Period, 2) - MathMax(o2, c2);
-       double dnWick2 = MathMin(o2, c2) - iLow(_Symbol, _Period, 2);
+       double upWick2 = _High(2) - MathMax(o2, c2);
+       double dnWick2 = MathMin(o2, c2) - _Low(2);
        if(body2 / range2 >= bodyRatio && upWick2 / range2 <= 0.05 && dnWick2 / range2 <= 0.05)
        {
           if(c2 > o2 && c1 > c2) return 1;
@@ -4246,49 +4280,49 @@
 
     int DoubleTopBottomSignal(const int swingLookback, const double tolerance)
     {
-       int hi1 = iHighest(_Symbol, _Period, MODE_HIGH, swingLookback, 2);
-       int lo1 = iLowest(_Symbol, _Period, MODE_LOW, swingLookback, 2);
-       if(hi1 < 0 || lo1 < 0) return 0;
-       double top1 = iHigh(_Symbol, _Period, hi1);
+        int hi1 = _iHighest(swingLookback);
+        int lo1 = _iLowest(swingLookback);
+        if(hi1 < 0 || lo1 < 0) return 0;
+       double top1 = _High(hi1);
        double top1Pos = (double)hi1;
-       double bottom1 = iLow(_Symbol, _Period, lo1);
+       double bottom1 = _Low(lo1);
        double bottom1Pos = (double)lo1;
         int hi2 = iHighest(_Symbol, _Period, MODE_HIGH, swingLookback * 2, swingLookback / 2 + 1);
         int lo2 = iLowest(_Symbol, _Period, MODE_LOW, swingLookback * 2, swingLookback / 2 + 1);
        if(hi2 < 0 || lo2 < 0) return 0;
-       double top2 = iHigh(_Symbol, _Period, hi2);
-       double bottom2 = iLow(_Symbol, _Period, lo2);
-       if(MathAbs(top1 - top2) / (top1 + top2) * 200.0 < tolerance && (top1Pos - hi2) > swingLookback / 2 && iClose(_Symbol, _Period, 1) < (top1 + top2) / 2.0 - IndicatorValue(iATR(_Symbol, _Period, 14), 1) * 0.5)
+       double top2 = _High(hi2);
+       double bottom2 = _Low(lo2);
+       if(MathAbs(top1 - top2) / (top1 + top2) * 200.0 < tolerance && (top1Pos - hi2) > swingLookback / 2 && _Close(1) < (top1 + top2) / 2.0 - IndicatorValue(iATR(_Symbol, _Period, 14), 1) * 0.5)
           return -1;
-       if(MathAbs(bottom1 - bottom2) / (bottom1 + bottom2) * 200.0 < tolerance && (lo1 - bottom1Pos) > swingLookback / 2 && iClose(_Symbol, _Period, 1) > (bottom1 + bottom2) / 2.0 + IndicatorValue(iATR(_Symbol, _Period, 14), 1) * 0.5)
+       if(MathAbs(bottom1 - bottom2) / (bottom1 + bottom2) * 200.0 < tolerance && (lo1 - bottom1Pos) > swingLookback / 2 && _Close(1) > (bottom1 + bottom2) / 2.0 + IndicatorValue(iATR(_Symbol, _Period, 14), 1) * 0.5)
           return 1;
        return 0;
     }
 
-    int FalseBreakSignal(const int lookback, const int reversalBars)
-    {
-       int hiBar = iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2);
-       int loBar = iLowest(_Symbol, _Period, MODE_LOW, lookback, 2);
-       if(hiBar < 0 || loBar < 0) return 0;
-       double rangeHigh = iHigh(_Symbol, _Period, hiBar);
-       double rangeLow = iLow(_Symbol, _Period, loBar);
-       double close1 = iClose(_Symbol, _Period, 1);
-       double close2 = iClose(_Symbol, _Period, 2);
+     int FalseBreakSignal(const int lookback, const int reversalBars)
+     {
+        int hiBar = _iHighest(lookback);
+        int loBar = _iLowest(lookback);
+        if(hiBar < 0 || loBar < 0) return 0;
+       double rangeHigh = _High(hiBar);
+       double rangeLow = _Low(loBar);
+       double close1 = _Close(1);
+       double close2 = _Close(2);
        if(close2 > rangeHigh && close1 <= rangeHigh) return -1;
        if(close2 < rangeLow && close1 >= rangeLow) return 1;
        for(int i = 3; i <= reversalBars + 2; i++)
        {
-          double ci = iClose(_Symbol, _Period, i);
+          double ci = _Close(i);
           if(ci > rangeHigh)
           {
              for(int j = i - 1; j >= 1 && j >= i - reversalBars; j--)
-                if(iClose(_Symbol, _Period, j) <= rangeHigh)
+                if(_Close(j) <= rangeHigh)
                    return -1;
           }
           if(ci < rangeLow)
           {
              for(int j = i - 1; j >= 1 && j >= i - reversalBars; j--)
-                if(iClose(_Symbol, _Period, j) >= rangeLow)
+                if(_Close(j) >= rangeLow)
                    return 1;
           }
        }
@@ -4299,14 +4333,14 @@
     {
        double avgRange = 0.0;
        for(int i = 1; i <= lookback; i++)
-          avgRange += iHigh(_Symbol, _Period, i) - iLow(_Symbol, _Period, i);
+          avgRange += _High(i) - _Low(i);
        avgRange /= lookback;
        if(avgRange <= 0.0) return 0;
-       double curRange = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
+       double curRange = _High(1) - _Low(1);
        double mom = IndicatorValue(iMomentum(_Symbol, _Period, 5, PRICE_CLOSE), 1);
        double mom2 = IndicatorValue(iMomentum(_Symbol, _Period, 5, PRICE_CLOSE), lookback);
-       double close1 = iClose(_Symbol, _Period, 1);
-       double closeLook = iClose(_Symbol, _Period, lookback + 1);
+       double close1 = _Close(1);
+       double closeLook = _Close(lookback + 1);
        bool trendUp = close1 > closeLook && mom2 > 100.0;
        bool trendDn = close1 < closeLook && mom2 < 100.0;
        if(trendUp && curRange < avgRange * rangeRatio && mom < mom2) return -1;
@@ -4316,20 +4350,20 @@
 
     int ClimaxSignal(const double volMult, const double rangeMult)
     {
-       double curVol = (double)iVolume(_Symbol, _Period, 1);
-       double curRange = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
+       double curVol = (double)_Volume(1);
+       double curRange = _High(1) - _Low(1);
        double avgVol = 0.0, avgRange = 0.0;
        for(int i = 2; i <= 21; i++)
        {
-          avgVol += (double)iVolume(_Symbol, _Period, i);
-          avgRange += iHigh(_Symbol, _Period, i) - iLow(_Symbol, _Period, i);
+          avgVol += (double)_Volume(i);
+          avgRange += _High(i) - _Low(i);
        }
        avgVol /= 20.0;
        avgRange /= 20.0;
        if(avgVol <= 0.0 || avgRange <= 0.0) return 0;
-       double close1 = iClose(_Symbol, _Period, 1);
-       double open1 = iOpen(_Symbol, _Period, 1);
-       double close2 = iClose(_Symbol, _Period, 2);
+       double close1 = _Close(1);
+       double open1 = _Open(1);
+       double close2 = _Close(2);
        if(curVol > avgVol * volMult && curRange > avgRange * rangeMult)
        {
           if(close1 < open1 && close1 < close2) return -1;
@@ -4342,12 +4376,12 @@
     {
        double avgRange = 0.0;
        for(int i = 1; i <= lookback; i++)
-          avgRange += iHigh(_Symbol, _Period, i) - iLow(_Symbol, _Period, i);
+          avgRange += _High(i) - _Low(i);
        avgRange /= lookback;
        if(avgRange <= 0.0) return 0;
-       double curRange = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
-       double close1 = iClose(_Symbol, _Period, 1);
-       double open1 = iOpen(_Symbol, _Period, 1);
+       double curRange = _High(1) - _Low(1);
+       double close1 = _Close(1);
+       double open1 = _Open(1);
        if(curRange > avgRange * mult && close1 > open1 && MathAbs(close1 - open1) > curRange * 0.6) return 1;
        if(curRange > avgRange * mult && close1 < open1 && MathAbs(close1 - open1) > curRange * 0.6) return -1;
        return 0;
@@ -4357,23 +4391,23 @@
     {
        double avgRange = 0.0;
        for(int i = 1; i <= lookback; i++)
-          avgRange += iHigh(_Symbol, _Period, i) - iLow(_Symbol, _Period, i);
+          avgRange += _High(i) - _Low(i);
        avgRange /= lookback;
        if(avgRange <= 0.0) return 0;
-       double curRange = iHigh(_Symbol, _Period, 1) - iLow(_Symbol, _Period, 1);
-       double curVol = (double)iVolume(_Symbol, _Period, 1);
+       double curRange = _High(1) - _Low(1);
+       double curVol = (double)_Volume(1);
        double avgVol = 0.0;
        for(int i = 1; i <= lookback; i++)
-          avgVol += (double)iVolume(_Symbol, _Period, i);
+          avgVol += (double)_Volume(i);
        avgVol /= lookback;
        if(curRange < avgRange * contractionRatio && curVol < avgVol * 0.8)
        {
-          double nextRange = iHigh(_Symbol, _Period, 0) - iLow(_Symbol, _Period, 0);
-          double nextVol = (double)iVolume(_Symbol, _Period, 0);
+          double nextRange = _High(0) - _Low(0);
+          double nextVol = (double)_Volume(0);
           if(nextRange > avgRange && nextVol > avgVol)
           {
-             double close0 = iClose(_Symbol, _Period, 0);
-             double open0 = iOpen(_Symbol, _Period, 0);
+             double close0 = _Close(0);
+             double open0 = _Open(0);
              if(close0 > open0) return 1;
              if(close0 < open0) return -1;
           }
@@ -4381,21 +4415,21 @@
        return 0;
     }
 
-    int SwingBreakSignal(const int swingLookback, const int momPeriod)
-    {
-       int hiBar = iHighest(_Symbol, _Period, MODE_HIGH, swingLookback, 2);
-       int loBar = iLowest(_Symbol, _Period, MODE_LOW, swingLookback, 2);
-       if(hiBar < 0 || loBar < 0) return 0;
-       double swingHigh = iHigh(_Symbol, _Period, hiBar);
-       double swingLow = iLow(_Symbol, _Period, loBar);
-       double close1 = iClose(_Symbol, _Period, 1);
-       double close2 = iClose(_Symbol, _Period, 2);
-       double mom1 = IndicatorValue(iMomentum(_Symbol, _Period, momPeriod, PRICE_CLOSE), 1);
-       double mom2 = IndicatorValue(iMomentum(_Symbol, _Period, momPeriod, PRICE_CLOSE), 2);
-       if(close2 <= swingHigh && close1 > swingHigh && mom1 > mom2) return 1;
-       if(close2 >= swingLow && close1 < swingLow && mom1 < mom2) return -1;
-       return 0;
-    }
+     int SwingBreakSignal(const int swingLookback, const int momPeriod)
+     {
+        int hiBar = _iHighest(swingLookback);
+        int loBar = _iLowest(swingLookback);
+        if(hiBar < 0 || loBar < 0) return 0;
+        double swingHigh = _High(hiBar);
+        double swingLow = _Low(loBar);
+        double close1 = _Close(1);
+        double close2 = _Close(2);
+        double mom1 = IndicatorValue(iMomentum(_Symbol, _Period, momPeriod, PRICE_CLOSE), 1);
+        double mom2 = IndicatorValue(iMomentum(_Symbol, _Period, momPeriod, PRICE_CLOSE), 2);
+        if(close2 <= swingHigh && close1 > swingHigh && mom1 > mom2) return 1;
+        if(close2 >= swingLow && close1 < swingLow && mom1 < mom2) return -1;
+        return 0;
+     }
 
     double IndicatorValue(const int handle, const int shift)
     {
@@ -4406,29 +4440,107 @@
    {
       if(handle == INVALID_HANDLE)
          return 0.0;
+      // Cache lookup: same (handle, buffer, shift) within same bar
+      for(int i = 0; i < _bvCacheCount; i++)
+      {
+         if(_bvCache[i].handle == handle && _bvCache[i].buffer == buffer && _bvCache[i].shift == shift && _bvCache[i].barTime == _cacheBarTime)
+            return _bvCache[i].value;
+      }
       double values[];
       ArraySetAsSeries(values, true);
       if(CopyBuffer(handle, buffer, shift, 1, values) != 1)
          return 0.0;
-      return values[0];
+      double val = values[0];
+      // Store in cache
+      if(_bvCacheCount < 8000)
+      {
+         _bvCache[_bvCacheCount].handle = handle;
+         _bvCache[_bvCacheCount].buffer = buffer;
+         _bvCache[_bvCacheCount].shift = shift;
+         _bvCache[_bvCacheCount].value = val;
+         _bvCache[_bvCacheCount].barTime = _cacheBarTime;
+         _bvCacheCount++;
+      }
+      return val;
    }
 
    double AverageRange(const int lookback)
    {
+      if(lookback <= 0 || lookback >= 100) return 0.0;
+      if(_avgRangeCacheBar == _cacheBarTime && _avgRangeCache[lookback] != -1.0)
+         return _avgRangeCache[lookback];
       double sum = 0.0;
       int count = 0;
       for(int i = 1; i <= lookback; i++)
       {
-         double high = iHigh(_Symbol, _Period, i);
-         double low = iLow(_Symbol, _Period, i);
+         double high = _High(i);
+         double low = _Low(i);
          if(high > 0 && low > 0)
          {
             sum += high - low;
             count++;
          }
       }
-      return count > 0 ? sum / count : 0.0;
+      double result = count > 0 ? sum / count : 0.0;
+      _avgRangeCache[lookback] = result;
+      if(_avgRangeCacheBar != _cacheBarTime)
+      {
+         for(int j = 0; j < 100; j++) _avgRangeCache[j] = -1.0;
+         _avgRangeCache[lookback] = result;
+         _avgRangeCacheBar = _cacheBarTime;
+      }
+      return result;
    }
+
+   // ═══════════════════════════════════════════════════════════════════════
+   // OPTIMIZATION: OHLCV cached wrappers (load once per bar via CopyX)
+   // ═══════════════════════════════════════════════════════════════════════
+   void _CacheRefresh()
+   {
+      datetime bar = iTime(_Symbol, _Period, 0);
+      if(bar == _cacheBarTime && _cacheOHLCVReady) return;
+      _cacheBarTime = bar;
+      _bvCacheCount = 0;
+      _cacheOHLCVReady = false;
+      ArrayResize(_cc, _CACHE_MAX_BARS);
+      ArrayResize(_ch, _CACHE_MAX_BARS);
+      ArrayResize(_cl, _CACHE_MAX_BARS);
+      ArrayResize(_co, _CACHE_MAX_BARS);
+      ArrayResize(_cv, _CACHE_MAX_BARS);
+      CopyClose(_Symbol, _Period, 0, _CACHE_MAX_BARS, _cc);
+      CopyHigh(_Symbol, _Period, 0, _CACHE_MAX_BARS, _ch);
+      CopyLow(_Symbol, _Period, 0, _CACHE_MAX_BARS, _cl);
+      CopyOpen(_Symbol, _Period, 0, _CACHE_MAX_BARS, _co);
+      CopyTickVolume(_Symbol, _Period, 0, _CACHE_MAX_BARS, _cv);
+      ArraySetAsSeries(_cc, true);
+      ArraySetAsSeries(_ch, true);
+      ArraySetAsSeries(_cl, true);
+      ArraySetAsSeries(_co, true);
+      ArraySetAsSeries(_cv, true);
+      _cacheOHLCVReady = true;
+   }
+
+   double _Close(const int shift) { if(shift < _CACHE_MAX_BARS && _cacheOHLCVReady) return _cc[shift]; return iClose(_Symbol, _Period, shift); }
+   double _High(const int shift)  { if(shift < _CACHE_MAX_BARS && _cacheOHLCVReady) return _ch[shift]; return iHigh(_Symbol, _Period, shift); }
+   double _Low(const int shift)   { if(shift < _CACHE_MAX_BARS && _cacheOHLCVReady) return _cl[shift]; return iLow(_Symbol, _Period, shift); }
+   double _Open(const int shift)  { if(shift < _CACHE_MAX_BARS && _cacheOHLCVReady) return _co[shift]; return iOpen(_Symbol, _Period, shift); }
+   long   _Volume(const int shift){ if(shift < _CACHE_MAX_BARS && _cacheOHLCVReady) return _cv[shift]; return (long)iTickVolume(_Symbol, _Period, shift); }
+
+   // iHighest / iLowest cache (per lookback, shift=2 as used by most strategies)
+   int _iHighest(const int lookback) { if(_hlCacheBar == _cacheBarTime && lookback < 100) return _highestCache[lookback]; return iHighest(_Symbol, _Period, MODE_HIGH, lookback, 2); }
+   int _iLowest(const int lookback)  { if(_hlCacheBar == _cacheBarTime && lookback < 100) return _lowestCache[lookback];  return iLowest(_Symbol, _Period, MODE_LOW, lookback, 2); }
+
+   void _CacheHL()
+   {
+      if(_hlCacheBar == _cacheBarTime) return;
+      _hlCacheBar = _cacheBarTime;
+      for(int lb = 2; lb < 100; lb++)
+      {
+         _highestCache[lb] = iHighest(_Symbol, _Period, MODE_HIGH, lb, 2);
+         _lowestCache[lb] = iLowest(_Symbol, _Period, MODE_LOW, lb, 2);
+      }
+   }
+   // ═══════════════════════════════════════════════════════════════════════
 
    ulong OpenTrade(const int orderType, const StrategySignal &signal)
    {
@@ -4791,6 +4903,9 @@
          return;
       }
 
+      _CacheRefresh();
+      _CacheHL();
+
       datetime now = TimeCurrent();
       while(now >= propCurrentDayReset + 86400)
       {
@@ -4822,6 +4937,12 @@
 
          int index = id - 1;
 
+         // OPTIMIZATION: skip signal eval for already-finished strategies
+         if(propResults[index].breached || propResults[index].passed || propResults[index].pos.open)
+            continue;
+         if(propResults[index].protectionTriggeredToday)
+            continue;
+
          StrategySignal signal;
          signal.buyVotes = 0;
          signal.sellVotes = 0;
@@ -4838,10 +4959,6 @@
             propResults[index].totalSignals++;
 
          if(direction == 0)
-            continue;
-         if(propResults[index].breached || propResults[index].passed || propResults[index].pos.open)
-            continue;
-         if(propResults[index].protectionTriggeredToday)
             continue;
          if(ReverseSignals)
             direction = (direction == ORDER_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
@@ -5134,6 +5251,9 @@
 
    void RunPropfirmRollingTick()
    {
+      _CacheRefresh();
+      _CacheHL();
+
       datetime now = TimeCurrent();
 
       propCacheBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -5155,14 +5275,14 @@
       if(newBar)
          propSignalCacheBar = currentBar;
 
-         if(newBar && (!PropEnablePauseSignals || !PropSignalsPaused(now)))
-         {
-      for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
+      if(newBar && (!PropEnablePauseSignals || !PropSignalsPaused(now)))
       {
-         if(!PropIsCustomStrategy(id))
-            continue;
+         for(int id = 1; id <= PROP_STRATEGY_COUNT; id++)
+         {
+            if(!PropIsCustomStrategy(id))
+               continue;
 
-               StrategySignal signal;
+            StrategySignal signal;
             signal.buyVotes = 0;
             signal.sellVotes = 0;
             signal.details = "";
