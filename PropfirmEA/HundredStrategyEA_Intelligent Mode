@@ -5422,7 +5422,7 @@
          int sb = simBarShift >= 0 ? simBarShift : iBarShift(_Symbol, g_intellTimeframe, simTime);
          _CacheRefresh(sb);
          g_intellScanShift = sb;
-         double hc = _Close(0);
+          double hc = _Open(0);
          double hp = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
          if(hp <= 0.0) hp = _Point;
          double hspread = MathMax(hp, hc * 1e-4);
