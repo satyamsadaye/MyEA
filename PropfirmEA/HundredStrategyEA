@@ -1082,15 +1082,12 @@
    input double VirtualStopLossMoney = 25.0;           // Close position at this floating loss in account currency
    input bool DisableBrokerStopsWhenVirtualExitOn = true; // When true, normal SL/TP settings are ignored and no broker SL/TP is placed
 
-   input group "EA Stop Protection"
-   input bool EnableProtectionStops = true;
-   input double StopProfitMoney = 0.0;                 // 0 disables
-   input double StopLossMoney = 0.0;                   // 0 disables, based on EA closed+floating P/L
-   input double StopDrawdownMoney = 0.0;               // 0 disables, based on equity drawdown from reference
-   input double StopProfitPercentOfStart = 0.0;        // 0 disables
-   input double StopLossPercentOfStart = 0.0;          // 0 disables
-   input double StopDrawdownPercentOfStart = 0.0;      // 0 disables
-   input bool ClosePositionsWhenProtectionHit = true;
+   input group "Equity Level Protection"
+   input bool EnableUpperEquityLevel = true;           // When true, EA stops + exits all if equity >= UpperEquityLevel
+   input double UpperEquityLevel = 5500.0;             // Exit all trades & stop new signals when equity reaches this level
+   input bool EnableLowerEquityLevel = true;           // When true, EA stops + exits all if equity <= LowerEquityLevel
+   input double LowerEquityLevel = 4500.0;             // Exit all trades & stop new signals when equity drops to this level
+   input bool ClosePositionsWhenEquityHit = true;      // Close all positions when an equity level is triggered
 
    input group "Margin Management"
    input bool   EnableMarginCheck       = true;      // Check margin rules before opening trades
@@ -1463,7 +1460,7 @@
 
       ManageVirtualDollarExits();
 
-      if(CheckProtectionStops())
+      if(CheckEquityLevels())
          return;
 
       if(GlobalIsCloseTime())
@@ -4790,29 +4787,15 @@
       }
    }
 
-   bool CheckProtectionStops()
+   bool CheckEquityLevels()
    {
-      if(!EnableProtectionStops)
-         return false;
-
-      double balance = AccountInfoDouble(ACCOUNT_BALANCE);
       double equity = AccountInfoDouble(ACCOUNT_EQUITY);
-      double floating = EaFloatingProfit();
-      double pnlFromReference = (balance - CustomStartingBalance) + floating;
-      double drawdown = MathMax(0.0, CustomStartingBalance - equity);
 
-      if(StopProfitMoney > 0.0 && pnlFromReference >= StopProfitMoney)
-         return StopEa("Profit money target hit");
-      if(StopLossMoney > 0.0 && pnlFromReference <= -StopLossMoney)
-         return StopEa("Loss money limit hit");
-      if(StopDrawdownMoney > 0.0 && drawdown >= StopDrawdownMoney)
-         return StopEa("Drawdown money limit hit");
-      if(StopProfitPercentOfStart > 0.0 && pnlFromReference >= CustomStartingBalance * StopProfitPercentOfStart / 100.0)
-         return StopEa("Profit percent target hit");
-      if(StopLossPercentOfStart > 0.0 && pnlFromReference <= -CustomStartingBalance * StopLossPercentOfStart / 100.0)
-         return StopEa("Loss percent limit hit");
-      if(StopDrawdownPercentOfStart > 0.0 && drawdown >= CustomStartingBalance * StopDrawdownPercentOfStart / 100.0)
-         return StopEa("Drawdown percent limit hit");
+      if(EnableUpperEquityLevel && equity >= UpperEquityLevel)
+         return StopEa("Upper equity level reached: " + DoubleToString(equity, 2) + " >= " + DoubleToString(UpperEquityLevel, 2));
+
+      if(EnableLowerEquityLevel && equity <= LowerEquityLevel)
+         return StopEa("Lower equity level reached: " + DoubleToString(equity, 2) + " <= " + DoubleToString(LowerEquityLevel, 2));
 
       return false;
    }
@@ -4822,7 +4805,7 @@
       eaStopped = true;
       stopReason = reason;
       LogEvent("EA_STOPPED", reason);
-      if(ClosePositionsWhenProtectionHit)
+      if(ClosePositionsWhenEquityHit)
          CloseAllEaPositions();
       return true;
    }
@@ -7406,11 +7389,12 @@
          SetLine(line++, " ");
       }
 
-      SetLine(line++, "EA STOP PROTECTION", MutedColor());
-      SetLine(line++, "Enabled       " + PropBoolStr(EnableProtectionStops) + "    Close on hit  " + PropBoolStr(ClosePositionsWhenProtectionHit));
-      SetLine(line++, "Profit $      " + DoubleToString(StopProfitMoney, 2) + "    Loss $        " + DoubleToString(StopLossMoney, 2));
-      SetLine(line++, "Drawdown $    " + DoubleToString(StopDrawdownMoney, 2) + "    Profit %      " + DoubleToString(StopProfitPercentOfStart, 2));
-      SetLine(line++, "Loss %        " + DoubleToString(StopLossPercentOfStart, 2) + "    Drawdown %    " + DoubleToString(StopDrawdownPercentOfStart, 2));
+      SetLine(line++, "EQUITY LEVEL PROTECTION", MutedColor());
+      SetLine(line++, "Close on hit  " + PropBoolStr(ClosePositionsWhenEquityHit));
+      string upperStatus = EnableUpperEquityLevel ? ("ON  Target $" + DoubleToString(UpperEquityLevel, 2)) : "OFF";
+      string lowerStatus = EnableLowerEquityLevel ? ("ON  Floor $" + DoubleToString(LowerEquityLevel, 2)) : "OFF";
+      SetLine(line++, "Upper level   " + upperStatus);
+      SetLine(line++, "Lower level   " + lowerStatus);
       SetLine(line++, " ");
 
       if(EnablePropfirmBacktestMode)
