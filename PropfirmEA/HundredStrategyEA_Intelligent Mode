@@ -5754,10 +5754,10 @@
                  double closePrice = 0.0;
                  int trigger = 0;
 
-                 double upLvl[2]; int upCnt = 0;
-                 if(VirtualTakeProfitMoney > 0.0) { upLvl[upCnt] = entry + dirSign * VirtualTakeProfitMoney * ts / (tv * lot); upCnt++; }
-                 double targetProfitNeeded = targetMoney - (propRuns[i].balance - propRuns[i].startingBalance);
-                 if(targetProfitNeeded > 0.0) { upLvl[upCnt] = entry + dirSign * targetProfitNeeded * ts / (tv * lot); upCnt++; }
+                  double upLvl[2]; int upCnt = 0;
+                  double targetProfitNeeded = targetMoney - (propRuns[i].balance - propRuns[i].startingBalance);
+                  if(targetProfitNeeded > 0.0) { upLvl[upCnt] = entry + dirSign * targetProfitNeeded * ts / (tv * lot); upCnt++; }
+                  if(VirtualTakeProfitMoney > 0.0) { upLvl[upCnt] = entry + dirSign * VirtualTakeProfitMoney * ts / (tv * lot); upCnt++; }
 
                  double dnLvl[3]; int dnCnt = 0;
                  if(VirtualStopLossMoney > 0.0) { dnLvl[dnCnt] = entry - dirSign * VirtualStopLossMoney * ts / (tv * lot); dnCnt++; }
@@ -5770,7 +5770,7 @@
                  {
                     double lvl = upLvl[u];
                     bool hit = (dirSign > 0.0) ? (hi >= lvl) : (lo <= lvl);
-                    if(hit) { closePrice = lvl; trigger = (u == 0 && VirtualTakeProfitMoney > 0.0) ? 1 : 2; }
+                     if(hit) { closePrice = lvl; trigger = (u == 0 && targetProfitNeeded > 0.0) ? 2 : 1; }
                  }
                  if(closePrice == 0.0)
                  {
