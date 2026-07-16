@@ -1603,7 +1603,7 @@
 
       if(OneTradePerBar)
       {
-         datetime currentBar = iTime(_Symbol, g_intellTimeframe, 0);
+         datetime currentBar = iTime(_Symbol, EnableIntelligentTrader ? g_intellTimeframe : _Period, 0);
          if(currentBar == lastBarTime)
             return;
          lastBarTime = currentBar;
@@ -4614,7 +4614,8 @@
        if(historical)
           copyStart = barIndex - _CACHE_MAX_BARS + 1;
        if(copyStart < 0) copyStart = 0;
-       datetime bar = iTime(_Symbol, g_intellTimeframe, barIndex);
+        ENUM_TIMEFRAMES tf = EnableIntelligentTrader ? g_intellTimeframe : _Period;
+        datetime bar = iTime(_Symbol, tf, barIndex);
        if(bar == _cacheBarTime && _cacheOHLCVReady) return;
        _cacheBarTime = bar;
        _bvCacheCount = 0;
@@ -4624,11 +4625,11 @@
        ArrayResize(_cl, _CACHE_MAX_BARS);
        ArrayResize(_co, _CACHE_MAX_BARS);
        ArrayResize(_cv, _CACHE_MAX_BARS);
-       CopyClose(_Symbol, g_intellTimeframe, copyStart, _CACHE_MAX_BARS, _cc);
-       CopyHigh(_Symbol, g_intellTimeframe, copyStart, _CACHE_MAX_BARS, _ch);
-       CopyLow(_Symbol, g_intellTimeframe, copyStart, _CACHE_MAX_BARS, _cl);
-       CopyOpen(_Symbol, g_intellTimeframe, copyStart, _CACHE_MAX_BARS, _co);
-       CopyTickVolume(_Symbol, g_intellTimeframe, copyStart, _CACHE_MAX_BARS, _cv);
+        CopyClose(_Symbol, tf, copyStart, _CACHE_MAX_BARS, _cc);
+        CopyHigh(_Symbol, tf, copyStart, _CACHE_MAX_BARS, _ch);
+        CopyLow(_Symbol, tf, copyStart, _CACHE_MAX_BARS, _cl);
+        CopyOpen(_Symbol, tf, copyStart, _CACHE_MAX_BARS, _co);
+        CopyTickVolume(_Symbol, tf, copyStart, _CACHE_MAX_BARS, _cv);
        ArraySetAsSeries(_cc, true);
        ArraySetAsSeries(_ch, true);
        ArraySetAsSeries(_cl, true);
@@ -5066,7 +5067,7 @@
 
       if(OneTradePerBar)
       {
-         datetime currentBar = iTime(_Symbol, g_intellTimeframe, 0);
+         datetime currentBar = iTime(_Symbol, EnableIntelligentTrader ? g_intellTimeframe : _Period, 0);
          if(currentBar == lastBarTime)
             return;
          lastBarTime = currentBar;
@@ -5435,7 +5436,7 @@
       if(_gPropEnableForceClose && PropIsCloseTime(now))
          PropRollingCloseAll(now);
 
-      datetime currentBar = iTime(_Symbol, g_intellTimeframe, barShift);
+      datetime currentBar = iTime(_Symbol, EnableIntelligentTrader ? g_intellTimeframe : _Period, barShift);
       bool newBar = (currentBar != propSignalCacheBar);
       if(newBar)
          propSignalCacheBar = currentBar;
@@ -7126,7 +7127,7 @@
    void PropWriteCommonSettings(const int handle, const datetime testStart, const datetime testEnd)
    {
       FileWriteString(handle, PropKv("Symbol", _Symbol));
-      FileWriteString(handle, PropKv("Period", EnumToString(g_intellTimeframe)));
+      FileWriteString(handle, PropKv("Period", EnumToString(EnableIntelligentTrader ? g_intellTimeframe : _Period)));
       FileWriteString(handle, PropKv("Magic Number", IntegerToString((long)MagicNumber)));
       FileWriteString(handle, PropKv("Strategy Mode", EnumToString(StrategyMode)));
       FileWriteString(handle, PropKv("Allowed Direction", EnumToString(AllowedDirection)));
@@ -8093,7 +8094,7 @@
       FileWrite(handle,
                TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS),
                _Symbol,
-               EnumToString(g_intellTimeframe),
+               EnumToString(EnableIntelligentTrader ? g_intellTimeframe : _Period),
                IntegerToString((int)MagicNumber),
                eventName,
                DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2),
