@@ -7639,6 +7639,39 @@
       int line = 0;
       SetLine(line++, "Server time   " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS), GoodColor());
       SetLine(line++, " ", MutedColor());
+      SetLine(line++, "MODE", MutedColor());
+      string modeStr = "LIVE TRADING";
+      color modeCol = GoodColor();
+      if(EnablePropfirmBacktestMode)
+      {
+         if(_gPropRollingStartMode)
+         {
+            if(EnableIntelligentTrader)
+               modeStr = "INTELLIGENT TRADER — LIVE REPLAY TICK";
+            else
+               modeStr = "PROP BACKTEST — ROLLING REPLAY";
+         }
+         else
+            modeStr = "PROP BACKTEST — SINGLE PASS";
+         modeCol = WarnColor();
+      }
+      else if(EnableIntelligentTrader)
+      {
+         if(g_intellScanning)
+            modeStr = "INTELLIGENT TRADER — SCANNING";
+         else if(g_intellState == INTELL_IDLE)
+            modeStr = "INTELLIGENT TRADER — IDLE";
+         else if(g_intellState == INTELL_TRADING)
+            modeStr = "INTELLIGENT TRADER — TRADING";
+         else
+            modeStr = "INTELLIGENT TRADER — ACTIVE";
+         modeCol = GoodColor();
+      }
+      else if(StrategyMode == STRATEGY_SINGLE)
+         modeStr = "SINGLE STRATEGY TRADING";
+      SetLine(line++, "Mode          " + modeStr, modeCol);
+      SetLine(line++, "Last sync     " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS), MutedColor());
+      SetLine(line++, " ", MutedColor());
       SetLine(line++, "STRATEGY", MutedColor());
       SetLine(line++, "Mode          " + (StrategyMode == STRATEGY_SINGLE ? "SINGLE" : "ALL-" + IntegerToString(PROP_STRATEGY_COUNT)) + "    Min votes    " + IntegerToString(MinVotesToTrade));
       if(StrategyMode == STRATEGY_SINGLE)
@@ -7926,12 +7959,13 @@
              case INTELL_TRADING:   stateStr = "TRADING";    stateCol = IntellGoodColor();  break;
              case INTELL_RETRY_WAIT:stateStr = "RETRY WAIT"; stateCol = IntellBadColor();   break;
           }
-          IntellSetLine(ln++, "STATE: " + stateStr, stateCol);
-           IntellSetLine(ln++, "Override: normal StrategyMode/SingleStrategy is IGNORED", IntellWarnColor());
+           IntellSetLine(ln++, "STATE: " + stateStr, stateCol);
+            IntellSetLine(ln++, "Override: normal StrategyMode/SingleStrategy is IGNORED", IntellWarnColor());
+            IntellSetLine(ln++, "Last sync: " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS), IntellMutedColor());
 
-           string rangeStr = (g_intellScanRangeFrom > 0 && g_intellScanRangeTo > 0) ? TimeToString(g_intellScanRangeFrom, TIME_DATE|TIME_MINUTES) + "  ->  " + TimeToString(g_intellScanRangeTo, TIME_DATE|TIME_MINUTES) : "N/A";
-           IntellSetLine(ln++, "SCAN RANGE: " + rangeStr + "  [" + IntegerToString(ArraySize(propRuns)) + " runs]", IntellGoodColor());
-          IntellSetLine(ln++, " ");
+            string rangeStr = (g_intellScanRangeFrom > 0 && g_intellScanRangeTo > 0) ? TimeToString(g_intellScanRangeFrom, TIME_DATE|TIME_MINUTES) + "  ->  " + TimeToString(g_intellScanRangeTo, TIME_DATE|TIME_MINUTES) : "N/A";
+            IntellSetLine(ln++, "SCAN RANGE: " + rangeStr + "  [" + IntegerToString(ArraySize(propRuns)) + " runs]", IntellGoodColor());
+           IntellSetLine(ln++, " ");
 
           if(g_intellScanning)
           {
@@ -9021,12 +9055,11 @@
                 isEligible = false;
                 reject += "last " + IntegerToString(minsSince) + "m ago > " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m | ";
              }
-              double sigPerTrade = t > 0 ? (double)totalSignals / t : 0.0;
-              if(sigPerTrade < IntellMinSignalsPerTrade || sigPerTrade > IntellMaxSignalsPerTrade)
-              {
-                 isEligible = false;
-                 reject += "sig/trd " + DoubleToString(sigPerTrade, 1) + " not in [" + IntegerToString(IntellMinSignalsPerTrade) + "," + IntegerToString(IntellMaxSignalsPerTrade) + "] | ";
-              }
+               if(avgSigDay < IntellMinSignalsPerTrade || avgSigDay > IntellMaxSignalsPerTrade)
+               {
+                  isEligible = false;
+                  reject += "sig/day " + DoubleToString(avgSigDay, 1) + " not in [" + IntegerToString(IntellMinSignalsPerTrade) + "," + IntegerToString(IntellMaxSignalsPerTrade) + "] | ";
+               }
              if(IntellSelectWorst)
              {
                 if(blownRate < targetRate) { isEligible = false; reject += "blown " + DoubleToString(blownRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
