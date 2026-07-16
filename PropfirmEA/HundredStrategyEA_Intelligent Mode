@@ -5832,10 +5832,10 @@
               propRuns[i].equity = propRuns[i].balance;
            }
 
-           if(!finished && propRuns[i].pos.open)
-           {
-              if(propRuns[i].equity - propRuns[i].startingBalance >= targetMoney)
-              {
+            if(!finished)
+            {
+               if(propRuns[i].equity - propRuns[i].startingBalance >= targetMoney)
+               {
                  propRuns[i].passed = true;
                  propRuns[i].ended = now;
                  propRuns[i].daysToTarget = (int)((now - propRuns[i].startDay) / 86400) + 1;
@@ -9042,19 +9042,19 @@
                 double score = candidateScore * 10000.0 - netPL[sid];
                 if(score > bestScore) { bestScore = score; bestId = sid + 1; }
              }
-             else
-             {
-                double score = candidateScore * 10000.0 + netPL[sid];
-                if(score < bestScore) { bestScore = score; bestId = sid + 1; }
-             }
+              else
+              {
+                 double score = candidateScore * 10000.0 + netPL[sid];
+                 if(score > bestScore) { bestScore = score; bestId = sid + 1; }
+              }
           }
 
           int ins = g_intellTopCount;
           for(int ti = 0; ti < g_intellTopCount; ti++)
           {
-             bool better = IntellSelectWorst ?
-                (candidateScore > g_intellTopScore[ti] || (totalComps > 0 && g_intellTopTotalComps[ti] == 0)) :
-                (candidateScore < g_intellTopScore[ti] || (totalComps > 0 && g_intellTopTotalComps[ti] == 0));
+               bool better = IntellSelectWorst ?
+                 (candidateScore > g_intellTopScore[ti] || (totalComps > 0 && g_intellTopTotalComps[ti] == 0)) :
+                 (candidateScore > g_intellTopScore[ti] || (totalComps > 0 && g_intellTopTotalComps[ti] == 0));
              if(better) { ins = ti; break; }
           }
           if(ins < 10)
