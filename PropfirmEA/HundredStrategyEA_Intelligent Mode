@@ -1202,7 +1202,8 @@
         input int IntellDashboardFontSize = 8;
        input bool IntellScanFromFile = false;
        input string IntellReportDataFile = "Propfirm_Strategy_Data.csv";
-       input int IntellMagicNumber = 100260630;
+        input int IntellMagicNumber = 100260630;
+        input bool IntellExportHtmlReport = true;          // Export HTML report after live replay scan
       input group "Intelligent Trader — Selection"
      input bool IntellSelectWorst = false;
      input int IntellMinPassRateOrBlown = 100;
@@ -1211,7 +1212,12 @@
       input int IntellMinCompletionPercent = 90;
        input int IntellMinSignalsPerTrade = 10;
        input int IntellMaxSignalsPerTrade = 20;
-       input int IntellRetrySeconds = 60;
+        input int IntellRetrySeconds = 60;
+      input group "Intelligent Trader — Scan Range"
+      input bool IntellLimitScanRange = true;             // Enable scan from specific start date
+      input int IntellScanFromYear = 2025;                // Start year for replay scan
+      input int IntellScanFromMonth = 1;                  // Start month for replay scan (1-12)
+      input int IntellScanFromDay = 1;                    // Start day for replay scan (1-31)
 
    #define PROP_STRATEGY_COUNT 1000
 
@@ -1511,9 +1517,23 @@
             MergePartialResults();
             return INIT_FAILED;
          }
+       }
+
+      if(EnableIntelligentTrader)
+      {
+         if(EnablePropfirmBacktestMode)
+         {
+            LogEvent("INIT_ERROR", "EnablePropfirmBacktestMode and EnableIntelligentTrader cannot both be true. Disable PropfirmBacktestMode when using Intelligent Trader.");
+            return INIT_PARAMETERS_INCORRECT;
+         }
+         if(ParallelMode > 0)
+         {
+            LogEvent("INIT_ERROR", "ParallelMode and EnableIntelligentTrader cannot be used together. Set ParallelMode=0 when using Intelligent Trader.");
+            return INIT_PARAMETERS_INCORRECT;
+         }
       }
 
-      EnsureLogHeader();
+       EnsureLogHeader();
       if(EnablePropfirmBacktestMode)
          InitPropfirmBacktest();
       EventSetMillisecondTimer(1000);
@@ -8604,12 +8624,38 @@
    }
 
     // ── Shared: compute the exact scan bar range used by Intell and the report ──
-    void IntellComputeScanRange(int &startBar, int &endBar)
-    {
-       int total = iBars(_Symbol, g_intellTimeframe);
-       startBar = total - 1;
-       endBar = 0;
-    }
+     void IntellComputeScanRange(int &startBar, int &endBar)
+     {
+        int total = iBars(_Symbol, g_intellTimeframe);
+        endBar = 0;
+
+        if(IntellLimitScanRange)
+        {
+           MqlDateTime dt;
+           dt.year = IntellScanFromYear;
+           dt.mon = IntellScanFromMonth;
+           dt.day = IntellScanFromDay;
+            dt.hour = PropResumeSignalsHourUTC;
+            dt.min = PropResumeSignalsMinuteUTC;
+           dt.sec = 0;
+           datetime fromDate = StructToTime(dt);
+
+           startBar = total - 1;
+           for(int i = total - 1; i >= 0; i--)
+           {
+              datetime barTime = iTime(_Symbol, g_intellTimeframe, i);
+              if(barTime > 0 && barTime >= fromDate)
+              {
+                 startBar = i;
+                 break;
+              }
+           }
+        }
+        else
+        {
+           startBar = total - 1;
+        }
+     }
 
      void PropfirmRunReplay(int startBar, int endBar, bool showDashboard)
      {
@@ -8722,10 +8768,11 @@
        // Select best/worst from propRuns results
        IntellPickFromResults();
 
-       // Emit a timestamped report written from THIS exact replay, so the HTML
-        g_testStartTime = 0;
-        g_testEndTime = 0;
-        ExportPropfirmRollingReport();
+        // Emit a timestamped report written from THIS exact replay
+         g_testStartTime = 0;
+         g_testEndTime = 0;
+         if(IntellExportHtmlReport)
+            ExportPropfirmRollingReport();
     }
 
 
