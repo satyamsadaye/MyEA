@@ -8043,11 +8043,14 @@
                     IntellSetLine(ln++, "Last Trade: --");
                  IntellSetLine(ln++, " ");
               }
-             else if(g_intellState != INTELL_RETRY_WAIT)
-             {
-                IntellSetLine(ln++, "No strategy selected yet");
-                IntellSetLine(ln++, " ");
-             }
+              else if(g_intellState != INTELL_RETRY_WAIT)
+              {
+                 if(g_intellState == INTELL_TRADING && g_intellTradeTicket > 0)
+                    IntellSetLine(ln++, "RECOVERED trade #" + IntegerToString((int)g_intellTradeTicket) + " (strategy unknown)");
+                 else
+                    IntellSetLine(ln++, "No strategy selected yet");
+                 IntellSetLine(ln++, " ");
+              }
 
              if(g_intellState == INTELL_READY)
              {
@@ -8067,13 +8070,10 @@
                    color pnlCol = profit >= 0.0 ? IntellGoodColor() : IntellBadColor();
                    IntellSetLine(ln++, "P&L: " + DoubleToString(profit, 2), pnlCol);
                 }
-                else
-                {
-                   g_intellTradeTicket = 0;
-                   g_intellState = INTELL_IDLE;
-                   g_intellLastRescanTime = TimeCurrent();
-                   IntellSetLine(ln++, "Trade closed — rescanning...", IntellWarnColor());
-                }
+                 else
+                 {
+                    IntellSetLine(ln++, "Position closed — waiting for next cycle", IntellWarnColor());
+                 }
                 IntellSetLine(ln++, " ");
              }
               if(g_intellState == INTELL_RETRY_WAIT)
@@ -8753,11 +8753,27 @@
         g_intellScanShift = 0;
      }
 
-      void IntellInit()
-      {
-         if(!EnableIntelligentTrader) return;
+       void IntellInit()
+       {
+          if(!EnableIntelligentTrader) return;
 
-         if(IntellScanFromFile)
+          // ── Position recovery after terminal restart ──
+          for(int pi = PositionsTotal() - 1; pi >= 0; pi--)
+          {
+             ulong pt = PositionGetTicket(pi);
+             if(pt == 0 || !PositionSelectByTicket(pt)) continue;
+             if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == (long)MagicNumber)
+             {
+                g_intellTradeTicket = pt;
+                g_intellState = INTELL_TRADING;
+                g_intellLastTradeCloseTime = TimeCurrent();
+                LogEvent("INTELL_RECOVER", "Recovered position ticket=" + IntegerToString((int)pt) +
+                   " profit=" + DoubleToString(PositionGetDouble(POSITION_PROFIT), 2));
+                return;
+             }
+          }
+
+          if(IntellScanFromFile)
          {
             string used = "";
              if(IntellLoadResultsFromFile(used, false))
