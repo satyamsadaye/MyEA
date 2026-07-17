@@ -1404,10 +1404,33 @@
     datetime g_intellLastTradeCloseTime = 0;
      ENUM_TIMEFRAMES g_intellTimeframe = PERIOD_M1;
      datetime g_intellScanRangeFrom = 0;
-     datetime g_intellScanRangeTo = 0;
+      datetime g_intellScanRangeTo = 0;
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // OPTIMIZATION: Multi-layer cache system (identically preserves logic)
+     // ═══════════════════════════════════════════════════════════════════════════
+     // INTELLIGENT TRADER TRADE AUDIT (for per-trade text file export)
+     // ═══════════════════════════════════════════════════════════════════════════
+     string g_auditSelection = "";
+     datetime g_auditSelectionTime = 0;
+     int g_auditSelectedStratId = 0;
+     string g_auditSelectedStratName = "";
+     datetime g_auditSignalTime = 0;
+     datetime g_auditTradeOpenTime = 0;
+     int g_auditDirection = 0;
+     double g_auditEntryPrice = 0.0;
+     double g_auditLot = 0.0;
+     double g_auditSl = 0.0;
+     double g_auditTp = 0.0;
+     ulong g_auditTicket = 0;
+     datetime g_auditTradeCloseTime = 0;
+     double g_auditClosePrice = 0.0;
+     double g_auditPnL = 0.0;
+     double g_auditBalanceBefore = 0.0;
+     double g_auditBalanceAfter = 0.0;
+     string g_auditCloseReason = "";
+     // ═══════════════════════════════════════════════════════════════════════════
+
+     // ═══════════════════════════════════════════════════════════════════════════
+     // OPTIMIZATION: Multi-layer cache system (identically preserves logic)
     // ═══════════════════════════════════════════════════════════════════════════
    #define _CACHE_MAX_BARS 60
    datetime _cacheBarTime = 0;
@@ -7621,12 +7644,13 @@
       int width = 640;
       int line_step = 16;
       int height = 88 + H100_LINE_COUNT * line_step;
-      EnsureBox(H100_PREFIX + "BG", 16, 18, width, height, PanelColor(), BorderColor());
-      EnsureBox(H100_PREFIX + "HEADER", 16, 18, width, 42, HeaderColor(), HeaderColor());
-      EnsureBox(H100_PREFIX + "ACCENT", 16, 18, 4, height, GoodColor(), GoodColor());
-      EnsureLabel(H100_PREFIX + "TITLE", 16 + 18, 18 + 12, 12, TextColor(), "Arial Bold");
-      for(int i = 0; i < H100_LINE_COUNT; i++)
-         EnsureLabel(H100_PREFIX + "LINE_" + (string)i, 16 + 18, 18 + 56 + i * line_step, 9, TextColor());
+       int h100x = 16 + 540 + 10;
+       EnsureBox(H100_PREFIX + "BG", h100x, 18, width, height, PanelColor(), BorderColor());
+       EnsureBox(H100_PREFIX + "HEADER", h100x, 18, width, 42, HeaderColor(), HeaderColor());
+       EnsureBox(H100_PREFIX + "ACCENT", h100x, 18, 4, height, GoodColor(), GoodColor());
+       EnsureLabel(H100_PREFIX + "TITLE", h100x + 18, 18 + 12, 12, TextColor(), "Arial Bold");
+       for(int i = 0; i < H100_LINE_COUNT; i++)
+          EnsureLabel(H100_PREFIX + "LINE_" + (string)i, h100x + 18, 18 + 56 + i * line_step, 9, TextColor());
 
       dashboardCreated = true;
    }
@@ -7911,7 +7935,7 @@
        int w = 540;
        int ls = fs + 6;
        int h = 88 + INTELL_LINE_COUNT * ls;
-       int x = 16 + 640 + 10;
+        int x = 16;
        int y = 18;
        IntellEnsureBox(INTELL_PREFIX + "BG", x, y, w, h, IntellPanelColor(), IntellBorderColor());
        ObjectSetInteger(0, INTELL_PREFIX + "BG", OBJPROP_ZORDER, 20);
@@ -9219,15 +9243,80 @@
           }
        }
 
-       if(bestId > 0)
-       {
-          g_intellSelectedStratId = bestId;
-          g_intellState = INTELL_READY;
-          string mode = IntellSelectWorst ? "WORST" : "BEST";
-          Print("SELECTED #" + IntegerToString(bestId) + " " + StrategyName(bestId) + " | " + IntegerToString(eligibleCount) + " eligible out of " + IntegerToString(g_intellTopCount) + " candidates");
-          LogEvent("INTELL_SELECT", "Selected " + mode + " strategy #" + IntegerToString(bestId) +
-             " " + StrategyName(bestId) + " (" + IntegerToString(eligibleCount) + " eligible)");
-       }
+        if(bestId > 0)
+        {
+           g_intellSelectedStratId = bestId;
+           g_intellState = INTELL_READY;
+           string mode = IntellSelectWorst ? "WORST" : "BEST";
+           Print("SELECTED #" + IntegerToString(bestId) + " " + StrategyName(bestId) + " | " + IntegerToString(eligibleCount) + " eligible out of " + IntegerToString(g_intellTopCount) + " candidates");
+           LogEvent("INTELL_SELECT", "Selected " + mode + " strategy #" + IntegerToString(bestId) +
+              " " + StrategyName(bestId) + " (" + IntegerToString(eligibleCount) + " eligible)");
+
+           // ── Audit: capture selection data ──
+           g_auditSelectionTime = TimeCurrent();
+           g_auditSelectedStratId = bestId;
+           g_auditSelectedStratName = StrategyName(bestId);
+           g_auditSignalTime = 0;
+           g_auditTradeOpenTime = 0;
+           g_auditDirection = 0;
+           g_auditEntryPrice = 0.0;
+           g_auditLot = 0.0;
+           g_auditSl = 0.0;
+           g_auditTp = 0.0;
+           g_auditTicket = 0;
+           g_auditTradeCloseTime = 0;
+           g_auditClosePrice = 0.0;
+           g_auditPnL = 0.0;
+           g_auditBalanceBefore = AccountInfoDouble(ACCOUNT_BALANCE);
+           g_auditBalanceAfter = 0.0;
+           g_auditCloseReason = "";
+           g_auditSelection = "===== INTELLIGENT TRADER TRADE AUDIT =====\r\n";
+           g_auditSelection += "Symbol: " + _Symbol + "\r\n";
+           g_auditSelection += "Selection Time: " + TimeToString(g_auditSelectionTime, TIME_DATE | TIME_SECONDS) + "\r\n";
+           g_auditSelection += "Selected Strategy: #" + IntegerToString(bestId) + " " + StrategyName(bestId) + "\r\n";
+           g_auditSelection += "Selection Mode: " + mode + "\r\n";
+           g_auditSelection += "Eligible Count: " + IntegerToString(eligibleCount) + "\r\n\r\n";
+           g_auditSelection += "--- Selection Parameters ---\r\n";
+           g_auditSelection += "StartBalance: " + DoubleToString(_gPropStartingBalance, 2) + "\r\n";
+           g_auditSelection += "ProfitTarget%: " + DoubleToString(_gPropProfitTargetPercent, 2) + "\r\n";
+           g_auditSelection += "MaxDD%: " + DoubleToString(_gPropMaxTotalDrawdownPercent, 2) + "\r\n";
+           g_auditSelection += "DailyDD: " + (_gPropEnableDailyDrawdown ? "ON" : "OFF") + " " + DoubleToString(_gPropDailyDrawdownPercent, 2) + "%\r\n";
+           g_auditSelection += "MinPassRate/Blown: " + IntegerToString(IntellMinPassRateOrBlown) + "\r\n";
+           g_auditSelection += "MaxMinutesSinceLastTrade: " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "\r\n";
+           g_auditSelection += "MinCompletedRuns: " + IntegerToString(IntellMinCompletedRuns) + "\r\n";
+           g_auditSelection += "MinCompletion%: " + IntegerToString(IntellMinCompletionPercent) + "\r\n";
+           g_auditSelection += "MinSignalsPerTrade: " + IntegerToString(IntellMinSignalsPerTrade) + "\r\n";
+           g_auditSelection += "MaxSignalsPerTrade: " + IntegerToString(IntellMaxSignalsPerTrade) + "\r\n";
+           g_auditSelection += "AvgPLThreshold%: " + IntegerToString(IntellAvgPLThresholdPct) + "\r\n";
+           g_auditSelection += "RecencyHalfLifeDays: " + DoubleToString(_gPropRecencyHalfLifeDays, 1) + "\r\n";
+           g_auditSelection += "SpawnInterval: " + EnumToString(_gPropSpawnInterval) + "\r\n";
+           g_auditSelection += "MaxStartDays: " + IntegerToString(_gPropMaxStartDays) + "\r\n";
+           g_auditSelection += "ScanRange: " + TimeToString(g_intellScanRangeFrom, TIME_DATE) + " -> " + TimeToString(g_intellScanRangeTo, TIME_DATE) + "\r\n\r\n";
+           g_auditSelection += "--- Top 10 Candidates ---\r\n";
+           g_auditSelection += "Rank|ID|Name|Starts|Passed|Blown|Active|PassRate%|BlownRate%|WR%|PF|RR|Trd/Day|Sig|Sig/Day|DTgt|DBr|Rejection\r\n";
+           for(int ai = 0; ai < g_intellTopCount; ai++)
+           {
+              g_auditSelection += IntegerToString(ai + 1) + "|" +
+                 IntegerToString(g_intellTopIds[ai]) + "|" +
+                 StrategyName(g_intellTopIds[ai]) + "|" +
+                 IntegerToString(g_intellTopStarts[ai]) + "|" +
+                 IntegerToString(g_intellTopPassed[ai]) + "|" +
+                 IntegerToString(g_intellTopBlown[ai]) + "|" +
+                 IntegerToString(g_intellTopActive[ai]) + "|" +
+                 DoubleToString(g_intellTopPassRate[ai], 1) + "|" +
+                 DoubleToString(g_intellTopBlownRate[ai], 1) + "|" +
+                 DoubleToString(g_intellTopWR[ai], 1) + "|" +
+                 DoubleToString(g_intellTopPF[ai], 2) + "|" +
+                 DoubleToString(g_intellTopRR[ai], 2) + "|" +
+                 DoubleToString(g_intellTopTradesPerDay[ai], 2) + "|" +
+                 IntegerToString(g_intellTopTotalSignals[ai]) + "|" +
+                 DoubleToString(g_intellTopAvgSigDay[ai], 1) + "|" +
+                 DoubleToString(g_intellTopAvgDaysTarget[ai], 1) + "|" +
+                 DoubleToString(g_intellTopAvgDaysBreach[ai], 1) + "|" +
+                 g_intellTopRejection[ai] + "\r\n";
+           }
+           g_auditSelection += "--- Trade Timeline ---\r\n";
+        }
        else
        {
           g_intellRetryTime = TimeCurrent() + IntellRetrySeconds;
@@ -9336,6 +9425,95 @@
         }
      }
 
+   void IntellExportTradeAudit()
+   {
+      if(g_auditSelectionTime == 0) return;
+      if(MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_OPTIMIZATION)) return;
+      MqlDateTime adt;
+      TimeToStruct(TimeLocal(), adt);
+      string stamp = StringFormat("%04d%02d%02d_%02d%02d%02d",
+                                  adt.year, adt.mon, adt.day, adt.hour, adt.min, adt.sec);
+      string fileName = "IntellTrade_" + _Symbol + "_" + stamp + ".txt";
+      int h = FileOpen(fileName, FILE_WRITE | FILE_BIN | FILE_UNICODE | FILE_COMMON);
+      if(h == INVALID_HANDLE)
+      {
+         Print("IntellExportTradeAudit: failed to open ", fileName, " error=", GetLastError());
+         return;
+      }
+      FileWriteString(h, g_auditSelection);
+      FileClose(h);
+      Print("IntellTrade Audit exported: ", fileName);
+      LogEvent("INTELL_AUDIT_EXPORT", "Exported trade audit to " + fileName);
+   }
+
+   void IntellCaptureCloseAndExport()
+   {
+      if(g_auditSelectionTime == 0) return;
+      g_auditTradeCloseTime = TimeCurrent();
+      g_auditBalanceAfter = AccountInfoDouble(ACCOUNT_BALANCE);
+      g_auditPnL = g_auditBalanceAfter - g_auditBalanceBefore;
+      if(HistorySelect(g_auditTradeOpenTime - 3600, TimeCurrent() + 3600))
+      {
+         int totalDeals = HistoryDealsTotal();
+         for(int d = totalDeals - 1; d >= 0; d--)
+         {
+            ulong dealTicket = HistoryDealGetTicket(d);
+            if(dealTicket > 0 &&
+               HistoryDealGetInteger(dealTicket, DEAL_ORDER) == (long)g_auditTicket &&
+               HistoryDealGetString(dealTicket, DEAL_SYMBOL) == _Symbol)
+            {
+               g_auditClosePrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+               double dealPnL = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+               if(dealPnL != 0.0) g_auditPnL = dealPnL;
+               string dealType = (HistoryDealGetInteger(dealTicket, DEAL_TYPE) == 0) ? "BUY" : "SELL";
+               g_auditCloseReason = "Closed via " + dealType;
+               break;
+            }
+         }
+      }
+      if(g_auditCloseReason == "")
+         g_auditCloseReason = "Trade closed (unknown reason)";
+      g_auditSelection += "Trade Close Time: " + TimeToString(g_auditTradeCloseTime, TIME_DATE | TIME_SECONDS) + "\r\n";
+      g_auditSelection += "Close Price: " + DoubleToString(g_auditClosePrice, _Digits) + "\r\n";
+      g_auditSelection += "P&L: " + DoubleToString(g_auditPnL, 2) + "\r\n";
+      g_auditSelection += "Balance Before Trade: " + DoubleToString(g_auditBalanceBefore, 2) + "\r\n";
+      g_auditSelection += "Balance After Trade: " + DoubleToString(g_auditBalanceAfter, 2) + "\r\n";
+      g_auditSelection += "Close Reason: " + g_auditCloseReason + "\r\n";
+      int totalCycleSecs = (int)(g_auditTradeCloseTime - g_auditSelectionTime);
+      g_auditSelection += "Total Cycle Time (Selection to Close): " + IntegerToString(totalCycleSecs) + " seconds (" +
+         IntegerToString(totalCycleSecs / 86400) + "d " +
+         IntegerToString((totalCycleSecs % 86400) / 3600) + "h " +
+         IntegerToString((totalCycleSecs % 3600) / 60) + "m " +
+         IntegerToString(totalCycleSecs % 60) + "s)\r\n";
+      if(g_auditSignalTime > 0)
+      {
+         int signalToOpenSecs = (int)(g_auditTradeOpenTime - g_auditSignalTime);
+         int tradeToCloseSecs = (int)(g_auditTradeCloseTime - g_auditTradeOpenTime);
+         g_auditSelection += "Signal-to-Open: " + IntegerToString(signalToOpenSecs) + "s\r\n";
+         g_auditSelection += "Trade Duration: " + IntegerToString(tradeToCloseSecs) + "s (" +
+            IntegerToString(tradeToCloseSecs / 60) + "m " +
+            IntegerToString(tradeToCloseSecs % 60) + "s)\r\n";
+      }
+      g_auditSelection += "===== END OF AUDIT =====\r\n";
+      IntellExportTradeAudit();
+      g_intellTradeTicket = 0;
+      g_intellLastTradeCloseTime = TimeCurrent();
+      g_intellSelectedStratId = 0;
+      if(!eaStopped)
+      {
+         if(IntellScanFromFile)
+         {
+            LogEvent("INTELL_TRADE_CLOSE", "Trade closed, waiting for new report data");
+            g_intellState = INTELL_WAIT_DATA;
+         }
+         else
+         {
+            LogEvent("INTELL_TRADE_CLOSE", "Trade closed, full rescan from scratch");
+            IntellInit();
+         }
+      }
+   }
+
    void IntellTradeTick()
    {
       if(g_intellSelectedStratId <= 0) { IntellInit(); return; }
@@ -9362,17 +9540,44 @@
       if((AllowedDirection == SIGNAL_BUY_ONLY && dir == ORDER_TYPE_SELL) ||
          (AllowedDirection == SIGNAL_SELL_ONLY && dir == ORDER_TYPE_BUY)) return;
 
+      // ── Audit: capture signal time (before open) ──
+      if(g_auditSignalTime == 0)
+         g_auditSignalTime = TimeCurrent();
+
       ulong ticket = OpenTrade(dir, sig);
       if(ticket > 0)
        {
-          g_intellTradeTicket = ticket;
-          g_intellState = INTELL_TRADING;
-          g_intellLastTradedStratId = g_intellSelectedStratId;
-          LogEvent("INTELL_TRADE", "Opened " + (dir == ORDER_TYPE_BUY ? "BUY" : "SELL") +
-            " using #" + IntegerToString(g_intellSelectedStratId) + " " +
-            StrategyName(g_intellSelectedStratId) + " ticket=" + IntegerToString((long)ticket));
-      }
-   }
+           g_intellTradeTicket = ticket;
+           g_intellState = INTELL_TRADING;
+           g_intellLastTradedStratId = g_intellSelectedStratId;
+           LogEvent("INTELL_TRADE", "Opened " + (dir == ORDER_TYPE_BUY ? "BUY" : "SELL") +
+             " using #" + IntegerToString(g_intellSelectedStratId) + " " +
+             StrategyName(g_intellSelectedStratId) + " ticket=" + IntegerToString((long)ticket));
+
+           // ── Audit: capture trade open data ──
+           g_auditTradeOpenTime = TimeCurrent();
+           g_auditDirection = dir;
+           g_auditEntryPrice = (dir == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+           g_auditLot = CalculateLot(StopDistance(StopLossMode, true));
+           g_auditTicket = ticket;
+           g_auditSelection += "Signal Time: " + TimeToString(g_auditSignalTime, TIME_DATE | TIME_SECONDS) + "\r\n";
+           g_auditSelection += "Trade Open Time: " + TimeToString(g_auditTradeOpenTime, TIME_DATE | TIME_SECONDS) + "\r\n";
+           g_auditSelection += "Direction: " + (dir == ORDER_TYPE_BUY ? "BUY" : "SELL") + "\r\n";
+           g_auditSelection += "Entry Price: " + DoubleToString(g_auditEntryPrice, _Digits) + "\r\n";
+           g_auditSelection += "Lot Size: " + DoubleToString(g_auditLot, 2) + "\r\n";
+           g_auditSelection += "Ticket: " + IntegerToString((long)ticket) + "\r\n";
+           // Capture SL/TP from OpenTrade calculation (calculate again inline)
+           double audSlDist = StopDistance(StopLossMode, true);
+           double audTpDist = StopDistance(TakeProfitMode, false);
+           if(ReverseSignals) { double tmp = audSlDist; audSlDist = audTpDist; audTpDist = tmp; }
+           if(audSlDist > 0.0)
+              g_auditSl = (dir == ORDER_TYPE_BUY) ? g_auditEntryPrice - audSlDist : g_auditEntryPrice + audSlDist;
+           if(audTpDist > 0.0)
+              g_auditTp = (dir == ORDER_TYPE_BUY) ? g_auditEntryPrice + audTpDist : g_auditEntryPrice - audTpDist;
+           g_auditSelection += "Stop Loss: " + DoubleToString(g_auditSl, _Digits) + "\r\n";
+           g_auditSelection += "Take Profit: " + DoubleToString(g_auditTp, _Digits) + "\r\n";
+       }
+    }
 
       void IntellTick()
       {
@@ -9391,34 +9596,21 @@
          case INTELL_READY:
             IntellTradeTick();
             break;
-
-         case INTELL_TRADING:
-         {
-            if(g_intellTradeTicket > 0 && PositionSelectByTicket(g_intellTradeTicket))
-            {
-               ManageVirtualDollarExits();
-                if(CheckEquityLevels()) return;
-               if(GlobalIsCloseTime()) { CloseAllEaPositions(); }
-            }
-            else
-            {
-               g_intellTradeTicket = 0;
-               g_intellLastTradeCloseTime = TimeCurrent();
-               g_intellSelectedStratId = 0;
-               if(IntellScanFromFile)
-               {
-                  LogEvent("INTELL_TRADE_CLOSE", "Trade closed, waiting for new report data");
-                  g_intellState = INTELL_WAIT_DATA;
-               }
-               else
-               {
-                  LogEvent("INTELL_TRADE_CLOSE", "Trade closed, full rescan from scratch");
-                  IntellInit();
-               }
-               return;
-            }
-            break;
-         }
+          case INTELL_TRADING:
+          {
+             if(g_intellTradeTicket > 0 && PositionSelectByTicket(g_intellTradeTicket))
+             {
+                ManageVirtualDollarExits();
+                 if(CheckEquityLevels()) { IntellCaptureCloseAndExport(); return; }
+                if(GlobalIsCloseTime()) { CloseAllEaPositions(); }
+             }
+             else
+             {
+                IntellCaptureCloseAndExport();
+                return;
+             }
+             break;
+          }
 
           case INTELL_RETRY_WAIT:
              if(TimeCurrent() >= g_intellRetryTime)
