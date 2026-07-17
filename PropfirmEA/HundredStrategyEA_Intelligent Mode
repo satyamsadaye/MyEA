@@ -1426,7 +1426,12 @@
      double g_auditPnL = 0.0;
      double g_auditBalanceBefore = 0.0;
      double g_auditBalanceAfter = 0.0;
-     string g_auditCloseReason = "";
+      string g_auditCloseReason = "";
+     // ═══════════════════════════════════════════════════════════════════════════
+     // INTELLIGENT TRADER STRATEGY RE-VALIDATION (periodic eligibility checks)
+     // ═══════════════════════════════════════════════════════════════════════════
+     datetime g_intellNextValidationTime = 0;
+     string g_intellValidationStatus = "";
      // ═══════════════════════════════════════════════════════════════════════════
 
      // ═══════════════════════════════════════════════════════════════════════════
@@ -7994,18 +7999,23 @@
             IntellSetLine(ln++, "SCAN RANGE: " + rangeStr + "  [" + IntegerToString(ArraySize(propRuns)) + " runs]", IntellGoodColor());
            IntellSetLine(ln++, " ");
 
-          if(g_intellScanning)
-          {
-             string modeStr = IntellSelectWorst ? "WORST" : "BEST";
-             int pct = g_intellTotalBars > 0 ? (int)((double)g_intellScanProgress / g_intellTotalBars * 100.0) : 0;
-             IntellSetLine(ln++, "SCANNING: " + IntegerToString(pct) + "%  [" + IntegerToString(g_intellScanProgress) + "/" + IntegerToString(g_intellTotalBars) + " bars]", IntellWarnColor());
-             datetime cur = iTime(_Symbol, g_intellTimeframe, g_intellScanStartBar - g_intellScanProgress + 1);
-             if(cur > 0)
-                IntellSetLine(ln++, "Bar date: " + TimeToString(cur, TIME_DATE | TIME_MINUTES));
-             IntellSetLine(ln++, "Active runs: " + IntegerToString(ArraySize(propActiveIdx)) + " / Total: " + IntegerToString(ArraySize(propRuns)));
-             IntellSetLine(ln++, "Target: " + modeStr + " @" + IntegerToString(IntellMinPassRateOrBlown) + "%  Spawn: " + IntellSpawnIntervalLabel());
-             IntellSetLine(ln++, " ");
-          }
+           if(g_intellScanning)
+           {
+              string modeStr = IntellSelectWorst ? "WORST" : "BEST";
+              int pct = g_intellTotalBars > 0 ? (int)((double)g_intellScanProgress / g_intellTotalBars * 100.0) : 0;
+              IntellSetLine(ln++, "SCANNING: " + IntegerToString(pct) + "%  [" + IntegerToString(g_intellScanProgress) + "/" + IntegerToString(g_intellTotalBars) + " bars]", IntellWarnColor());
+              datetime cur = iTime(_Symbol, g_intellTimeframe, g_intellScanStartBar - g_intellScanProgress + 1);
+              if(cur > 0)
+                 IntellSetLine(ln++, "Bar date: " + TimeToString(cur, TIME_DATE | TIME_MINUTES));
+              if(g_intellValidationStatus != "")
+              {
+                 IntellSetLine(ln++, g_intellValidationStatus, IntellBadColor());
+                 g_intellValidationStatus = "";
+              }
+              IntellSetLine(ln++, "Active runs: " + IntegerToString(ArraySize(propActiveIdx)) + " / Total: " + IntegerToString(ArraySize(propRuns)));
+              IntellSetLine(ln++, "Target: " + modeStr + " @" + IntegerToString(IntellMinPassRateOrBlown) + "%  Spawn: " + IntellSpawnIntervalLabel());
+              IntellSetLine(ln++, " ");
+           }
 
            if(g_intellState == INTELL_READY || g_intellState == INTELL_TRADING || g_intellState == INTELL_RETRY_WAIT || g_intellState == INTELL_WAIT_DATA)
           {
@@ -8076,10 +8086,16 @@
                  IntellSetLine(ln++, " ");
               }
 
-             if(g_intellState == INTELL_READY)
-             {
-                IntellSetLine(ln++, "Waiting for signal from selected strategy...", IntellWarnColor());
-             }
+              if(g_intellState == INTELL_READY)
+              {
+                 IntellSetLine(ln++, "Waiting for signal from selected strategy...", IntellWarnColor());
+                 if(g_intellValidationStatus != "")
+                 {
+                    int secLeft = (int)(g_intellNextValidationTime - TimeCurrent());
+                    if(secLeft < 0) secLeft = 0;
+                    IntellSetLine(ln++, g_intellValidationStatus + " (next check in " + IntegerToString(secLeft) + "s)", IntellTextColor());
+                 }
+              }
              if(g_intellState == INTELL_TRADING)
              {
                 if(PositionSelectByTicket(g_intellTradeTicket))
@@ -9314,16 +9330,18 @@
                  DoubleToString(g_intellTopAvgDaysTarget[ai], 1) + "|" +
                  DoubleToString(g_intellTopAvgDaysBreach[ai], 1) + "|" +
                  g_intellTopRejection[ai] + "\r\n";
-           }
-           g_auditSelection += "--- Trade Timeline ---\r\n";
-        }
-       else
-       {
-          g_intellRetryTime = TimeCurrent() + IntellRetrySeconds;
-          g_intellState = INTELL_RETRY_WAIT;
-           LogEvent("INTELL_RETRY", "No eligible strategy found (" + IntegerToString(eligibleCount) +
-              " eligible), retry in " + IntegerToString(IntellRetrySeconds) + "s");
-        }
+            }
+            g_auditSelection += "--- Trade Timeline ---\r\n";
+            g_intellNextValidationTime = TimeCurrent() + IntellRetrySeconds;
+            g_intellValidationStatus = "";
+         }
+        else
+        {
+           g_intellRetryTime = TimeCurrent() + IntellRetrySeconds;
+           g_intellState = INTELL_RETRY_WAIT;
+            LogEvent("INTELL_RETRY", "No eligible strategy found (" + IntegerToString(eligibleCount) +
+               " eligible), retry in " + IntegerToString(IntellRetrySeconds) + "s");
+         }
 
         // ── EXPERT LOG DUMP: full report-style metrics for every strategy with runs ──
          Print("INTELL_METRICS_SCANPARAMS | StartBal=" + DoubleToString(_gPropStartingBalance, 2) +
@@ -9514,9 +9532,146 @@
       }
    }
 
+   bool IntellIsStrategyStillEligible(const int sid, string &outReject)
+   {
+      outReject = "";
+      int idx = sid - 1;
+      if(idx < 0 || idx >= PROP_STRATEGY_COUNT) { outReject = "invalid strategy ID"; return false; }
+      datetime testEnd = TimeCurrent();
+      int startsCnt = 0, passes = 0, breached = 0, actives = 0;
+      int trades = 0, wins = 0, losses = 0;
+      datetime lastClose = 0;
+      double grossProfit = 0.0, grossLoss = 0.0, duration = 0.0;
+      int activeCnt = 0;
+      double activeSumPL = 0.0;
+      for(int i = 0; i < ArraySize(propRuns); i++)
+      {
+         if(propRuns[i].strategyId != sid) continue;
+         startsCnt++;
+         if(propRuns[i].passed) passes++;
+         else if(propRuns[i].breached) breached++;
+         else { actives++; activeCnt++; activeSumPL += propRuns[i].balance - propRuns[i].startingBalance; }
+         trades += propRuns[i].trades;
+         wins += propRuns[i].wins;
+         losses += propRuns[i].losses;
+         grossProfit += propRuns[i].grossProfit;
+         grossLoss += propRuns[i].grossLoss;
+         datetime runEnd = (propRuns[i].ended > 0) ? propRuns[i].ended : testEnd;
+         double runDays = (double)(runEnd - propRuns[i].startDay) / 86400.0 + 1.0;
+         if(runDays < 1.0) runDays = 1.0;
+         duration += runDays;
+         if(propRuns[i].lastClosedTradeTime > lastClose)
+            lastClose = propRuns[i].lastClosedTradeTime;
+      }
+      if(startsCnt == 0) { outReject = "no runs for this strategy"; return false; }
+      int totalComps = passes + breached;
+      if(totalComps == 0) { outReject = IntegerToString(startsCnt) + " active, 0 completed"; return false; }
+      datetime now = TimeCurrent();
+      int minsSince = lastClose > 0 ? (int)((now - lastClose) / 60) : 999999;
+      double completionPct = (double)totalComps / startsCnt * 100.0;
+      if(completionPct < (double)IntellMinCompletionPercent)
+      {
+         outReject = "completion " + DoubleToString(completionPct, 1) + "% < " + IntegerToString(IntellMinCompletionPercent) + "%";
+         return false;
+      }
+      if(minsSince > IntellMaxMinutesSinceLastTrade)
+      {
+         outReject = "last " + IntegerToString(minsSince) + "m ago > " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m";
+         return false;
+      }
+      int totalSignals = propSignalCounts[idx];
+      double testSpanDays = (g_intellScanRangeFrom > 0 && g_intellScanRangeTo > 0) ? (double)(g_intellScanRangeTo - g_intellScanRangeFrom) / 86400.0 : 1.0;
+      double avgSigDay = (double)totalSignals / testSpanDays;
+      if(avgSigDay < IntellMinSignalsPerTrade || avgSigDay > IntellMaxSignalsPerTrade)
+      {
+         outReject = "sig/day " + DoubleToString(avgSigDay, 1) + " not in [" + IntegerToString(IntellMinSignalsPerTrade) + "," + IntegerToString(IntellMaxSignalsPerTrade) + "]";
+         return false;
+      }
+      double passRate = totalComps > 0 ? (double)passes / totalComps * 100.0 : 0.0;
+      double blownRate = totalComps > 0 ? (double)breached / totalComps * 100.0 : 0.0;
+      if(IntellSelectWorst)
+      {
+         if(blownRate < (double)IntellMinPassRateOrBlown)
+         {
+            outReject = "blown " + DoubleToString(blownRate, 1) + "% < " + IntegerToString(IntellMinPassRateOrBlown) + "%";
+            return false;
+         }
+         if(passes > 0)
+         {
+            outReject = IntegerToString(passes) + " passed (worst mode)";
+            return false;
+         }
+         if(IntellAvgPLThresholdPct > 0 && activeCnt > 0)
+         {
+            double avgPLact = activeSumPL / activeCnt;
+            double minDD = _gPropStartingBalance * (_gPropMaxTotalDrawdownPercent / 100.0) * ((double)IntellAvgPLThresholdPct / 100.0);
+            if(avgPLact > -minDD)
+            {
+               outReject = "active avg PL $" + DoubleToString(avgPLact, 2) + " not ≤ -$" + DoubleToString(minDD, 2) + " min drawdown";
+               return false;
+            }
+         }
+      }
+      else
+      {
+         if(passRate < (double)IntellMinPassRateOrBlown)
+         {
+            outReject = "pass " + DoubleToString(passRate, 1) + "% < " + IntegerToString(IntellMinPassRateOrBlown) + "%";
+            return false;
+         }
+         if(breached > 0)
+         {
+            outReject = IntegerToString(breached) + " blown (best mode)";
+            return false;
+         }
+         if(IntellAvgPLThresholdPct > 0 && activeCnt > 0)
+         {
+            double avgPLact = activeSumPL / activeCnt;
+            double minProfit = _gPropStartingBalance * (_gPropProfitTargetPercent / 100.0) * ((double)IntellAvgPLThresholdPct / 100.0);
+            if(avgPLact < minProfit)
+            {
+               outReject = "active avg PL $" + DoubleToString(avgPLact, 2) + " < $" + DoubleToString(minProfit, 2) + " min profit";
+               return false;
+            }
+         }
+      }
+      int cd = wins + losses;
+      double wr = cd > 0 ? (double)wins / cd * 100.0 : 0.0;
+      double pf = losses > 0 ? (double)wins / losses : (wins > 0 ? 999.0 : 0.0);
+      double avgWin = wins > 0 ? grossProfit / wins : 0.0;
+      double avgLoss = losses > 0 ? MathAbs(grossLoss) / losses : 0.0;
+      double rr = avgLoss > 0.0 ? avgWin / avgLoss : (avgWin > 0.0 ? 999.0 : 0.0);
+      double tradesPerDay = duration > 0.0 ? (double)trades / duration : 0.0;
+      outReject = "✓ eligible | passR=" + DoubleToString(passRate, 1) + "% blownR=" + DoubleToString(blownRate, 1) +
+         "% WR=" + DoubleToString(wr, 1) + "% PF=" + DoubleToString(pf, 2) + " RR=" + DoubleToString(rr, 2) +
+         " activePL=$" + DoubleToString(activeCnt > 0 ? activeSumPL / activeCnt : 0.0, 2);
+      return true;
+   }
+
    void IntellTradeTick()
    {
       if(g_intellSelectedStratId <= 0) { IntellInit(); return; }
+
+      // ── Periodic re-validation ──
+      if(TimeCurrent() >= g_intellNextValidationTime)
+      {
+         string used = "";
+         if(IntellScanFromFile)
+            IntellLoadResultsFromFile(used, true);
+         string reject = "";
+         if(!IntellIsStrategyStillEligible(g_intellSelectedStratId, reject))
+         {
+            string oldName = StrategyName(g_intellSelectedStratId);
+            LogEvent("INTELL_REJECT", "Strategy #" + IntegerToString(g_intellSelectedStratId) + " " + oldName + " no longer eligible: " + reject + " — rescanning for new strategy");
+            g_intellValidationStatus = "SWITCHED: #" + IntegerToString(g_intellSelectedStratId) + " " + oldName + " rejected — " + reject;
+            g_intellSelectedStratId = 0;
+            IntellInit();
+            return;
+         }
+         g_intellNextValidationTime = TimeCurrent() + IntellRetrySeconds;
+         g_intellValidationStatus = "Validated " + TimeToString(TimeCurrent(), TIME_SECONDS) + " — " + reject;
+         Print("INTELL_VALIDATE: #" + IntegerToString(g_intellSelectedStratId) + " " + StrategyName(g_intellSelectedStratId) + " still eligible: " + reject);
+      }
 
       _CacheRefresh();
       _CacheHL();
@@ -9550,6 +9705,7 @@
            g_intellTradeTicket = ticket;
            g_intellState = INTELL_TRADING;
            g_intellLastTradedStratId = g_intellSelectedStratId;
+           g_intellValidationStatus = "";
            LogEvent("INTELL_TRADE", "Opened " + (dir == ORDER_TYPE_BUY ? "BUY" : "SELL") +
              " using #" + IntegerToString(g_intellSelectedStratId) + " " +
              StrategyName(g_intellSelectedStratId) + " ticket=" + IntegerToString((long)ticket));
