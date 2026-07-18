@@ -203,6 +203,8 @@ input double MaxTotalDrawdownValue = 10.0;
 input ENUM_MAX_DRAWDOWN_FLOOR_MODE MaxDrawdownFloorMode = MAX_DD_TRAILING_EQUITY_PEAK;
 input ENUM_DRAWDOWN_LIMIT_MODE DailyDrawdownLimitMode = DD_LIMIT_PERCENT_OF_START;
 input double MaxDailyDrawdownValue = 5.0;
+input bool EnableDailyDrawdownProtection = true;     // false: skip daily DD checks, trade until total DD or target
+input bool EnableDailyUtcReset = true;                // false: keep daily start equity fixed (no UTC resets)
 input int DailyResetUtcHour = 0;
 input int DailyResetUtcMinute = 0;
 input double EquityProtectionBufferPercentOfStopFloor = 1.0;
@@ -3962,6 +3964,31 @@ void SaveDailyState()
 
 void LoadOrResetDailyState()
 {
+   if(!EnableDailyUtcReset)
+   {
+      // No daily UTC resets — fix daily start equity to StartingBalance and track min equity once
+      if(g_current_utc_day <= 0)
+      {
+         g_current_utc_day = 1; // non-zero sentinel
+         g_daily_start_equity = StartingBalance;
+         g_daily_min_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+         if(g_daily_min_equity <= 0.0)
+            g_daily_min_equity = g_daily_start_equity;
+      }
+
+      double current_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+      if(current_equity < g_daily_min_equity)
+         g_daily_min_equity = current_equity;
+
+      if(g_daily_start_equity <= 0.0)
+         g_daily_start_equity = StartingBalance;
+      if(g_daily_min_equity <= 0.0)
+         g_daily_min_equity = current_equity;
+
+      g_daily_pause_latched = false;
+      return;
+   }
+
    datetime utc_day = DashboardUtcDayStart(TimeGMT());
    bool new_day = (utc_day != g_current_utc_day);
    g_current_utc_day = utc_day;
@@ -3979,10 +4006,6 @@ void LoadOrResetDailyState()
       datetime reset_in_server_time = ServerTimeForUtc(utc_day);
       if(BalanceAtTime(reset_in_server_time, reconstructed_balance))
       {
-         // If a trade was open across the reset, reconstructed_balance may be
-         // lower than the current equity (floating P/L). Use the higher of the
-         // reconstructed closed balance and the current equity to avoid
-         // immediately latching daily protection when positions are still open.
          g_daily_start_equity = MathMax(reconstructed_balance, current_equity);
       }
       else if(current_balance > 0.0)
@@ -4302,10 +4325,10 @@ void UpdatePropFirmProtectionState()
    g_total_dd_left = equity - g_total_floor;
    g_daily_dd_left = equity - g_daily_floor;
 
-   double stop_floor = MathMax(g_daily_floor, g_total_floor);
+   double stop_floor = (EnableDailyDrawdownProtection ? MathMax(g_daily_floor, g_total_floor) : g_total_floor);
    g_equity_buffer_money = MathMax(0.0, EquityProtectionBufferMoney) +
-                           MathMax(0.0, stop_floor * EquityProtectionBufferPercentOfStopFloor / 100.0) +
-                           MathMax(0.0, g_daily_limit_money * EquityProtectionBufferPercentOfDailyLimit / 100.0);
+                            MathMax(0.0, stop_floor * EquityProtectionBufferPercentOfStopFloor / 100.0) +
+                            (EnableDailyDrawdownProtection ? MathMax(0.0, g_daily_limit_money * EquityProtectionBufferPercentOfDailyLimit / 100.0) : 0.0);
    g_equity_stop_level = stop_floor + g_equity_buffer_money;
 
    g_prop_protection_breached = false;
@@ -4371,12 +4394,26 @@ void UpdatePropFirmProtectionState()
    if(!EnablePropFirmProtection)
       return;
 
-   if(PauseUntilNextDailyResetAfterDailyBreach && g_daily_pause_latched)
+   if(EnableDailyDrawdownProtection)
    {
-      g_prop_protection_breached = true;
-      g_prop_trading_allowed = false;
-      g_prop_block_reason = ProtectionReasonWithHit("daily protection paused until next UTC reset");
-      return;
+      if(PauseUntilNextDailyResetAfterDailyBreach && g_daily_pause_latched)
+      {
+         g_prop_protection_breached = true;
+         g_prop_trading_allowed = false;
+         g_prop_block_reason = ProtectionReasonWithHit("daily protection paused until next UTC reset");
+         return;
+      }
+
+      if(g_daily_limit_money > 0.0 && equity <= g_daily_floor)
+      {
+         RecordProtectionHit();
+         if(PauseUntilNextDailyResetAfterDailyBreach)
+            LatchDailyPause();
+         g_prop_protection_breached = true;
+         g_prop_trading_allowed = false;
+         g_prop_block_reason = ProtectionReasonWithHit("daily drawdown floor reached");
+         return;
+      }
    }
 
    if(g_total_limit_money > 0.0 && equity <= g_total_floor)
@@ -4388,17 +4425,6 @@ void UpdatePropFirmProtectionState()
       return;
    }
 
-   if(g_daily_limit_money > 0.0 && equity <= g_daily_floor)
-   {
-      RecordProtectionHit();
-      if(PauseUntilNextDailyResetAfterDailyBreach)
-         LatchDailyPause();
-      g_prop_protection_breached = true;
-      g_prop_trading_allowed = false;
-      g_prop_block_reason = ProtectionReasonWithHit("daily drawdown floor reached");
-      return;
-   }
-
    if(equity <= g_equity_stop_level)
    {
       RecordProtectionHit();
@@ -4407,9 +4433,10 @@ void UpdatePropFirmProtectionState()
       g_prop_block_reason = ProtectionReasonWithHit("equity protection stop reached at " + MoneyText(g_equity_stop_level));
       if(PrintProtectionLogs)
       {
+         double hard_floor = (EnableDailyDrawdownProtection ? MathMax(g_daily_floor, g_total_floor) : g_total_floor);
          PrintFormat("PropfirmReceiver PROTECTION HIT | HitIST=%s | ReceiverTicket=%I64u | SourceTicket=%I64u | Equity=%.2f | StopLevel=%.2f | HardFloor=%.2f | Buffer=%.2f | ClosingCopied=%s",
-                     ProtectionHitIstText(), g_protection_hit_receiver_ticket, g_protection_hit_source_ticket,
-                     equity, g_equity_stop_level, MathMax(g_daily_floor, g_total_floor), g_equity_buffer_money,
+                      ProtectionHitIstText(), g_protection_hit_receiver_ticket, g_protection_hit_source_ticket,
+                      equity, g_equity_stop_level, hard_floor, g_equity_buffer_money,
                      CloseCopiedPositionsOnProtectionBreach ? "YES" : "NO");
       }
       return;
@@ -4451,7 +4478,7 @@ bool PropFirmRiskGateAllows(const SourcePosition &src,
    }
 
    double required_room = risk_money + MathMax(0.0, ExtraRiskBufferMoney) + g_equity_buffer_money;
-   if(g_daily_limit_money > 0.0 && required_room > g_daily_dd_left)
+   if(EnableDailyDrawdownProtection && g_daily_limit_money > 0.0 && required_room > g_daily_dd_left)
    {
       reason = "copied risk " + MoneyText(required_room) + " exceeds daily DD left " + MoneyText(g_daily_dd_left);
       return false;
@@ -5297,8 +5324,16 @@ void UpdateDashboard()
    double equity_stop_left = AccountInfoDouble(ACCOUNT_EQUITY) - g_equity_stop_level;
    SetProtectionLine(line++, "Stop room left " + SignedMoneyText(equity_stop_left) + "        Stop level   " + MoneyText(g_equity_stop_level), equity_stop_left >= 0.0 ? ReceiverGoodColor() : ReceiverBadColor());
    SetProtectionLine(line++, "Equity stop    " + MoneyText(g_equity_stop_level) + "        Buffer        " + MoneyText(g_equity_buffer_money + MathMax(0.0, ExtraRiskBufferMoney)));
-   SetProtectionLine(line++, g_daily_pause_latched ? "DAILY DD PROTECTION HIT - PAUSED UNTIL RESET" : "Daily DD protection  SAFE - NOT HIT", g_daily_pause_latched ? ReceiverBadColor() : ReceiverGoodColor());
+   string daily_hit_text = "Daily DD protection SAFE - NOT HIT";
+   if(!EnableDailyDrawdownProtection)
+      daily_hit_text = "Daily DD protection DISABLED - trading continuously";
+   else if(g_daily_pause_latched)
+      daily_hit_text = "DAILY DD PROTECTION HIT - PAUSED UNTIL RESET";
+   SetProtectionLine(line++, daily_hit_text, g_daily_pause_latched ? ReceiverBadColor() : (EnableDailyDrawdownProtection ? ReceiverGoodColor() : ReceiverWarnColor()));
    SetProtectionLine(line++, "Reset UTC      " + ResetTimeText() + "        Reset IST     " + ResetTimeIstText(), g_daily_pause_latched ? ReceiverWarnColor() : ReceiverTextColor());
+   string dd_status = "Daily DD protection " + (EnableDailyDrawdownProtection ? "ON" : "OFF");
+   string reset_status = "UTC reset " + (EnableDailyUtcReset ? "ON" : "OFF");
+   SetProtectionLine(line++, dd_status + "        " + reset_status, EnableDailyDrawdownProtection ? ReceiverGoodColor() : ReceiverWarnColor());
    SetProtectionLine(line++, "DAILY RESET REMAINING  " + ResetCountdownText(), g_daily_pause_latched ? ReceiverWarnColor() : ReceiverGoodColor());
    SetProtectionLine(line++, "Protection hit " + ProtectionHitIstText(), g_protection_hit_time_utc > 0 ? ReceiverBadColor() : ReceiverMutedColor());
    SetProtectionLine(line++, "Hit trade      " + ProtectionHitTicketsText(), g_protection_hit_time_utc > 0 ? ReceiverWarnColor() : ReceiverMutedColor());
