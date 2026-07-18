@@ -1,5 +1,6 @@
 #property strict
 #property version   "1.00"
+#include <Trade/Trade.mqh>
 
 // Minimal MT5 trade sender.
 // Attach this EA to any chart on the source/client terminal.
@@ -10,6 +11,11 @@
 
 input string CopierKey = "client1";
 input int ClosedTradeRetentionSeconds = 60;
+
+input group "Equity Guard"
+input bool EnableEquityGuard = false;
+input double EquityUpperLimit = 0.0;
+input double EquityLowerLimit = 0.0;
 
 struct SenderPositionState
 {
@@ -33,6 +39,7 @@ struct SenderCloseEvent
 
 SenderPositionState remembered_positions[];
 SenderCloseEvent close_events[];
+bool equity_halted = false;
 
 void OnInit()
 {
@@ -59,6 +66,20 @@ void OnTimer()
 void WriteSnapshot()
 {
    RefreshCloseEvents();
+   CheckEquityGuard();
+   if(equity_halted)
+   {
+      int handle = FileOpen(CopierFileName(),
+                            FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            ';');
+      if(handle != INVALID_HANDLE)
+      {
+         FileWrite(handle, "MT5_MINIMAL_TRADE_COPIER_V1", (long)AccountInfoInteger(ACCOUNT_LOGIN), (long)TimeCurrent());
+         FileWrite(handle, "HALTED");
+         FileClose(handle);
+      }
+      return;
+   }
 
    int handle = FileOpen(CopierFileName(),
                          FILE_WRITE | FILE_CSV | FILE_COMMON | FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -273,6 +294,66 @@ void PruneOldCloseEvents(const datetime now)
          close_events[j] = close_events[j + 1];
 
       ArrayResize(close_events, last);
+   }
+}
+
+void CloseAllPositions()
+{
+   CTrade close_trade;
+   int total = PositionsTotal();
+   for(int i = total - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0)
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      ResetLastError();
+      if(close_trade.PositionClose(ticket))
+         Print("Equity guard: closed position #", (string)ticket, " ", symbol, " ", DoubleToString(volume, 2));
+      else
+         Print("Equity guard: FAILED to close position #", (string)ticket, " error ", (string)close_trade.ResultRetcode());
+   }
+}
+
+void CheckEquityGuard()
+{
+   if(!EnableEquityGuard)
+   {
+      if(equity_halted)
+      {
+         equity_halted = false;
+         Print("Equity guard: trading resumed. Equity ", DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2),
+               " is back within bounds [", DoubleToString(EquityLowerLimit, 2), " - ",
+               DoubleToString(EquityUpperLimit, 2), "]");
+      }
+      return;
+   }
+
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   bool upper_active = (EquityUpperLimit > 0.0);
+   bool lower_active = (EquityLowerLimit > 0.0);
+   bool breached = (upper_active && equity >= EquityUpperLimit) ||
+                    (lower_active && equity <= EquityLowerLimit);
+
+   if(breached && !equity_halted)
+   {
+      equity_halted = true;
+      if(upper_active && equity >= EquityUpperLimit)
+         Print("Equity guard HALTED: equity ", DoubleToString(equity, 2),
+               " reached upper limit ", DoubleToString(EquityUpperLimit, 2));
+      else
+         Print("Equity guard HALTED: equity ", DoubleToString(equity, 2),
+               " reached lower limit ", DoubleToString(EquityLowerLimit, 2));
+      CloseAllPositions();
+   }
+   else if(!breached && equity_halted)
+   {
+      equity_halted = false;
+      Print("Equity guard: trading resumed. Equity ", DoubleToString(equity, 2),
+            " is back within bounds [", DoubleToString(EquityLowerLimit, 2), " - ",
+            DoubleToString(EquityUpperLimit, 2), "]");
    }
 }
 
