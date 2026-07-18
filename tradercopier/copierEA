@@ -160,6 +160,11 @@ input group "SL Removal"
 input bool EnableRemoveSlAfterSeconds = false;
 input int RemoveSlAfterSeconds = 60;
 
+input group "Equity Guard"
+input bool EnableEquityGuard = false;
+input double EquityUpperLimit = 0.0;
+input double EquityLowerLimit = 0.0;
+
 input group "Display"
 input bool ShowChartStatus = true;
 input bool ShowStatsDashboard = true;
@@ -226,6 +231,8 @@ datetime source_time = 0;
 datetime last_successful_read = 0;
 string last_action = "Waiting for sender signal";
 string last_error = "";
+bool equity_halted = false;
+bool equity_signals_logged = false;
 
 int OnInit()
 {
@@ -270,6 +277,29 @@ void SyncPositions()
    RememberOriginalSourceStops();
    RememberActiveCopiedSourceLifecycles();
    CloseOrphanCopiedPositions();
+   CheckEquityGuard();
+   if(equity_halted)
+   {
+      int total = ArraySize(sources);
+      if(total > 0)
+      {
+         last_action = "Equity guard HALTED: ignoring " + (string)total + " sender signal(s)";
+         if(!equity_signals_logged)
+         {
+            equity_signals_logged = true;
+            Print("Equity guard HALTED: ", (string)total, " sender signal(s) ignored. ",
+                  "Equity ", DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2),
+                  " is outside bounds [", (EquityLowerLimit > 0.0 ? ("$" + DoubleToString(EquityLowerLimit, 2)) : "N/A"),
+                  " - ", (EquityUpperLimit > 0.0 ? ("$" + DoubleToString(EquityUpperLimit, 2)) : "N/A"), "]");
+         }
+      }
+      else
+      {
+         equity_signals_logged = false;
+      }
+      UpdateDashboard();
+      return;
+   }
 
    int total = ArraySize(sources);
    for(int i = 0; i < total; i++)
@@ -313,6 +343,12 @@ bool ReadSources()
       string ticket_text = FileReadString(handle);
       if(ticket_text == "")
          break;
+
+      if(ticket_text == "HALTED")
+      {
+         last_action = "Sender EA is halted by equity guard";
+         break;
+      }
 
       if(ticket_text == "CLOSE")
       {
@@ -3161,6 +3197,74 @@ string MultiPairTargetSymbol(const string source_symbol)
    return "";
 }
 
+void CloseAllPositions()
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0 || !IsOurCopiedOrder())
+         continue;
+
+      trade.OrderDelete(ticket);
+   }
+
+   int total = PositionsTotal();
+   for(int i = total - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !IsOurCopiedPosition())
+         continue;
+
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      ResetLastError();
+      if(trade.PositionClose(ticket))
+         Print("Equity guard: closed copied position #", (string)ticket, " ", symbol, " ", DoubleToString(volume, 2));
+      else
+         Print("Equity guard: FAILED to close copied position #", (string)ticket, " error ", (string)trade.ResultRetcode());
+   }
+}
+
+void CheckEquityGuard()
+{
+   if(!EnableEquityGuard)
+   {
+      if(equity_halted)
+      {
+         equity_halted = false;
+         Print("Equity guard: trading resumed. Equity ", DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2),
+               " is back within bounds [", DoubleToString(EquityLowerLimit, 2), " - ",
+               DoubleToString(EquityUpperLimit, 2), "]");
+      }
+      return;
+   }
+
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   bool upper_active = (EquityUpperLimit > 0.0);
+   bool lower_active = (EquityLowerLimit > 0.0);
+   bool breached = (upper_active && equity >= EquityUpperLimit) ||
+                    (lower_active && equity <= EquityLowerLimit);
+
+   if(breached && !equity_halted)
+   {
+      equity_halted = true;
+      if(upper_active && equity >= EquityUpperLimit)
+         Print("Equity guard HALTED: equity ", DoubleToString(equity, 2),
+               " reached upper limit ", DoubleToString(EquityUpperLimit, 2));
+      else
+         Print("Equity guard HALTED: equity ", DoubleToString(equity, 2),
+               " reached lower limit ", DoubleToString(EquityLowerLimit, 2));
+      CloseAllPositions();
+   }
+   else if(!breached && equity_halted)
+   {
+      equity_halted = false;
+      Print("Equity guard: trading resumed. Equity ", DoubleToString(equity, 2),
+            " is back within bounds [", DoubleToString(EquityLowerLimit, 2), " - ",
+            DoubleToString(EquityUpperLimit, 2), "]");
+   }
+}
+
 string CopierFileName()
 {
    string key = SafeKey(CopierKey);
@@ -3413,11 +3517,15 @@ void UpdateDashboard()
       signal_age = (int)(TimeCurrent() - source_time);
 
     string text =
-       "Minimal Trade Copier\n" +
-       "Status: working\n" +
-       "Key: " + SafeKey(CopierKey) + "\n" +
-       "Mode: " + mode + "\n" +
-       "Entry: " + EntryModeStatusLine() + "\n" +
+        "Minimal Trade Copier\n" +
+        "Status: " + (EnableEquityGuard && equity_halted ? "HALTED (equity guard)" : "working") + "\n" +
+        "Key: " + SafeKey(CopierKey) + "\n" +
+        "Mode: " + mode + "\n" +
+        "Equity guard: " + (EnableEquityGuard ?
+           ("on" + (EquityUpperLimit > 0.0 ? (" upper $" + DoubleToString(EquityUpperLimit, 2)) : "") +
+                    (EquityLowerLimit > 0.0 ? (" lower $" + DoubleToString(EquityLowerLimit, 2)) : "")) :
+           "off") + "\n" +
+        "Entry: " + EntryModeStatusLine() + "\n" +
        "Partial TP booking: " + PartialTpBookingStatusLine() + "\n" +
        "Profit trailing SL: " + ProfitProgressTrailingStatusLine() + "\n" +
        "Sender exit: " + SenderExitActionStatusLine() + "\n" +
