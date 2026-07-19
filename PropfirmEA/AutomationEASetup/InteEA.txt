@@ -4800,7 +4800,7 @@
    }
    // ═══════════════════════════════════════════════════════════════════════
 
-   ulong OpenTrade(const int orderType, const StrategySignal &signal)
+   ulong OpenTrade(const int orderType, const StrategySignal &signal, const int stratId = 0)
    {
       double entry = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
       bool useBrokerStops = PlaceBrokerStopLossTakeProfit && !(EnableVirtualDollarExit && DisableBrokerStopsWhenVirtualExitOn);
@@ -4884,7 +4884,11 @@
          tp = NormalizeDouble(tp, _Digits);
       }
 
-      string comment = "H100 Sigs B" + IntegerToString(signal.buyVotes) + " S" + IntegerToString(signal.sellVotes);
+      string comment = "";
+      if(stratId > 0)
+         comment = "#" + IntegerToString(stratId) + " " + StrategyName(stratId);
+      else
+         comment = "H100 Sigs B" + IntegerToString(signal.buyVotes) + " S" + IntegerToString(signal.sellVotes);
       if(ReverseSignals)
          comment += " REV";
       bool ok = false;
@@ -9949,7 +9953,7 @@
       if(g_auditSignalTime == 0)
          g_auditSignalTime = TimeCurrent();
 
-      ulong ticket = OpenTrade(dir, sig);
+      ulong ticket = OpenTrade(dir, sig, g_intellSelectedStratId);
       if(ticket > 0)
        {
            g_intellTradeTicket = ticket;
