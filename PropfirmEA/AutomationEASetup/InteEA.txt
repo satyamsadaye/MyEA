@@ -1,4 +1,4 @@
-﻿   #property strict
+   #property strict
    #property version   "1.00"
    #property description "100-strategy MT5 EA with flexible risk management, SL/TP models, protection stops, and CSV logging."
 
@@ -33,11 +33,12 @@
       STRATEGY_SINGLE = 1
    };
 
-   enum ENUM_PROP_STRATEGY_MODE
-   {
-      PROP_STRATEGY_ALL = 0,
-      PROP_STRATEGY_CUSTOM = 1
-   };
+    enum ENUM_PROP_STRATEGY_MODE
+    {
+       PROP_STRATEGY_ALL = 0,
+       PROP_STRATEGY_CUSTOM = 1,
+       PROP_STRATEGY_RANGE = 2
+    };
 
    enum ENUM_NAMED_STRATEGY
    {
@@ -1132,7 +1133,9 @@
     input group "Propfirm All-Strategy Backtest"
    input bool EnablePropfirmBacktestMode = false;      // If true, no real trades are placed. It virtually tests all 500 strategies in this EA.
    input ENUM_PROP_STRATEGY_MODE PropStrategyMode = PROP_STRATEGY_ALL;
-   input string PropCustomStrategies = "";              // Comma-separated IDs when PropStrategyMode=CUSTOM, e.g. "12,111,112"
+    input string PropCustomStrategies = "";              // Comma-separated IDs when PropStrategyMode=CUSTOM, e.g. "12,111,112"
+    input int PropRangeFrom = 100;                       // Start strategy ID when PropStrategyMode=RANGE
+    input int PropRangeTo = 200;                         // End strategy ID when PropStrategyMode=RANGE
    input double PropStartingBalance = 5000.0;
    input double PropMaxTotalDrawdownPercent = 6.0;
    input double PropProfitTargetPercent = 10.0;
@@ -1162,9 +1165,11 @@
     input double PropRecencyHalfLifeDays = 14.0;            // Half-life in days for recency weighting (0=disabled, ranks by raw pass rate)
 
     // Writable shadow copies of the Prop* inputs (engine uses these; IntellInit can override them during scans)
-     ENUM_PROP_STRATEGY_MODE _gPropStrategyMode = PropStrategyMode;
-     string _gPropCustomStrategies = PropCustomStrategies;
-    double _gPropStartingBalance = PropStartingBalance;
+      ENUM_PROP_STRATEGY_MODE _gPropStrategyMode = PropStrategyMode;
+      string _gPropCustomStrategies = PropCustomStrategies;
+      int _gPropRangeFrom = PropRangeFrom;
+      int _gPropRangeTo = PropRangeTo;
+     double _gPropStartingBalance = PropStartingBalance;
     double _gPropMaxTotalDrawdownPercent = PropMaxTotalDrawdownPercent;
     double _gPropProfitTargetPercent = PropProfitTargetPercent;
     bool _gPropEnableDailyDrawdown = PropEnableDailyDrawdown;
@@ -1764,47 +1769,73 @@
       }
    }
 
-   int PropEffectiveStrategyCount()
-   {
-      if(g_mergeMode)
-         return PROP_STRATEGY_COUNT;
-      if(g_parallelEnabled)
-         return (g_parallelToId - g_parallelFromId + 1);
-      if(_gPropStrategyMode != PROP_STRATEGY_CUSTOM || _gPropCustomStrategies == "")
-         return PROP_STRATEGY_COUNT;
-      string custom = _gPropCustomStrategies;
-      StringReplace(custom, " ", "");
-      string parts[];
-      int count = StringSplit(custom, (ushort)',', parts);
-      int validCount = 0;
-      for(int i = 0; i < count; i++)
-         validCount += CountStrategiesInToken(parts[i]);
-      return validCount > 0 ? validCount : 0;
-   }
+    int PropEffectiveStrategyCount()
+    {
+       if(g_mergeMode)
+          return PROP_STRATEGY_COUNT;
+       if(g_parallelEnabled)
+          return (g_parallelToId - g_parallelFromId + 1);
+       if(_gPropStrategyMode == PROP_STRATEGY_RANGE)
+          return MathMax(0, _gPropRangeTo - _gPropRangeFrom + 1);
+       if(_gPropStrategyMode == PROP_STRATEGY_CUSTOM && _gPropCustomStrategies != "")
+       {
+          string custom = _gPropCustomStrategies;
+          StringReplace(custom, " ", "");
+          string parts[];
+          int count = StringSplit(custom, (ushort)',', parts);
+          int validCount = 0;
+          for(int i = 0; i < count; i++)
+             validCount += CountStrategiesInToken(parts[i]);
+          return validCount > 0 ? validCount : 0;
+       }
+       return PROP_STRATEGY_COUNT;
+    }
 
-   bool PropIsCustomStrategy(const int id)
-   {
-      if(g_mergeMode)
-         return true;
-      if(g_parallelEnabled)
-         return (id >= g_parallelFromId && id <= g_parallelToId);
-      if(_gPropStrategyMode != PROP_STRATEGY_CUSTOM)
-         return true;
-      string custom = _gPropCustomStrategies;
-      StringReplace(custom, " ", "");
-      if(custom == "")
-         return false;
-      string parts[];
-      int count = StringSplit(custom, (ushort)',', parts);
-      for(int i = 0; i < count; i++)
-      {
-         if(ParseStrategyToken(parts[i], id) > 0)
-            return true;
-      }
-      return false;
-   }
+    bool PropIsCustomStrategy(const int id)
+    {
+       if(g_mergeMode)
+          return true;
+       if(g_parallelEnabled)
+          return (id >= g_parallelFromId && id <= g_parallelToId);
+       if(_gPropStrategyMode == PROP_STRATEGY_RANGE)
+          return (id >= _gPropRangeFrom && id <= _gPropRangeTo);
+       if(_gPropStrategyMode == PROP_STRATEGY_CUSTOM)
+       {
+          string custom = _gPropCustomStrategies;
+          StringReplace(custom, " ", "");
+          if(custom == "")
+             return false;
+          string parts[];
+          int count = StringSplit(custom, (ushort)',', parts);
+          for(int i = 0; i < count; i++)
+          {
+             if(ParseStrategyToken(parts[i], id) > 0)
+                return true;
+          }
+          return false;
+       }
+       return true;
+    }
 
-   void EvaluateStrategies(StrategySignal &signal)
+    string PropStratModeLabel()
+    {
+       if(_gPropStrategyMode == PROP_STRATEGY_RANGE)
+          return "range strategies: " + IntegerToString(_gPropRangeFrom) + " - " + IntegerToString(_gPropRangeTo);
+       if(_gPropStrategyMode == PROP_STRATEGY_CUSTOM)
+           return "custom strategies: " + _gPropCustomStrategies;
+        return "all " + IntegerToString(PROP_STRATEGY_COUNT) + " strategies";
+     }
+
+     string PropReportTitle()
+     {
+        if(_gPropStrategyMode == PROP_STRATEGY_RANGE)
+           return "Propfirm Strategy Backtest Report (" + IntegerToString(_gPropRangeFrom) + "-" + IntegerToString(_gPropRangeTo) + ")";
+        if(_gPropStrategyMode == PROP_STRATEGY_CUSTOM)
+           return "Forward test";
+        return "Propfirm 100 Strategy Backtest Report";
+     }
+
+     void EvaluateStrategies(StrategySignal &signal)
    {
       _CacheRefresh();
       _CacheHL();
@@ -5055,8 +5086,8 @@
          propLastResumeSpawn = 0;
          propSignalCacheBar = 0;
          ArrayInitialize(propSignalCounts, 0);
-         string stratInfo = (_gPropStrategyMode == PROP_STRATEGY_CUSTOM) ? ("custom strategies: " + _gPropCustomStrategies) : ("all " + IntegerToString(PROP_STRATEGY_COUNT) + " strategies");
-         LogEvent("PROP_INIT", "Rolling spawn mode enabled (" + PropSpawnIntervalLabel() + "). Real orders disabled; spawning fresh runs for " + stratInfo + " during the active window (pause/close hours skipped).");
+          string stratInfo = PropStratModeLabel();
+          LogEvent("PROP_INIT", "Rolling spawn mode enabled (" + PropSpawnIntervalLabel() + "). Real orders disabled; spawning fresh runs for " + stratInfo + " during the active window (pause/close hours skipped).");
          return;
       }
       ArrayInitialize(propSignalCounts, 0);
@@ -5093,8 +5124,8 @@
          propResults[i].breachReason = "";
          propResults[i].pos.open = false;
       }
-      string stratInfo = (_gPropStrategyMode == PROP_STRATEGY_CUSTOM) ? ("custom strategies: " + _gPropCustomStrategies) : ("all " + IntegerToString(PROP_STRATEGY_COUNT) + " strategies");
-      LogEvent("PROP_INIT", "Single-run mode enabled. Real orders disabled; testing " + stratInfo + " virtually.");
+       string stratInfo = PropStratModeLabel();
+       LogEvent("PROP_INIT", "Single-run mode enabled. Real orders disabled; testing " + stratInfo + " virtually.");
    }
 
    void RunPropfirmBacktestTick()
@@ -6044,7 +6075,7 @@
       }
 
       PropWriteHtmlHead(handle);
-      string singleTitle = (_gPropStrategyMode == PROP_STRATEGY_CUSTOM) ? "Forward test" : "Propfirm 100 Strategy Backtest Report";
+      string singleTitle = PropReportTitle();
       PropWriteHeader(handle, singleTitle, testEnd);
 
       FileWriteString(handle, "<div class=\"section\">\n<h2>Run Report - Settings Used For This Run</h2>\n<div class=\"settings-grid\">\n");
@@ -6604,7 +6635,7 @@
       }
 
       PropWriteHtmlHead(handle);
-      string rollingTitle = (_gPropStrategyMode == PROP_STRATEGY_CUSTOM) ? "Forward test" : "Propfirm Rolling Backtest Report";
+      string rollingTitle = PropReportTitle();
       PropWriteHeader(handle, rollingTitle, testEnd);
 
       FileWriteString(handle, "<div class=\"section\">\n<h2>Run Report - Settings Used For This Run</h2>\n<div class=\"settings-grid\">\n");
@@ -6709,13 +6740,13 @@
           "<th data-type=\"num\">Avg Days->Target</th>\n</tr></thead>\n<tbody>\n");
 
       int rankOut = 0;
-      for(int rank = 0; rank < PROP_STRATEGY_COUNT; rank++)
-      {
-         int sid = sortOrder[rank];
-         if(_gPropStrategyMode == PROP_STRATEGY_CUSTOM && !PropIsCustomStrategy(sid + 1))
-            continue;
-         if(_gPropStrategyMode == PROP_STRATEGY_CUSTOM && aggStarts[sid] == 0)
-            continue;
+       for(int rank = 0; rank < PROP_STRATEGY_COUNT; rank++)
+       {
+          int sid = sortOrder[rank];
+          if((_gPropStrategyMode == PROP_STRATEGY_CUSTOM || _gPropStrategyMode == PROP_STRATEGY_RANGE) && !PropIsCustomStrategy(sid + 1))
+             continue;
+          if((_gPropStrategyMode == PROP_STRATEGY_CUSTOM || _gPropStrategyMode == PROP_STRATEGY_RANGE) && aggStarts[sid] == 0)
+             continue;
          rankOut++;
 
          double passRate = (aggStarts[sid] > 0) ? (double)aggPassed[sid] / (double)aggStarts[sid] * 100.0 : 0.0;
@@ -7074,7 +7105,7 @@
       FileWriteString(handle,
          "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n" +
          "<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
-         "<title>" + (_gPropStrategyMode == PROP_STRATEGY_CUSTOM ? "Forward test" : "Propfirm Backtest Report") + "</title>\n<style>\n" +
+         "<title>" + PropReportTitle() + "</title>\n<style>\n" +
          "*{box-sizing:border-box;margin:0;padding:0}\n" +
          "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#f8fafc;color:#1e293b;line-height:1.5;padding:24px}\n" +
          ".wrap{max-width:1500px;margin:0 auto}\n" +
@@ -7205,7 +7236,7 @@
       FileWriteString(handle, PropKv("Pause Signals Enabled", PropBoolStr(_gPropEnablePauseSignals)));
       FileWriteString(handle, PropKv("Spawn Interval", PropSpawnIntervalLabel()));
       FileWriteString(handle, PropKv("Recency Half-Life (days)", DoubleToString(_gPropRecencyHalfLifeDays, 1) + (_gPropRecencyHalfLifeDays > 0.0 ? "" : " (disabled)")));
-      FileWriteString(handle, PropKv("Prop Strategy Mode", (_gPropStrategyMode == PROP_STRATEGY_CUSTOM) ? ("CUSTOM: " + _gPropCustomStrategies) : "ALL"));
+      FileWriteString(handle, PropKv("Prop Strategy Mode", PropStratModeLabel()));
       FileWriteString(handle, PropKv("Virtual Dollar Exit", PropBoolStr(EnableVirtualDollarExit)));
       FileWriteString(handle, PropKv("Virtual Exit Lot", DoubleToString(VirtualExitLot, 2)));
       FileWriteString(handle, PropKv("Virtual Take Profit", DoubleToString(VirtualTakeProfitMoney, 2)));
