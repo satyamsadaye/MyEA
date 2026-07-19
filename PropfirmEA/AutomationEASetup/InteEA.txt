@@ -5665,8 +5665,13 @@
       if(spawnCount == 0)
          return;
 
-      ArrayResize(propRuns, oldSize + spawnCount);
-      ArrayResize(propPosInActive, ArraySize(propRuns));
+      int newSize = ArrayResize(propRuns, oldSize + spawnCount);
+      if(newSize <= oldSize)
+      {
+         Print("MEMORY LOW: Cannot spawn new runs (propRuns at ", IntegerToString(oldSize), ")");
+         return;
+      }
+      ArrayResize(propPosInActive, newSize);
       datetime dayReset = PropCurrentResetTime(now);
       int spawnIdx = 0;
 
