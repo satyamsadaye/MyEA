@@ -1217,9 +1217,10 @@
         input int IntellMagicNumber = 100260630;
         input bool IntellExportHtmlReport = true;          // Export HTML report after live replay scan
        input group "Intelligent Trader — Selection Mode"
-      input bool IntellSelectWorst = false;
+       input bool IntellSelectWorst = false;
+         input bool EnableLiveTradeBridge = false;            // Write intell_trade_active.flag when trade is open (for external automation awareness)
 
-       input group "    Worst Mode Settings"
+        input group "    Worst Mode Settings"
       input int IntellMinBlownRate = 80;                     // Min % of completed runs that are blown
       input int IntellWorstRecentPct = 50;                   // Check the most recent X% of completed runs for trend (0=disable)
       input int IntellWorstRecentMinBlown = 80;              // Min % of those recent runs that must be blown
@@ -1243,9 +1244,10 @@
       input int IntellScanFromMonth = 1;                  // Start month for replay scan (1-12)
       input int IntellScanFromDay = 1;                    // Start day for replay scan (1-31)
 
-   #define PROP_STRATEGY_COUNT 1000
+    #define PROP_STRATEGY_COUNT 1000
+    #define INTELL_TRADE_FLAG_FILE "intell_trade_active.flag"
 
-   struct PropVirtualPosition
+    struct PropVirtualPosition
    {
       bool open;
       int type;
@@ -1612,9 +1614,10 @@
           IndicatorRelease(atrHandle);
        EventKillTimer();
        DeleteDashboard();
-       if(EnableIntelligentTrader) IntellDeleteDashboard();
-       LogEvent("DEINIT", "EA stopped. reason=" + IntegerToString(reason));
-    }
+        if(EnableIntelligentTrader) IntellDeleteDashboard();
+        UpdateIntellTradeFlag();
+        LogEvent("DEINIT", "EA stopped. reason=" + IntegerToString(reason));
+     }
 
      void OnTimer()
      {
@@ -5075,20 +5078,21 @@
       return true;
    }
 
-   void CloseAllEaPositions()
-   {
-      for(int i = PositionsTotal() - 1; i >= 0; i--)
-      {
-         ulong ticket = PositionGetTicket(i);
-         if(ticket == 0 || !PositionSelectByTicket(ticket))
-            continue;
-         if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == (long)MagicNumber)
-         {
-            bool ok = trade.PositionClose(ticket);
-            LogEvent(ok ? "POSITION_CLOSED" : "POSITION_CLOSE_FAILED", "ticket=" + IntegerToString((int)ticket) + ",retcode=" + IntegerToString((int)trade.ResultRetcode()));
-         }
-      }
-   }
+    void CloseAllEaPositions()
+    {
+       for(int i = PositionsTotal() - 1; i >= 0; i--)
+       {
+          ulong ticket = PositionGetTicket(i);
+          if(ticket == 0 || !PositionSelectByTicket(ticket))
+             continue;
+          if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == (long)MagicNumber)
+          {
+             bool ok = trade.PositionClose(ticket);
+             LogEvent(ok ? "POSITION_CLOSED" : "POSITION_CLOSE_FAILED", "ticket=" + IntegerToString((int)ticket) + ",retcode=" + IntegerToString((int)trade.ResultRetcode()));
+          }
+       }
+       UpdateIntellTradeFlag();
+    }
 
    void InitPropfirmBacktest()
    {
@@ -9603,6 +9607,7 @@
 
    void IntellCaptureCloseAndExport()
    {
+      UpdateIntellTradeFlag();
       if(g_auditSelectionTime == 0) return;
       g_auditTradeCloseTime = TimeCurrent();
       g_auditBalanceAfter = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -9884,6 +9889,22 @@
       return true;
    }
 
+   void UpdateIntellTradeFlag()
+   {
+      if(!EnableIntelligentTrader || !EnableLiveTradeBridge) return;
+      bool hasOpen = (PositionsTotal() > 0);
+      bool exists = FileIsExist(INTELL_TRADE_FLAG_FILE, FILE_COMMON);
+      if(hasOpen && !exists)
+      {
+         int h = FileOpen(INTELL_TRADE_FLAG_FILE, FILE_WRITE | FILE_TXT | FILE_COMMON);
+         if(h != INVALID_HANDLE) { FileWrite(h, "1"); FileClose(h); }
+      }
+      else if(!hasOpen && exists)
+      {
+         FileDelete(INTELL_TRADE_FLAG_FILE, FILE_COMMON);
+      }
+   }
+
    void IntellTradeTick()
    {
       if(g_intellSelectedStratId <= 0) { IntellInit(); return; }
@@ -9986,14 +10007,16 @@
               g_auditTp = (dir == ORDER_TYPE_BUY) ? g_auditEntryPrice + audTpDist : g_auditEntryPrice - audTpDist;
            g_auditSelection += "Stop Loss: " + DoubleToString(g_auditSl, _Digits) + "\r\n";
            g_auditSelection += "Take Profit: " + DoubleToString(g_auditTp, _Digits) + "\r\n";
-       }
-    }
+           UpdateIntellTradeFlag();
+        }
+     }
 
-      void IntellTick()
-      {
-         if(!EnableIntelligentTrader || eaStopped) return;
+       void IntellTick()
+       {
+          if(!EnableIntelligentTrader || eaStopped) return;
+          UpdateIntellTradeFlag();
 
-         switch(g_intellState)
+          switch(g_intellState)
       {
          case INTELL_IDLE:
             if(g_intellSelectedStratId <= 0)
@@ -10014,15 +10037,16 @@
                  if(CheckEquityLevels()) { IntellCaptureCloseAndExport(); return; }
                 if(GlobalIsCloseTime()) { CloseAllEaPositions(); }
              }
-             else
-             {
-                IntellCaptureCloseAndExport();
-                return;
-             }
-             break;
-          }
+              else
+              {
+                 IntellCaptureCloseAndExport();
+                 return;
+              }
+              UpdateIntellTradeFlag();
+              break;
+           }
 
-          case INTELL_RETRY_WAIT:
+           case INTELL_RETRY_WAIT:
              if(TimeCurrent() >= g_intellRetryTime)
              {
                 g_intellSelectedStratId = 0;
