@@ -8033,9 +8033,10 @@
               case INTELL_RETRY_WAIT:stateStr = "RETRY WAIT"; stateCol = IntellBadColor();   break;
               case INTELL_WAIT_DATA: stateStr = "WAIT DATA"; stateCol = IntellWarnColor();   break;
           }
+           IntellSetLine(ln++, "UTC: " + TimeToString(TimeGMT(), TIME_DATE|TIME_SECONDS) + "  |  Chart: " + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS), IntellMutedColor());
            IntellSetLine(ln++, "STATE: " + stateStr, stateCol);
-            IntellSetLine(ln++, "Override: normal StrategyMode/SingleStrategy is IGNORED", IntellWarnColor());
-            IntellSetLine(ln++, "Last sync: " + (g_intellLoadedFileTime > 0 ? TimeToString(g_intellLoadedFileTime, TIME_DATE|TIME_SECONDS) : "N/A"), IntellMutedColor());
+             IntellSetLine(ln++, "Override: normal StrategyMode/SingleStrategy is IGNORED", IntellWarnColor());
+             IntellSetLine(ln++, "Last sync: " + (g_intellLoadedFileTime > 0 ? TimeToString(g_intellLoadedFileTime, TIME_DATE|TIME_SECONDS) : "N/A"), IntellMutedColor());
 
             string rangeStr = (g_intellScanRangeFrom > 0 && g_intellScanRangeTo > 0) ? TimeToString(g_intellScanRangeFrom, TIME_DATE|TIME_MINUTES) + "  ->  " + TimeToString(g_intellScanRangeTo, TIME_DATE|TIME_MINUTES) : "N/A";
             IntellSetLine(ln++, "SCAN RANGE: " + rangeStr + "  [" + IntegerToString(ArraySize(propRuns)) + " runs]", IntellGoodColor());
@@ -8049,11 +8050,14 @@
               datetime cur = iTime(_Symbol, g_intellTimeframe, g_intellScanStartBar - g_intellScanProgress + 1);
               if(cur > 0)
                  IntellSetLine(ln++, "Bar date: " + TimeToString(cur, TIME_DATE | TIME_MINUTES));
-              if(g_intellValidationStatus != "")
-              {
-                 IntellSetLine(ln++, g_intellValidationStatus, IntellBadColor());
-                 g_intellValidationStatus = "";
-              }
+               if(g_intellValidationStatus != "")
+               {
+                  string vs = g_intellValidationStatus;
+                  if(StringLen(vs) > 120)
+                     vs = StringSubstr(vs, 0, 117) + "...";
+                  IntellSetLine(ln++, vs, IntellBadColor());
+                  g_intellValidationStatus = "";
+               }
               IntellSetLine(ln++, "Active runs: " + IntegerToString(ArraySize(propActiveIdx)) + " / Total: " + IntegerToString(ArraySize(propRuns)));
                IntellSetLine(ln++, "Target: " + modeStr + " @" + IntegerToString(IntellSelectWorst ? IntellMinBlownRate : IntellMinPassRate) + "%  Recent: latest " + IntegerToString(IntellSelectWorst ? IntellWorstRecentPct : IntellBestRecentPct) + "%  Spawn: " + IntellSpawnIntervalLabel());
               IntellSetLine(ln++, " ");
@@ -8128,16 +8132,17 @@
                  IntellSetLine(ln++, " ");
               }
 
-              if(g_intellState == INTELL_READY)
-              {
-                 IntellSetLine(ln++, "Waiting for signal from selected strategy...", IntellWarnColor());
-                 if(g_intellValidationStatus != "")
-                 {
-                    int secLeft = (int)(g_intellNextValidationTime - TimeCurrent());
-                    if(secLeft < 0) secLeft = 0;
-                    IntellSetLine(ln++, g_intellValidationStatus + " (next check in " + IntegerToString(secLeft) + "s)", IntellTextColor());
-                 }
-              }
+               if(g_intellState == INTELL_READY)
+               {
+                  IntellSetLine(ln++, "Waiting for signal from selected strategy...", IntellWarnColor());
+                  if(g_intellValidationStatus != "")
+                  {
+                     string statusLine = g_intellValidationStatus;
+                     if(StringLen(statusLine) > 120)
+                        statusLine = StringSubstr(statusLine, 0, 117) + "...";
+                     IntellSetLine(ln++, statusLine, IntellTextColor());
+                  }
+               }
              if(g_intellState == INTELL_TRADING)
              {
                 if(PositionSelectByTicket(g_intellTradeTicket))
@@ -9869,9 +9874,9 @@
       double avgLoss = losses > 0 ? MathAbs(grossLoss) / losses : 0.0;
       double rr = avgLoss > 0.0 ? avgWin / avgLoss : (avgWin > 0.0 ? 999.0 : 0.0);
       double tradesPerDay = duration > 0.0 ? (double)trades / duration : 0.0;
-      outReject = "✓ eligible | passR=" + DoubleToString(passRate, 1) + "% blownR=" + DoubleToString(blownRate, 1) +
-         "% WR=" + DoubleToString(wr, 1) + "% PF=" + DoubleToString(pf, 2) + " RR=" + DoubleToString(rr, 2) +
-         " activePL=$" + DoubleToString(activeCnt > 0 ? activeSumPL / activeCnt : 0.0, 2);
+      outReject = "eligible: passR=" + DoubleToString(passRate, 1) + "% blownR=" + DoubleToString(blownRate, 1) +
+         " WR=" + DoubleToString(wr, 1) + "% PF=" + DoubleToString(pf, 2) + " RR=" + DoubleToString(rr, 2) +
+         " actPL=$" + DoubleToString(activeCnt > 0 ? activeSumPL / activeCnt : 0.0, 2);
       return true;
    }
 
@@ -9883,8 +9888,13 @@
       if(TimeCurrent() >= g_intellNextValidationTime)
       {
          string used = "";
+         bool freshData = true;
          if(IntellScanFromFile)
-            IntellLoadResultsFromFile(used, true);
+         {
+            freshData = IntellLoadResultsFromFile(used, true);
+            if(!freshData && g_intellLoadedFileTime == 0)
+               freshData = IntellLoadResultsFromFile(used, false);
+         }
          string reject = "";
          if(!IntellIsStrategyStillEligible(g_intellSelectedStratId, reject))
          {
@@ -9895,8 +9905,21 @@
             IntellInit();
             return;
          }
-         g_intellNextValidationTime = TimeCurrent() + IntellRetrySeconds;
-         g_intellValidationStatus = "Validated " + TimeToString(TimeCurrent(), TIME_SECONDS) + " — " + reject;
+          g_intellNextValidationTime = TimeCurrent() + IntellRetrySeconds;
+          string statusTime;
+          if(IntellScanFromFile && g_intellLoadedFileTime > 0)
+          {
+             string reportTime = TimeToString(g_intellLoadedFileTime, TIME_SECONDS);
+             if(!freshData)
+                statusTime = "Last validated at " + reportTime + " (report) — waiting for new report";
+             else
+                statusTime = "Validated " + reportTime + " (report)";
+          }
+          else
+          {
+             statusTime = "Validated " + TimeToString(TimeCurrent(), TIME_SECONDS);
+          }
+          g_intellValidationStatus = statusTime + " — " + reject;
          Print("INTELL_VALIDATE: #" + IntegerToString(g_intellSelectedStratId) + " " + StrategyName(g_intellSelectedStratId) + " still eligible: " + reject);
       }
 
