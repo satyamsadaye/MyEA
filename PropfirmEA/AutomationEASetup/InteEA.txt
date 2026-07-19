@@ -1216,16 +1216,27 @@
        input string IntellReportDataFile = "Propfirm_Strategy_Data.csv";
         input int IntellMagicNumber = 100260630;
         input bool IntellExportHtmlReport = true;          // Export HTML report after live replay scan
-      input group "Intelligent Trader — Selection"
-     input bool IntellSelectWorst = false;
-     input int IntellMinPassRateOrBlown = 100;
-     input int IntellMaxMinutesSinceLastTrade = 60;
-      input int IntellMinCompletedRuns = 3;
-      input int IntellMinCompletionPercent = 90;
-        input int IntellMinSignalsPerTrade = 10;
-        input int IntellMaxSignalsPerTrade = 20;
-        input int IntellAvgPLThresholdPct = 10;    // % of MaxDD (worst) or ProfitTarget (best) for avg active run P&L filter. 0=disable
-         input int IntellRetrySeconds = 60;
+       input group "Intelligent Trader — Selection Mode"
+      input bool IntellSelectWorst = false;
+
+       input group "    Worst Mode Settings"
+      input int IntellMinBlownRate = 80;                     // Min % of completed runs that are blown
+      input int IntellWorstRecentPct = 50;                   // Check the most recent X% of completed runs for trend (0=disable)
+      input int IntellWorstRecentMinBlown = 80;              // Min % of those recent runs that must be blown
+
+       input group "    Best Mode Settings"
+      input int IntellMinPassRate = 80;                      // Min % of completed runs that passed
+      input int IntellBestRecentPct = 50;                    // Check the most recent X% of completed runs for trend (0=disable)
+      input int IntellBestRecentMinPass = 80;                // Min % of those recent runs that must be passed
+
+       input group "Intelligent Trader — Common Filters"
+      input int IntellMaxMinutesSinceLastTrade = 60;
+       input int IntellMinCompletedRuns = 3;
+       input int IntellMinCompletionPercent = 90;
+         input int IntellMinSignalsPerTrade = 10;
+         input int IntellMaxSignalsPerTrade = 20;
+         input int IntellAvgPLThresholdPct = 10;    // % of MaxDD (worst) or ProfitTarget (best) for avg active run P&L filter. 0=disable
+          input int IntellRetrySeconds = 60;
       input group "Intelligent Trader — Scan Range"
       input bool IntellLimitScanRange = true;             // Enable scan from specific start date
       input int IntellScanFromYear = 2025;                // Start year for replay scan
@@ -8044,7 +8055,7 @@
                  g_intellValidationStatus = "";
               }
               IntellSetLine(ln++, "Active runs: " + IntegerToString(ArraySize(propActiveIdx)) + " / Total: " + IntegerToString(ArraySize(propRuns)));
-              IntellSetLine(ln++, "Target: " + modeStr + " @" + IntegerToString(IntellMinPassRateOrBlown) + "%  Spawn: " + IntellSpawnIntervalLabel());
+               IntellSetLine(ln++, "Target: " + modeStr + " @" + IntegerToString(IntellSelectWorst ? IntellMinBlownRate : IntellMinPassRate) + "%  Recent: latest " + IntegerToString(IntellSelectWorst ? IntellWorstRecentPct : IntellBestRecentPct) + "%  Spawn: " + IntellSpawnIntervalLabel());
               IntellSetLine(ln++, " ");
            }
 
@@ -8161,56 +8172,66 @@
               }
           }
 
-          // Top candidates
-          if(g_intellTopCount > 0)
-          {
-             IntellSetLine(ln++, " ", IntellMutedColor());
-             string modeLabel = IntellSelectWorst ? "WORST CANDIDATES" : "BEST CANDIDATES";
-             IntellSetLine(ln++, modeLabel + " (top " + IntegerToString(g_intellTopCount) + ")", IntellMutedColor());
-              int showCount = MathMin(g_intellTopCount, 3);
-              for(int ti = 0; ti < showCount; ti++)
-              {
-                 int sid = g_intellTopIds[ti];
-                 string name = StrategyName(sid);
-                 if(StringLen(name) > 8) name = StringSubstr(name, 0, 8);
-                   string line = "#" + IntegerToString(ti + 1) + " #" + IntegerToString(sid) + " " + name +
-                      " R" + IntegerToString(g_intellTopStarts[ti]) +
-                      " P" + IntegerToString(g_intellTopPassed[ti]) +
-                      " B" + IntegerToString(g_intellTopBlown[ti]) +
-                      " A" + IntegerToString(g_intellTopActive[ti]);
-                  string line2 = "WR" + DoubleToString(g_intellTopWR[ti], 1) + "% PF" + DoubleToString(g_intellTopPF[ti], 2) +
-                     " RR" + DoubleToString(g_intellTopRR[ti], 2) + " Trd/D" + DoubleToString(g_intellTopTradesPerDay[ti], 1);
-                  string line3 = "Sig" + IntegerToString(g_intellTopTotalSignals[ti]) + " Sig/D" + DoubleToString(g_intellTopAvgSigDay[ti], 1) +
-                     " D-Tgt" + DoubleToString(g_intellTopAvgDaysTarget[ti], 1) + " D-Br" + DoubleToString(g_intellTopAvgDaysBreach[ti], 1);
-                   string reject = g_intellTopRejection[ti];
-                  bool qualified = (StringFind(reject, "✓") == 0);
-                  color clr = qualified ? IntellGoodColor() : IntellWarnColor();
-                  IntellSetLine(ln++, line, clr);
-                  IntellSetLine(ln++, line2, IntellTextColor());
-                  IntellSetLine(ln++, line3, IntellMutedColor());
-                  if(reject != "") IntellSetLine(ln++, (qualified ? ">>> " : "") + reject, qualified ? IntellGoodColor() : IntellBadColor());
-              }
-             IntellSetLine(ln++, " ", IntellMutedColor());
-          }
-
-          IntellSetLine(ln++, "SETTINGS", IntellMutedColor());
-           IntellSetLine(ln++, "Selection: " + (IntellSelectWorst ? "WORST (BLOWN)" : "BEST (PASS)") + " @ " + IntegerToString(IntellMinPassRateOrBlown) + "%");
-           IntellSetLine(ln++, "Max Age: " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m");
-            IntellSetLine(ln++, "Active PL Filter: " + IntegerToString(IntellAvgPLThresholdPct) + "% of " + (IntellSelectWorst ? "MaxDD" : "ProfitTarget"));
-
-           if(g_intellSelectedStratId > 0)
+           // Top candidates – detailed eligibility
+           if(g_intellTopCount > 0)
            {
               IntellSetLine(ln++, " ", IntellMutedColor());
-              IntellSetLine(ln++, "ELIGIBILITY CHECKS (V=pass X=fail)", IntellMutedColor());
-              string eligDetail = IntellEligibilityDetail(g_intellSelectedStratId);
-              string eligLines[];
-              int eligCnt = StringSplit(eligDetail, StringGetCharacter("\n", 0), eligLines);
-              for(int eli = 0; eli < eligCnt && ln < INTELL_LINE_COUNT; eli++)
-              {
-                 if(StringLen(eligLines[eli]) > 0)
-                    IntellSetLine(ln++, eligLines[eli], IntellTextColor());
-              }
+              string modeLabel = IntellSelectWorst ? "WORST CANDIDATES (detailed)" : "BEST CANDIDATES (detailed)";
+              IntellSetLine(ln++, modeLabel + "  top " + IntegerToString(g_intellTopCount), IntellMutedColor());
+               int showCount = MathMin(g_intellTopCount, 3);
+               for(int ti = 0; ti < showCount; ti++)
+               {
+                  int sid = g_intellTopIds[ti];
+                  color rankClr = (ti == 0) ? IntellGoodColor() : IntellTextColor();
+                  IntellSetLine(ln++, "TOP #" + IntegerToString(ti + 1) + "  #" + IntegerToString(sid) + " " + StrategyName(sid), rankClr);
+                  string eligDetail = IntellEligibilityDetail(sid);
+                  string eligLines[];
+                  int eligCnt = StringSplit(eligDetail, StringGetCharacter("\n", 0), eligLines);
+                  for(int eli = 0; eli < eligCnt && ln < INTELL_LINE_COUNT; eli++)
+                  {
+                     string trimmed = eligLines[eli];
+                     StringTrimLeft(trimmed);
+                     StringTrimRight(trimmed);
+                      if(StringLen(trimmed) > 0)
+                      {
+                         ushort firstCh = StringGetCharacter(trimmed, 0);
+                         bool checkGood = (firstCh == 0x2713);
+                         color lineClr = checkGood ? IntellGoodColor() : IntellBadColor();
+                         IntellSetLine(ln++, "  " + trimmed, lineClr);
+                      }
+                  }
+                  IntellSetLine(ln++, " ", IntellMutedColor());
+               }
            }
+
+           IntellSetLine(ln++, "SETTINGS", IntellMutedColor());
+            int recentPct = IntellSelectWorst ? IntellWorstRecentPct : IntellBestRecentPct;
+            int minRecentPct = IntellSelectWorst ? IntellWorstRecentMinBlown : IntellBestRecentMinPass;
+            IntellSetLine(ln++, "Mode: " + (IntellSelectWorst ? "WORST @" + IntegerToString(IntellMinBlownRate) + "% blown" : "BEST @" + IntegerToString(IntellMinPassRate) + "% pass"));
+            IntellSetLine(ln++, "Recent: check latest " + IntegerToString(recentPct) + "% of runs, need >= " + IntegerToString(minRecentPct) + "% " + (IntellSelectWorst ? "blown" : "passed"));
+            IntellSetLine(ln++, "Max Age: " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m");
+             IntellSetLine(ln++, "Active PL Filter: " + IntegerToString(IntellAvgPLThresholdPct) + "% of " + (IntellSelectWorst ? "MaxDD" : "ProfitTarget"));
+
+            if(g_intellSelectedStratId > 0)
+            {
+               IntellSetLine(ln++, " ", IntellMutedColor());
+               IntellSetLine(ln++, "SELECTED ELIGIBILITY CHECKS", IntellMutedColor());
+               string eligDetail = IntellEligibilityDetail(g_intellSelectedStratId);
+               string eligLines[];
+               int eligCnt = StringSplit(eligDetail, StringGetCharacter("\n", 0), eligLines);
+               for(int eli = 0; eli < eligCnt && ln < INTELL_LINE_COUNT; eli++)
+               {
+                  string trimmed = eligLines[eli];
+                  StringTrimLeft(trimmed);
+                  StringTrimRight(trimmed);
+                  if(StringLen(trimmed) > 0)
+                  {
+                     ushort firstCh = StringGetCharacter(trimmed, 0);
+                     color lineClr = (firstCh == 0x2713) ? IntellGoodColor() : ((firstCh == 0x2717) ? IntellBadColor() : IntellTextColor());
+                     IntellSetLine(ln++, "  " + trimmed, lineClr);
+                  }
+               }
+            }
         }
 
        for(; ln < INTELL_LINE_COUNT; ln++) IntellSetLine(ln, " ");
@@ -9039,7 +9060,60 @@
          Print("Propfirm data file exported to Common Files: ", IntellReportDataFile, " (", IntegerToString(ArraySize(propRuns)), " runs)");
       }
 
-     void IntellPickFromResults()
+   bool IntellCheckRecentCompletions(const int sid, int &outMatch, int &outTotal, int &outRecentTotal, string &outDetail)
+   {
+      outMatch = 0;
+      outTotal = 0;
+      outRecentTotal = 0;
+      outDetail = "";
+      int recentPct = IntellSelectWorst ? IntellWorstRecentPct : IntellBestRecentPct;
+      if(recentPct <= 0) return true;
+
+      datetime ended[1000];
+      bool passed[1000];
+      int cnt = 0;
+
+      for(int i = 0; i < ArraySize(propRuns); i++)
+      {
+         if(propRuns[i].strategyId != sid) continue;
+         if(!propRuns[i].passed && !propRuns[i].breached) continue;
+         if(propRuns[i].ended <= 0) continue;
+         int pos = cnt;
+         for(int j = 0; j < cnt; j++)
+            if(propRuns[i].ended > ended[j]) { pos = j; break; }
+         for(int k = cnt; k > pos && k < 1000; k--)
+         {
+            if(k < 1000) { ended[k] = ended[k - 1]; passed[k] = passed[k - 1]; }
+         }
+         if(pos < 1000) { ended[pos] = propRuns[i].ended; passed[pos] = propRuns[i].passed; }
+         if(cnt < 1000) cnt++;
+      }
+
+      outTotal = cnt;
+      int checkCount = MathMax(1, cnt * recentPct / 100);
+      if(checkCount > cnt) checkCount = cnt;
+      outRecentTotal = checkCount;
+
+      int modeMatch = 0;
+      for(int i = 0; i < checkCount; i++)
+      {
+         bool match = (IntellSelectWorst && !passed[i]) || (!IntellSelectWorst && passed[i]);
+         if(match) modeMatch++;
+      }
+      outMatch = modeMatch;
+
+      int minRequiredPct = IntellSelectWorst ? IntellWorstRecentMinBlown : IntellBestRecentMinPass;
+      int minRequired = MathMax(1, checkCount * minRequiredPct / 100);
+      bool result = (modeMatch >= minRequired);
+
+      string modeLabel = IntellSelectWorst ? "blown" : "passed";
+      string trend = result ? "meets" : "misses";
+      outDetail = "recent " + IntegerToString(recentPct) + "% (" + IntegerToString(modeMatch) + "/" + IntegerToString(checkCount) + " " + modeLabel + ", need >= " + IntegerToString(minRequired) + ") " + trend + " trend";
+
+      return result;
+   }
+
+      void IntellPickFromResults()
     {
        g_intellSelectedStratId = 0;
        g_intellTopCount = 0;
@@ -9124,7 +9198,7 @@
        int bestId = 0;
        double bestScore = IntellSelectWorst ? -1e99 : 1e99;
        int eligibleCount = 0;
-       double targetRate = (double)IntellMinPassRateOrBlown;
+        double targetRate = (double)(IntellSelectWorst ? IntellMinBlownRate : IntellMinPassRate);
 
        for(int sid = 0; sid < PROP_STRATEGY_COUNT; sid++)
        {
@@ -9181,41 +9255,49 @@
                   isEligible = false;
                   reject += "sig/day " + DoubleToString(avgSigDay, 1) + " not in [" + IntegerToString(IntellMinSignalsPerTrade) + "," + IntegerToString(IntellMaxSignalsPerTrade) + "] | ";
                }
-              if(IntellSelectWorst)
-              {
-                 if(blownRate < targetRate) { isEligible = false; reject += "blown " + DoubleToString(blownRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
-                 if(passes[sid] > 0) reject += IntegerToString(passes[sid]) + " passed (worst mode) | ";
+               if(IntellSelectWorst)
+               {
+                  if(blownRate < targetRate) { isEligible = false; reject += "blown " + DoubleToString(blownRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
 
-                 if(IntellAvgPLThresholdPct > 0 && activeCnt[sid] > 0)
-                 {
-                    double avgPLact = activeSumPL[sid] / activeCnt[sid];
-                    double minDD = _gPropStartingBalance * (_gPropMaxTotalDrawdownPercent / 100.0) * ((double)IntellAvgPLThresholdPct / 100.0);
-                    if(avgPLact > -minDD)
-                    {
-                       isEligible = false;
-                       reject += "active avg PL $" + DoubleToString(avgPLact, 2) + " not ≤ -$" + DoubleToString(minDD, 2) + " min drawdown | ";
+                  if(IntellAvgPLThresholdPct > 0 && activeCnt[sid] > 0)
+                  {
+                     double avgPLact = activeSumPL[sid] / activeCnt[sid];
+                     double minDD = _gPropStartingBalance * (_gPropMaxTotalDrawdownPercent / 100.0) * ((double)IntellAvgPLThresholdPct / 100.0);
+                     if(avgPLact > -minDD)
+                     {
+                        isEligible = false;
+                        reject += "active avg PL $" + DoubleToString(avgPLact, 2) + " not ≤ -$" + DoubleToString(minDD, 2) + " min drawdown | ";
+                     }
+                  }
+               }
+               else
+               {
+                  if(passRate < targetRate) { isEligible = false; reject += "pass " + DoubleToString(passRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
+
+                  if(IntellAvgPLThresholdPct > 0 && activeCnt[sid] > 0)
+                  {
+                     double avgPLact = activeSumPL[sid] / activeCnt[sid];
+                     double minProfit = _gPropStartingBalance * (_gPropProfitTargetPercent / 100.0) * ((double)IntellAvgPLThresholdPct / 100.0);
+                     if(avgPLact < minProfit)
+                     {
+                        isEligible = false;
+                        reject += "active avg PL $" + DoubleToString(avgPLact, 2) + " < $" + DoubleToString(minProfit, 2) + " min profit | ";
                     }
                  }
               }
-              else
-              {
-                 if(passRate < targetRate) { isEligible = false; reject += "pass " + DoubleToString(passRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
-                 if(breached[sid] > 0) { isEligible = false; reject += IntegerToString(breached[sid]) + " blown (best mode) | "; }
-
-                 if(IntellAvgPLThresholdPct > 0 && activeCnt[sid] > 0)
-                 {
-                    double avgPLact = activeSumPL[sid] / activeCnt[sid];
-                    double minProfit = _gPropStartingBalance * (_gPropProfitTargetPercent / 100.0) * ((double)IntellAvgPLThresholdPct / 100.0);
-                    if(avgPLact < minProfit)
-                    {
-                       isEligible = false;
-                       reject += "active avg PL $" + DoubleToString(avgPLact, 2) + " < $" + DoubleToString(minProfit, 2) + " min profit | ";
-                    }
-                 }
-              }
-           }
-           if(activeCount > 0) reject += IntegerToString(activeCount) + " active | ";
-           string qualifyMsg = "";
+            }
+             if(isEligible)
+             {
+                int recentMatch = 0, recentTotal = 0, recentCheckCount = 0;
+                string recentDetail = "";
+                if(!IntellCheckRecentCompletions(sid + 1, recentMatch, recentTotal, recentCheckCount, recentDetail))
+                {
+                   isEligible = false;
+                   reject += recentDetail + " | ";
+                }
+             }
+            if(activeCount > 0) reject += IntegerToString(activeCount) + " active | ";
+            string qualifyMsg = "";
            if(isEligible)
            {
               qualifyMsg = "✓ QUALIFIED";
@@ -9342,8 +9424,9 @@
            g_auditSelection += "ProfitTarget%: " + DoubleToString(_gPropProfitTargetPercent, 2) + "\r\n";
            g_auditSelection += "MaxDD%: " + DoubleToString(_gPropMaxTotalDrawdownPercent, 2) + "\r\n";
            g_auditSelection += "DailyDD: " + (_gPropEnableDailyDrawdown ? "ON" : "OFF") + " " + DoubleToString(_gPropDailyDrawdownPercent, 2) + "%\r\n";
-           g_auditSelection += "MinPassRate/Blown: " + IntegerToString(IntellMinPassRateOrBlown) + "\r\n";
-           g_auditSelection += "MaxMinutesSinceLastTrade: " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "\r\n";
+            g_auditSelection += "MinBlownRate: " + IntegerToString(IntellMinBlownRate) + "%  MinPassRate: " + IntegerToString(IntellMinPassRate) + "%\r\n";
+            g_auditSelection += "WorstRecentPct: " + IntegerToString(IntellWorstRecentPct) + "%  MinBlown: " + IntegerToString(IntellWorstRecentMinBlown) + "%  |  BestRecentPct: " + IntegerToString(IntellBestRecentPct) + "%  MinPass: " + IntegerToString(IntellBestRecentMinPass) + "%\r\n";
+            g_auditSelection += "MaxMinutesSinceLastTrade: " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "\r\n";
            g_auditSelection += "MinCompletedRuns: " + IntegerToString(IntellMinCompletedRuns) + "\r\n";
            g_auditSelection += "MinCompletion%: " + IntegerToString(IntellMinCompletionPercent) + "\r\n";
            g_auditSelection += "MinSignalsPerTrade: " + IntegerToString(IntellMinSignalsPerTrade) + "\r\n";
@@ -9622,48 +9705,60 @@
       double passRate = totalComps > 0 ? (double)passes / totalComps * 100.0 : 0.0;
       double blownRate = totalComps > 0 ? (double)breached / totalComps * 100.0 : 0.0;
 
+      string ck = ShortToString(0x2713);
+      string xk = ShortToString(0x2717);
       detail += "\n";
-      detail += "  Completion: " + (completionPct >= (double)IntellMinCompletionPercent ? "V" : "X") +
-         " " + DoubleToString(completionPct, 1) + "% >= " + IntegerToString(IntellMinCompletionPercent) + "%\n";
-      detail += "  Last trade: " + (minsSince <= IntellMaxMinutesSinceLastTrade ? "V" : "X") +
-         " " + IntegerToString(minsSince) + "m <= " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m\n";
-      detail += "  Sig/day: " + (avgSigDay >= IntellMinSignalsPerTrade && avgSigDay <= IntellMaxSignalsPerTrade ? "V" : "X") +
-         " " + DoubleToString(avgSigDay, 1) + " in [" + IntegerToString(IntellMinSignalsPerTrade) + "," + IntegerToString(IntellMaxSignalsPerTrade) + "]\n";
+      detail += "  " + (completionPct >= (double)IntellMinCompletionPercent ? ck : xk) + " Completion: " +
+         DoubleToString(completionPct, 1) + "% >= " + IntegerToString(IntellMinCompletionPercent) + "%\n";
+      detail += "  " + (minsSince <= IntellMaxMinutesSinceLastTrade ? ck : xk) + " Last trade: " +
+         IntegerToString(minsSince) + "m <= " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m\n";
+      detail += "  " + (avgSigDay >= IntellMinSignalsPerTrade && avgSigDay <= IntellMaxSignalsPerTrade ? ck : xk) + " Sig/day: " +
+         DoubleToString(avgSigDay, 1) + " in [" + IntegerToString(IntellMinSignalsPerTrade) + "," + IntegerToString(IntellMaxSignalsPerTrade) + "]\n";
 
       if(IntellSelectWorst)
       {
-         detail += "  Blown rate: " + (blownRate >= (double)IntellMinPassRateOrBlown ? "V" : "X") +
-            " " + DoubleToString(blownRate, 1) + "% >= " + IntegerToString(IntellMinPassRateOrBlown) + "%\n";
-         detail += "  No passes: " + (passes == 0 ? "V" : "X") +
-            (passes > 0 ? " (" + IntegerToString(passes) + " passed)" : "") + "\n";
+         detail += "  " + (blownRate >= (double)IntellMinBlownRate ? ck : xk) + " Blown rate: " +
+            DoubleToString(blownRate, 1) + "% >= " + IntegerToString(IntellMinBlownRate) + "%\n";
          if(IntellAvgPLThresholdPct > 0 && activeCnt > 0)
          {
             double avgPLact = activeSumPL / activeCnt;
             double minDD = _gPropStartingBalance * (_gPropMaxTotalDrawdownPercent / 100.0) * ((double)IntellAvgPLThresholdPct / 100.0);
-            detail += "  Active PL: " + (avgPLact <= -minDD ? "V" : "X") +
-               " $" + DoubleToString(avgPLact, 2) + " <= -$" + DoubleToString(minDD, 2) + "\n";
+            detail += "  " + (avgPLact <= -minDD ? ck : xk) + " Active PL: " +
+               "$" + DoubleToString(avgPLact, 2) + " <= -$" + DoubleToString(minDD, 2) + "\n";
          }
          else
-            detail += "  Active PL: - (no active runs or filter off)\n";
+            detail += "  " + xk + " Active PL: - (no active runs or filter off)\n";
       }
       else
       {
-         detail += "  Pass rate: " + (passRate >= (double)IntellMinPassRateOrBlown ? "V" : "X") +
-            " " + DoubleToString(passRate, 1) + "% >= " + IntegerToString(IntellMinPassRateOrBlown) + "%\n";
-         detail += "  No blown: " + (breached == 0 ? "V" : "X") +
-            (breached > 0 ? " (" + IntegerToString(breached) + " blown)" : "") + "\n";
+         detail += "  " + (passRate >= (double)IntellMinPassRate ? ck : xk) + " Pass rate: " +
+            DoubleToString(passRate, 1) + "% >= " + IntegerToString(IntellMinPassRate) + "%\n";
          if(IntellAvgPLThresholdPct > 0 && activeCnt > 0)
          {
             double avgPLact = activeSumPL / activeCnt;
             double minProfit = _gPropStartingBalance * (_gPropProfitTargetPercent / 100.0) * ((double)IntellAvgPLThresholdPct / 100.0);
-            detail += "  Active PL: " + (avgPLact >= minProfit ? "V" : "X") +
-               " $" + DoubleToString(avgPLact, 2) + " >= $" + DoubleToString(minProfit, 2) + "\n";
+            detail += "  " + (avgPLact >= minProfit ? ck : xk) + " Active PL: " +
+               "$" + DoubleToString(avgPLact, 2) + " >= $" + DoubleToString(minProfit, 2) + "\n";
          }
          else
-            detail += "  Active PL: - (no active runs or filter off)\n";
+            detail += "  " + xk + " Active PL: - (no active runs or filter off)\n";
       }
-      return detail;
-   }
+       {
+          int recentMatch = 0, recentTotal = 0, recentCheckCount = 0;
+          string recentDetail = "";
+          IntellCheckRecentCompletions(sid, recentMatch, recentTotal, recentCheckCount, recentDetail);
+          int recentPct = IntellSelectWorst ? IntellWorstRecentPct : IntellBestRecentPct;
+          int minPct = IntellSelectWorst ? IntellWorstRecentMinBlown : IntellBestRecentMinPass;
+          if(recentPct > 0 && recentTotal > 0)
+          {
+             int minRequired = MathMax(1, recentCheckCount * minPct / 100);
+             bool recentOk = (recentMatch >= minRequired);
+             detail += "  " + (recentOk ? ck : xk) + " Recent " + IntegerToString(recentPct) + "%: " + IntegerToString(recentMatch) + "/" + IntegerToString(recentCheckCount) +
+                " " + (IntellSelectWorst ? "blown" : "passed") + " (need >= " + IntegerToString(minRequired) + ")\n";
+          }
+       }
+       return detail;
+    }
 
    bool IntellIsStrategyStillEligible(const int sid, string &outReject)
    {
@@ -9724,14 +9819,9 @@
       double blownRate = totalComps > 0 ? (double)breached / totalComps * 100.0 : 0.0;
       if(IntellSelectWorst)
       {
-         if(blownRate < (double)IntellMinPassRateOrBlown)
+         if(blownRate < (double)IntellMinBlownRate)
          {
-            outReject = "blown " + DoubleToString(blownRate, 1) + "% < " + IntegerToString(IntellMinPassRateOrBlown) + "%";
-            return false;
-         }
-         if(passes > 0)
-         {
-            outReject = IntegerToString(passes) + " passed (worst mode)";
+            outReject = "blown " + DoubleToString(blownRate, 1) + "% < " + IntegerToString(IntellMinBlownRate) + "%";
             return false;
          }
          if(IntellAvgPLThresholdPct > 0 && activeCnt > 0)
@@ -9747,14 +9837,9 @@
       }
       else
       {
-         if(passRate < (double)IntellMinPassRateOrBlown)
+         if(passRate < (double)IntellMinPassRate)
          {
-            outReject = "pass " + DoubleToString(passRate, 1) + "% < " + IntegerToString(IntellMinPassRateOrBlown) + "%";
-            return false;
-         }
-         if(breached > 0)
-         {
-            outReject = IntegerToString(breached) + " blown (best mode)";
+            outReject = "pass " + DoubleToString(passRate, 1) + "% < " + IntegerToString(IntellMinPassRate) + "%";
             return false;
          }
          if(IntellAvgPLThresholdPct > 0 && activeCnt > 0)
@@ -9767,8 +9852,17 @@
                return false;
             }
          }
-      }
-      int cd = wins + losses;
+       }
+        {
+           int recentMatch = 0, recentTotal = 0, recentCheckCount = 0;
+           string recentDetail = "";
+           if(!IntellCheckRecentCompletions(sid, recentMatch, recentTotal, recentCheckCount, recentDetail))
+           {
+              outReject = recentDetail;
+             return false;
+          }
+       }
+       int cd = wins + losses;
       double wr = cd > 0 ? (double)wins / cd * 100.0 : 0.0;
       double pf = losses > 0 ? (double)wins / losses : (wins > 0 ? 999.0 : 0.0);
       double avgWin = wins > 0 ? grossProfit / wins : 0.0;
