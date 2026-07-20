@@ -1237,8 +1237,9 @@
          input int IntellMinSignalsPerTrade = 10;
          input int IntellMaxSignalsPerTrade = 20;
          input int IntellAvgPLThresholdPct = 10;    // % of MaxDD (worst) or ProfitTarget (best) for avg active run P&L filter. 0=disable
-          input int IntellRetrySeconds = 60;
-      input group "Intelligent Trader — Scan Range"
+           input int IntellRetrySeconds = 60;
+           input int IntellLatestActiveRunAgeMinutes = 30; // Max age (min) of latest run activity vs chart time. Exceeded → stale data, reject strategy
+       input group "Intelligent Trader — Scan Range"
       input bool IntellLimitScanRange = true;             // Enable scan from specific start date
       input int IntellScanFromYear = 2025;                // Start year for replay scan
       input int IntellScanFromMonth = 1;                  // Start month for replay scan (1-12)
@@ -8129,11 +8130,18 @@
                   IntellSetLine(ln++, "WR:" + DoubleToString(iWR, 1) + "%  PF:" + DoubleToString(iPF, 2), IntellTextColor());
                  IntellSetLine(ln++, "RR:" + DoubleToString(iRR, 2) + "  Trd/D:" + DoubleToString(iTrdPerDay, 2) +
                     "  Sig:" + IntegerToString(iSig) + "  Sig/D:" + DoubleToString(iAvgSigDay, 1), IntellTextColor());
-                 IntellSetLine(ln++, "AvgDays-Tgt:" + DoubleToString(iAvgDaysTgt, 1) + "  AvgDays-Br:" + DoubleToString(iAvgDaysBr, 1), IntellTextColor());
-                 if(lastClose > 0)
-                    IntellSetLine(ln++, "Last Trade: " + TimeToString(lastClose, TIME_DATE | TIME_MINUTES) + " (" + IntegerToString((int)((TimeCurrent() - lastClose) / 60)) + "m ago)");
-                 else
-                    IntellSetLine(ln++, "Last Trade: --");
+                  IntellSetLine(ln++, "AvgDays-Tgt:" + DoubleToString(iAvgDaysTgt, 1) + "  AvgDays-Br:" + DoubleToString(iAvgDaysBr, 1), IntellTextColor());
+                  {
+                     datetime runLatest = IntellLatestRunTime(sid);
+                     int ageMin = runLatest > 0 ? (int)((TimeCurrent() - runLatest) / 60) : 999999;
+                     bool fresh = (ageMin <= IntellLatestActiveRunAgeMinutes);
+                     string ck = ShortToString(0x2713);
+                     string xk = ShortToString(0x2717);
+                     if(runLatest > 0)
+                        IntellSetLine(ln++, "Latest Run: " + TimeToString(runLatest, TIME_DATE | TIME_MINUTES) + " (" + IntegerToString(ageMin) + "m ago) " + (fresh ? ck : xk), fresh ? IntellGoodColor() : IntellBadColor());
+                     else
+                        IntellSetLine(ln++, "Latest Run: -- " + xk, IntellBadColor());
+                  }
                  IntellSetLine(ln++, " ");
               }
               else if(g_intellState != INTELL_RETRY_WAIT)
@@ -8145,17 +8153,19 @@
                  IntellSetLine(ln++, " ");
               }
 
-               if(g_intellState == INTELL_READY)
-               {
-                  IntellSetLine(ln++, "Waiting for signal from selected strategy...", IntellWarnColor());
-                  if(g_intellValidationStatus != "")
-                  {
-                     string statusLine = g_intellValidationStatus;
-                     if(StringLen(statusLine) > 120)
-                        statusLine = StringSubstr(statusLine, 0, 117) + "...";
-                     IntellSetLine(ln++, statusLine, IntellTextColor());
-                  }
-               }
+                if(g_intellState == INTELL_READY)
+                {
+                   int secLeft = (int)(g_intellNextValidationTime - TimeCurrent());
+                   if(secLeft < 0) secLeft = 0;
+                   IntellSetLine(ln++, "Waiting for signal from selected strategy...  Recheck in " + IntegerToString(secLeft) + "s", IntellWarnColor());
+                   if(g_intellValidationStatus != "")
+                   {
+                      string statusLine = g_intellValidationStatus;
+                      if(StringLen(statusLine) > 120)
+                         statusLine = StringSubstr(statusLine, 0, 117) + "...";
+                      IntellSetLine(ln++, statusLine, IntellTextColor());
+                   }
+                }
              if(g_intellState == INTELL_TRADING)
              {
                 if(PositionSelectByTicket(g_intellTradeTicket))
@@ -8182,12 +8192,15 @@
                  if(secLeft < 0) secLeft = 0;
                  IntellSetLine(ln++, "No strategy met criteria. Retry in " + IntegerToString(secLeft) + "s", IntellBadColor());
               }
-              if(g_intellState == INTELL_WAIT_DATA)
-              {
-                 IntellSetLine(ln++, "Waiting for new report data from tester...", IntellWarnColor());
-                 if(g_intellLoadedFileTime > 0)
-                    IntellSetLine(ln++, "Last CSV: " + TimeToString(g_intellLoadedFileTime, TIME_DATE | TIME_MINUTES), IntellMutedColor());
-              }
+               if(g_intellState == INTELL_WAIT_DATA)
+               {
+                  int secLeft = (int)(g_intellNextValidationTime - TimeCurrent());
+                  if(secLeft < 0) secLeft = 0;
+                  IntellSetLine(ln++, "Waiting for new report data from tester...", IntellWarnColor());
+                  if(g_intellLoadedFileTime > 0)
+                     IntellSetLine(ln++, "Last CSV: " + TimeToString(g_intellLoadedFileTime, TIME_DATE | TIME_MINUTES), IntellMutedColor());
+                  IntellSetLine(ln++, "Recheck in " + IntegerToString(secLeft) + "s", IntellWarnColor());
+               }
           }
 
            // Top candidates – detailed eligibility
@@ -9268,12 +9281,21 @@
                 isEligible = false;
                 reject += "last " + IntegerToString(minsSince) + "m ago > " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m | ";
              }
-               if(avgSigDay < IntellMinSignalsPerTrade || avgSigDay > IntellMaxSignalsPerTrade)
-               {
-                  isEligible = false;
-                  reject += "sig/day " + DoubleToString(avgSigDay, 1) + " not in [" + IntegerToString(IntellMinSignalsPerTrade) + "," + IntegerToString(IntellMaxSignalsPerTrade) + "] | ";
-               }
-               if(IntellSelectWorst)
+                if(avgSigDay < IntellMinSignalsPerTrade || avgSigDay > IntellMaxSignalsPerTrade)
+                {
+                   isEligible = false;
+                   reject += "sig/day " + DoubleToString(avgSigDay, 1) + " not in [" + IntegerToString(IntellMinSignalsPerTrade) + "," + IntegerToString(IntellMaxSignalsPerTrade) + "] | ";
+                }
+                {
+                   datetime runLatest = IntellLatestRunTime(sid + 1);
+                   int ageMin = runLatest > 0 ? (int)((TimeCurrent() - runLatest) / 60) : 999999;
+                   if(ageMin > IntellLatestActiveRunAgeMinutes)
+                   {
+                      isEligible = false;
+                      reject += "stale: latest run " + IntegerToString(ageMin) + "m ago > " + IntegerToString(IntellLatestActiveRunAgeMinutes) + "m max | ";
+                   }
+                }
+                if(IntellSelectWorst)
                {
                   if(blownRate < targetRate) { isEligible = false; reject += "blown " + DoubleToString(blownRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
 
@@ -9774,9 +9796,31 @@
              bool recentOk = (recentMatch >= minRequired);
              detail += "  " + (recentOk ? ck : xk) + " Recent " + IntegerToString(recentPct) + "%: " + IntegerToString(recentMatch) + "/" + IntegerToString(recentCheckCount) +
                 " " + (IntellSelectWorst ? "blown" : "passed") + " (need >= " + IntegerToString(minRequired) + ")\n";
-          }
+           }
+        }
+        {
+           datetime runLatest = IntellLatestRunTime(sid);
+           int ageMin = runLatest > 0 ? (int)((TimeCurrent() - runLatest) / 60) : 999999;
+           bool fresh = (ageMin <= IntellLatestActiveRunAgeMinutes);
+           string ageStr = runLatest > 0 ? IntegerToString(ageMin) + "m ago" : "N/A";
+           string limitStr = IntegerToString(IntellLatestActiveRunAgeMinutes) + "m max";
+           detail += "  " + (fresh ? ck : xk) + " Latest run: " + ageStr + " (≤ " + limitStr + ")\n";
+        }
+         return detail;
+      }
+
+     datetime IntellLatestRunTime(const int sid)
+    {
+       datetime latest = 0;
+       for(int i = 0; i < ArraySize(propRuns); i++)
+       {
+          if(propRuns[i].strategyId != sid) continue;
+          if(propRuns[i].ended > latest) latest = propRuns[i].ended;
+          if(propRuns[i].lastClosedTradeTime > latest) latest = propRuns[i].lastClosedTradeTime;
+          if(propRuns[i].pos.openTime > latest && propRuns[i].pos.open) latest = propRuns[i].pos.openTime;
+          if(propRuns[i].startDay > latest) latest = propRuns[i].startDay;
        }
-       return detail;
+       return latest;
     }
 
    bool IntellIsStrategyStillEligible(const int sid, string &outReject)
@@ -9880,8 +9924,17 @@
               outReject = recentDetail;
              return false;
           }
-       }
-       int cd = wins + losses;
+        }
+        {
+           datetime runLatest = IntellLatestRunTime(sid);
+           int ageMin = runLatest > 0 ? (int)((TimeCurrent() - runLatest) / 60) : 999999;
+           if(ageMin > IntellLatestActiveRunAgeMinutes)
+           {
+              outReject = "stale: latest run " + IntegerToString(ageMin) + "m ago > " + IntegerToString(IntellLatestActiveRunAgeMinutes) + "m max";
+              return false;
+           }
+        }
+        int cd = wins + losses;
       double wr = cd > 0 ? (double)wins / cd * 100.0 : 0.0;
       double pf = losses > 0 ? (double)wins / losses : (wins > 0 ? 999.0 : 0.0);
       double avgWin = wins > 0 ? grossProfit / wins : 0.0;
