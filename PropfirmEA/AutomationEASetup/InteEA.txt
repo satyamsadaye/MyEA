@@ -9004,8 +9004,9 @@
           if(parts[0] == "RUN" && n >= 16)
           {
              if(runCount >= cap) { cap *= 2; ArrayResize(propRuns, cap); }
-             PropRunResult r;
-             ArrayInitialize(r.closedTradePnL, 0.0);
+              PropRunResult r;
+              r.pos.open = false;
+              ArrayInitialize(r.closedTradePnL, 0.0);
              r.strategyId = (int)StringToInteger(parts[1]);
              r.passed = (StringToInteger(parts[2]) != 0);
              r.breached = (StringToInteger(parts[3]) != 0);
@@ -9823,7 +9824,7 @@
           if(propRuns[i].strategyId != sid) continue;
           if(propRuns[i].ended > latest) latest = propRuns[i].ended;
           if(propRuns[i].lastClosedTradeTime > latest) latest = propRuns[i].lastClosedTradeTime;
-          if(propRuns[i].pos.openTime > latest && propRuns[i].pos.open) latest = propRuns[i].pos.openTime;
+           if(propRuns[i].pos.openTime > latest && propRuns[i].pos.open && propRuns[i].pos.openTime <= TimeCurrent()) latest = propRuns[i].pos.openTime;
           if(propRuns[i].startDay > latest) latest = propRuns[i].startDay;
        }
        return latest;
