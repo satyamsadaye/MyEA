@@ -8052,9 +8052,11 @@
              IntellSetLine(ln++, "Override: normal StrategyMode/SingleStrategy is IGNORED", IntellWarnColor());
              IntellSetLine(ln++, "Last sync: " + (g_intellLoadedFileTime > 0 ? TimeToString(g_intellLoadedFileTime, TIME_DATE|TIME_SECONDS) : "N/A"), IntellMutedColor());
 
-            string rangeStr = (g_intellScanRangeFrom > 0 && g_intellScanRangeTo > 0) ? TimeToString(g_intellScanRangeFrom, TIME_DATE|TIME_MINUTES) + "  ->  " + TimeToString(g_intellScanRangeTo, TIME_DATE|TIME_MINUTES) : "N/A";
-            IntellSetLine(ln++, "SCAN RANGE: " + rangeStr + "  [" + IntegerToString(ArraySize(propRuns)) + " runs]", IntellGoodColor());
-           IntellSetLine(ln++, " ");
+             string rangeStr = (g_intellScanRangeFrom > 0 && g_intellScanRangeTo > 0) ? TimeToString(g_intellScanRangeFrom, TIME_DATE|TIME_MINUTES) + "  ->  " + TimeToString(g_intellScanRangeTo, TIME_DATE|TIME_MINUTES) : "N/A";
+             IntellSetLine(ln++, "SCAN RANGE: " + rangeStr + "  [" + IntegerToString(ArraySize(propRuns)) + " runs]", IntellGoodColor());
+             if(ArraySize(propRuns) == 0 && g_intellState != INTELL_IDLE)
+                IntellSetLine(ln++, "No report data — waiting for CSV file", IntellBadColor());
+            IntellSetLine(ln++, " ");
 
            if(g_intellScanning)
            {
@@ -8927,12 +8929,16 @@
                 }
                 IntellPickFromResults();
              }
-            else
-            {
-                LogEvent("INTELL_FILE_SCAN", "No report data file found (DIAGv2) (" + IntellReportDataFile + ")");
-               g_intellState = INTELL_RETRY_WAIT;
-               g_intellRetryTime = TimeCurrent() + IntellRetrySeconds;
-            }
+             else
+             {
+                 LogEvent("INTELL_FILE_SCAN", "No report data file found (" + IntellReportDataFile + ")");
+                ArrayResize(propRuns, 0);
+                ArrayResize(propActiveIdx, 0);
+                g_intellSelectedStratId = 0;
+                g_intellTopCount = 0;
+                g_intellState = INTELL_RETRY_WAIT;
+                g_intellRetryTime = TimeCurrent() + IntellRetrySeconds;
+             }
             return;
          }
 
@@ -10114,24 +10120,31 @@
              }
              break;
 
-          case INTELL_WAIT_DATA:
-          {
-             string used;
-             if(IntellLoadResultsFromFile(used, true))
-             {
-                LogEvent("INTELL_FILE_SCAN", "Newer report data found (" + used + "), re-evaluating");
-                g_intellScanRangeFrom = 0;
-                g_intellScanRangeTo = 0;
-                for(int ri = 0; ri < ArraySize(propRuns); ri++)
-                {
-                   if(g_intellScanRangeFrom == 0 || propRuns[ri].startDay < g_intellScanRangeFrom)
-                      g_intellScanRangeFrom = propRuns[ri].startDay;
-                   if(propRuns[ri].ended > g_intellScanRangeTo)
-                      g_intellScanRangeTo = propRuns[ri].ended;
-                }
-                IntellPickFromResults();
-             }
-             break;
-          }
+           case INTELL_WAIT_DATA:
+           {
+              string used;
+              if(IntellLoadResultsFromFile(used, true))
+              {
+                 LogEvent("INTELL_FILE_SCAN", "Newer report data found (" + used + "), re-evaluating");
+                 g_intellScanRangeFrom = 0;
+                 g_intellScanRangeTo = 0;
+                 for(int ri = 0; ri < ArraySize(propRuns); ri++)
+                 {
+                    if(g_intellScanRangeFrom == 0 || propRuns[ri].startDay < g_intellScanRangeFrom)
+                       g_intellScanRangeFrom = propRuns[ri].startDay;
+                    if(propRuns[ri].ended > g_intellScanRangeTo)
+                       g_intellScanRangeTo = propRuns[ri].ended;
+                 }
+                 IntellPickFromResults();
+              }
+              else
+              {
+                 ArrayResize(propRuns, 0);
+                 ArrayResize(propActiveIdx, 0);
+                 g_intellSelectedStratId = 0;
+                 g_intellTopCount = 0;
+              }
+              break;
+           }
        }
     }
