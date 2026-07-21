@@ -1425,9 +1425,12 @@
      ENUM_TIMEFRAMES g_intellTimeframe = PERIOD_M1;
      datetime g_intellScanRangeFrom = 0;
       datetime g_intellScanRangeTo = 0;
+      int g_intellHourlyCounts[24];
+      datetime g_intellSelectedAtTime = 0;
+      bool g_intellHourlyProfileBuilt = false;
 
-     // ═══════════════════════════════════════════════════════════════════════════
-     // INTELLIGENT TRADER TRADE AUDIT (for per-trade text file export)
+      // ═══════════════════════════════════════════════════════════════════════════
+      // INTELLIGENT TRADER TRADE AUDIT (for per-trade text file export)
      // ═══════════════════════════════════════════════════════════════════════════
      string g_auditSelection = "";
      datetime g_auditSelectionTime = 0;
@@ -4770,11 +4773,11 @@
       _hlCacheBar = 0;
    }
 
-   double _Close(const int shift) { if(shift < _CACHE_MAX_BARS && _cacheOHLCVReady) return _cc[shift]; return iClose(_Symbol, g_intellTimeframe, shift); }
-   double _High(const int shift)  { if(shift < _CACHE_MAX_BARS && _cacheOHLCVReady) return _ch[shift]; return iHigh(_Symbol, g_intellTimeframe, shift); }
-   double _Low(const int shift)   { if(shift < _CACHE_MAX_BARS && _cacheOHLCVReady) return _cl[shift]; return iLow(_Symbol, g_intellTimeframe, shift); }
-   double _Open(const int shift)  { if(shift < _CACHE_MAX_BARS && _cacheOHLCVReady) return _co[shift]; return iOpen(_Symbol, g_intellTimeframe, shift); }
-   long   _Volume(const int shift){ if(shift < _CACHE_MAX_BARS && _cacheOHLCVReady) return _cv[shift]; return (long)iTickVolume(_Symbol, g_intellTimeframe, shift); }
+   double _Close(const int shift) { int s = shift + g_intellScanShift; if(g_intellScanShift > 0) return iClose(_Symbol, g_intellTimeframe, s); if(s < _CACHE_MAX_BARS && _cacheOHLCVReady) return _cc[s]; return iClose(_Symbol, g_intellTimeframe, s); }
+   double _High(const int shift)  { int s = shift + g_intellScanShift; if(g_intellScanShift > 0) return iHigh(_Symbol, g_intellTimeframe, s); if(s < _CACHE_MAX_BARS && _cacheOHLCVReady) return _ch[s]; return iHigh(_Symbol, g_intellTimeframe, s); }
+   double _Low(const int shift)   { int s = shift + g_intellScanShift; if(g_intellScanShift > 0) return iLow(_Symbol, g_intellTimeframe, s); if(s < _CACHE_MAX_BARS && _cacheOHLCVReady) return _cl[s]; return iLow(_Symbol, g_intellTimeframe, s); }
+   double _Open(const int shift)  { int s = shift + g_intellScanShift; if(g_intellScanShift > 0) return iOpen(_Symbol, g_intellTimeframe, s); if(s < _CACHE_MAX_BARS && _cacheOHLCVReady) return _co[s]; return iOpen(_Symbol, g_intellTimeframe, s); }
+   long   _Volume(const int shift){ int s = shift + g_intellScanShift; if(g_intellScanShift > 0) return (long)iTickVolume(_Symbol, g_intellTimeframe, s); if(s < _CACHE_MAX_BARS && _cacheOHLCVReady) return _cv[s]; return (long)iTickVolume(_Symbol, g_intellTimeframe, s); }
 
    // iHighest / iLowest cache (per lookback, shift=2 as used by most strategies)
    int _iHighest(const int lookback)
@@ -7634,7 +7637,7 @@
    }
 
    #define INTELL_PREFIX "INTL_"
-    #define INTELL_LINE_COUNT 65
+    #define INTELL_LINE_COUNT 75
 
    void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
    {
@@ -8142,11 +8145,31 @@
                      string xk = ShortToString(0x2717);
                      if(runLatest > 0)
                         IntellSetLine(ln++, "Latest Run: " + TimeToString(runLatest, TIME_DATE | TIME_MINUTES) + " (" + IntegerToString(ageMin) + "m ago) " + (fresh ? ck : xk), fresh ? IntellGoodColor() : IntellBadColor());
-                     else
-                        IntellSetLine(ln++, "Latest Run: -- " + xk, IntellBadColor());
-                  }
-                 IntellSetLine(ln++, " ");
-              }
+                      else
+                         IntellSetLine(ln++, "Latest Run: -- " + xk, IntellBadColor());
+                   }
+                  if(g_intellHourlyProfileBuilt && g_intellSelectedAtTime > 0)
+                  {
+                     int totalSigs = 0;
+                     for(int hi = 0; hi < 24; hi++) totalSigs += g_intellHourlyCounts[hi];
+                     double avgPerHr = totalSigs / 24.0;
+                     IntellSetLine(ln++, "Selected: " + TimeToString(g_intellSelectedAtTime, TIME_DATE|TIME_MINUTES) + "  |  Sig/hr avg: " + DoubleToString(avgPerHr, 1) + "  Total: " + IntegerToString(totalSigs), IntellGoodColor());
+                     MqlDateTime selDt;
+                     TimeToStruct(g_intellSelectedAtTime, selDt);
+                     int selH = selDt.hour;
+                     for(int hh = 0; hh < 24; hh += 8)
+                     {
+                        string hrLine = (hh == 0) ? "Sigs in last 24h:" : "                  ";
+                        for(int hi = hh; hi < hh + 8 && hi < 24; hi++)
+                        {
+                           int dh = (selH - 1 - hi + 240) % 24;
+                           hrLine += " " + StringFormat("%02dh:%d", dh, g_intellHourlyCounts[dh]);
+                        }
+                         IntellSetLine(ln++, hrLine, IntellTextColor());
+                      }
+                   }
+                   IntellSetLine(ln++, " ");
+               }
               else if(g_intellState != INTELL_RETRY_WAIT)
               {
                  if(g_intellState == INTELL_TRADING && g_intellTradeTicket > 0)
@@ -9152,9 +9175,47 @@
       return result;
    }
 
+   void IntellBuildHourlyProfile(const int strategyId)
+   {
+      ArrayInitialize(g_intellHourlyCounts, 0);
+      g_intellSelectedAtTime = TimeCurrent();
+      g_intellHourlyProfileBuilt = true;
+
+      int secsPerBar = PeriodSeconds(g_intellTimeframe);
+      if(secsPerBar <= 0) secsPerBar = 900;
+      int barsToScan = (24 * 3600) / secsPerBar;
+      int totalBars = Bars(_Symbol, g_intellTimeframe);
+      if(barsToScan > totalBars - 3)
+         barsToScan = totalBars - 3;
+      if(barsToScan < 1) return;
+
+      for(int shift = 1; shift <= barsToScan; shift++)
+      {
+         g_intellScanShift = shift - 1;
+
+         StrategySignal sig;
+         sig.buyVotes = 0;
+         sig.sellVotes = 0;
+         EvaluateStrategy(strategyId, sig);
+
+          if(sig.buyVotes > 0 || sig.sellVotes > 0)
+          {
+             datetime bt = iTime(_Symbol, g_intellTimeframe, shift);
+             if(bt > 0 && g_intellSelectedAtTime - bt < 24 * 3600 && g_intellSelectedAtTime > bt)
+             {
+                MqlDateTime dt;
+                TimeToStruct(bt, dt);
+                g_intellHourlyCounts[dt.hour % 24]++;
+             }
+          }
+      }
+
+      g_intellScanShift = 0;
+   }
+
       void IntellPickFromResults()
     {
-       g_intellSelectedStratId = 0;
+        g_intellSelectedStratId = 0;
        g_intellTopCount = 0;
 
        int startsCnt[PROP_STRATEGY_COUNT];
@@ -9441,9 +9502,10 @@
 
         if(bestId > 0)
         {
-           g_intellSelectedStratId = bestId;
-           g_intellState = INTELL_READY;
-           string mode = IntellSelectWorst ? "WORST" : "BEST";
+            g_intellSelectedStratId = bestId;
+            g_intellState = INTELL_READY;
+            IntellBuildHourlyProfile(bestId);
+            string mode = IntellSelectWorst ? "WORST" : "BEST";
            Print("SELECTED #" + IntegerToString(bestId) + " " + StrategyName(bestId) + " | " + IntegerToString(eligibleCount) + " eligible out of " + IntegerToString(g_intellTopCount) + " candidates");
            LogEvent("INTELL_SELECT", "Selected " + mode + " strategy #" + IntegerToString(bestId) +
               " " + StrategyName(bestId) + " (" + IntegerToString(eligibleCount) + " eligible)");
