@@ -1419,8 +1419,9 @@
      double g_intellTopAvgSigDay[10];
      double g_intellTopAvgDaysTarget[10];
      double g_intellTopAvgDaysBreach[10];
-     int g_intellLastTradedStratId = 0;
-    datetime g_intellLastTradeCloseTime = 0;
+      int g_intellLastTradedStratId = 0;
+     bool g_intellBlockLastTraded = false;
+     datetime g_intellLastTradeCloseTime = 0;
      ENUM_TIMEFRAMES g_intellTimeframe = PERIOD_M1;
      datetime g_intellScanRangeFrom = 0;
       datetime g_intellScanRangeTo = 0;
@@ -8910,12 +8911,16 @@
                    " profit=" + DoubleToString(PositionGetDouble(POSITION_PROFIT), 2));
                 return;
              }
-          }
+           }
 
-          if(IntellScanFromFile)
-         {
-            string used = "";
-             if(IntellLoadResultsFromFile(used, false))
+           if(!IntellScanFromFile && g_intellBlockLastTraded &&
+              iTime(_Symbol, g_intellTimeframe, 0) > g_intellLastTradeCloseTime)
+              g_intellBlockLastTraded = false;
+
+           if(IntellScanFromFile)
+          {
+             string used = "";
+              if(IntellLoadResultsFromFile(used, false))
              {
                 LogEvent("INTELL_FILE_SCAN", "Loaded results from " + used + " (" + IntegerToString(ArraySize(propRuns)) + " runs)");
                 g_intellScanRangeFrom = 0;
@@ -9300,11 +9305,16 @@
                    {
                       isEligible = false;
                       reject += "stale: latest run " + IntegerToString(ageMin) + "m ago > " + IntegerToString(IntellLatestActiveRunAgeMinutes) + "m max | ";
-                   }
-                }
-                if(IntellSelectWorst)
-               {
-                  if(blownRate < targetRate) { isEligible = false; reject += "blown " + DoubleToString(blownRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
+                    }
+                 }
+                 if(g_intellBlockLastTraded && g_intellLastTradedStratId > 0 && (sid + 1) == g_intellLastTradedStratId)
+                 {
+                    isEligible = false;
+                    reject += "last traded — waiting for new sync data | ";
+                 }
+                 if(IntellSelectWorst)
+                {
+                   if(blownRate < targetRate) { isEligible = false; reject += "blown " + DoubleToString(blownRate, 1) + "% < " + DoubleToString(targetRate, 1) + "% | "; }
 
                   if(IntellAvgPLThresholdPct > 0 && activeCnt[sid] > 0)
                   {
@@ -9693,6 +9703,7 @@
       g_intellTradeTicket = 0;
       g_intellLastTradeCloseTime = TimeCurrent();
       g_intellSelectedStratId = 0;
+      g_intellBlockLastTraded = true;
       if(!eaStopped)
       {
          if(IntellScanFromFile)
@@ -10136,15 +10147,16 @@
                     if(propRuns[ri].ended > g_intellScanRangeTo)
                        g_intellScanRangeTo = propRuns[ri].ended;
                  }
-                 IntellPickFromResults();
-              }
-              else
-              {
-                 ArrayResize(propRuns, 0);
-                 ArrayResize(propActiveIdx, 0);
-                 g_intellSelectedStratId = 0;
-                 g_intellTopCount = 0;
-              }
+                  g_intellBlockLastTraded = false;
+                  IntellPickFromResults();
+               }
+               else
+               {
+                  ArrayResize(propRuns, 0);
+                  ArrayResize(propActiveIdx, 0);
+                  g_intellSelectedStratId = 0;
+                  g_intellTopCount = 0;
+               }
               break;
            }
        }
