@@ -8913,10 +8913,6 @@
              }
            }
 
-           if(!IntellScanFromFile && g_intellBlockLastTraded &&
-              iTime(_Symbol, g_intellTimeframe, 0) > g_intellLastTradeCloseTime)
-              g_intellBlockLastTraded = false;
-
            if(IntellScanFromFile)
           {
              string used = "";
