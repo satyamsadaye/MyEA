@@ -1419,8 +1419,7 @@
      double g_intellTopAvgSigDay[10];
      double g_intellTopAvgDaysTarget[10];
      double g_intellTopAvgDaysBreach[10];
-      int g_intellLastTradedStratId = 0;
-     bool g_intellBlockLastTraded = false;
+      int g_intellBlockedStratId = 0;
      datetime g_intellLastTradeCloseTime = 0;
      ENUM_TIMEFRAMES g_intellTimeframe = PERIOD_M1;
      datetime g_intellScanRangeFrom = 0;
@@ -9364,10 +9363,10 @@
                       reject += "stale: latest run " + IntegerToString(ageMin) + "m ago > " + IntegerToString(IntellLatestActiveRunAgeMinutes) + "m max | ";
                     }
                  }
-                 if(g_intellBlockLastTraded && g_intellLastTradedStratId > 0 && (sid + 1) == g_intellLastTradedStratId)
+                 if(g_intellBlockedStratId > 0 && (sid + 1) == g_intellBlockedStratId)
                  {
                     isEligible = false;
-                    reject += "last traded — waiting for new sync data | ";
+                    reject += "blocked — must wait for next selected strategy's trade to finish | ";
                  }
                  if(IntellSelectWorst)
                 {
@@ -9761,7 +9760,6 @@
       g_intellTradeTicket = 0;
       g_intellLastTradeCloseTime = TimeCurrent();
       g_intellSelectedStratId = 0;
-      g_intellBlockLastTraded = true;
       if(!eaStopped)
       {
          if(IntellScanFromFile)
@@ -9930,7 +9928,13 @@
          if(propRuns[i].lastClosedTradeTime > lastClose)
             lastClose = propRuns[i].lastClosedTradeTime;
       }
-      if(startsCnt == 0) { outReject = "no runs for this strategy"; return false; }
+       if(g_intellBlockedStratId > 0 && sid == g_intellBlockedStratId)
+       {
+          outReject = "strategy is blocked — must wait for next selected strategy's trade to finish";
+          return false;
+       }
+
+       if(startsCnt == 0) { outReject = "no runs for this strategy"; return false; }
       int totalComps = passes + breached;
       if(totalComps == 0) { outReject = IntegerToString(startsCnt) + " active, 0 completed"; return false; }
       datetime now = TimeCurrent();
@@ -10039,12 +10043,20 @@
       }
    }
 
-   void IntellTradeTick()
-   {
-      if(g_intellSelectedStratId <= 0) { IntellInit(); return; }
+    void IntellTradeTick()
+    {
+       if(g_intellSelectedStratId <= 0) { IntellInit(); return; }
 
-      // ── Periodic re-validation ──
-      if(TimeCurrent() >= g_intellNextValidationTime)
+       if(g_intellBlockedStratId > 0 && g_intellSelectedStratId == g_intellBlockedStratId)
+       {
+          LogEvent("INTELL_BLOCKED", "Strategy #" + IntegerToString(g_intellSelectedStratId) + " " + StrategyName(g_intellSelectedStratId) + " is blocked — reselecting");
+          g_intellSelectedStratId = 0;
+          IntellInit();
+          return;
+       }
+
+       // ── Periodic re-validation ──
+       if(TimeCurrent() >= g_intellNextValidationTime)
       {
          string used = "";
          bool freshData = true;
@@ -10113,7 +10125,7 @@
        {
            g_intellTradeTicket = ticket;
            g_intellState = INTELL_TRADING;
-           g_intellLastTradedStratId = g_intellSelectedStratId;
+           g_intellBlockedStratId = g_intellSelectedStratId;
            g_intellValidationStatus = "";
            LogEvent("INTELL_TRADE", "Opened " + (dir == ORDER_TYPE_BUY ? "BUY" : "SELL") +
              " using #" + IntegerToString(g_intellSelectedStratId) + " " +
@@ -10205,7 +10217,6 @@
                     if(propRuns[ri].ended > g_intellScanRangeTo)
                        g_intellScanRangeTo = propRuns[ri].ended;
                  }
-                  g_intellBlockLastTraded = false;
                   IntellPickFromResults();
                }
                else
