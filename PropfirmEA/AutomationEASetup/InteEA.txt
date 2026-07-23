@@ -1231,10 +1231,8 @@
       input int IntellBestRecentMinPass = 80;                // Min % of those recent runs that must be passed
 
        input group "Intelligent Trader — Common Filters"
-      input int IntellMaxMinutesSinceLastTrade = 60;
-       input int IntellMinCompletedRuns = 3;
-       input int IntellMinCompletionPercent = 90;
-         input int IntellMinSignalsPerTrade = 10;
+       input int IntellMaxMinutesSinceLastTrade = 60;
+          input int IntellMinSignalsPerTrade = 10;
          input int IntellMaxSignalsPerTrade = 20;
          input int IntellAvgPLThresholdPct = 10;    // % of MaxDD (worst) or ProfitTarget (best) for avg active run P&L filter. 0=disable
            input int IntellRetrySeconds = 60;
@@ -9303,11 +9301,11 @@
        {
           int totalRuns = startsCnt[sid];
           if(totalRuns == 0) continue;
-          int totalComps = passes[sid] + breached[sid];
-          int activeCount = actives[sid];
+           int totalComps = passes[sid] + breached[sid];
+           int activeCount = actives[sid];
 
-          double passRate = totalComps > 0 ? (double)passes[sid] / totalComps * 100.0 : 0.0;
-          double blownRate = totalComps > 0 ? (double)breached[sid] / totalComps * 100.0 : 0.0;
+           double passRate = totalRuns > 0 ? (double)passes[sid] / totalRuns * 100.0 : 0.0;
+           double blownRate = totalRuns > 0 ? (double)breached[sid] / totalRuns * 100.0 : 0.0;
 
           int minsSince = lastClose[sid] > 0 ? (int)((now - lastClose[sid]) / 60) : 999999;
 
@@ -9338,13 +9336,7 @@
            }
            else
            {
-              double completionPct = (double)totalComps / totalRuns * 100.0;
-              if(completionPct < (double)IntellMinCompletionPercent)
-              {
-                 isEligible = false;
-                 reject += "completion " + DoubleToString(completionPct, 1) + "% < " + IntegerToString(IntellMinCompletionPercent) + "% | ";
-              }
-              if(minsSince > IntellMaxMinutesSinceLastTrade)
+               if(minsSince > IntellMaxMinutesSinceLastTrade)
              {
                 isEligible = false;
                 reject += "last " + IntegerToString(minsSince) + "m ago > " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m | ";
@@ -9540,10 +9532,8 @@
            g_auditSelection += "DailyDD: " + (_gPropEnableDailyDrawdown ? "ON" : "OFF") + " " + DoubleToString(_gPropDailyDrawdownPercent, 2) + "%\r\n";
             g_auditSelection += "MinBlownRate: " + IntegerToString(IntellMinBlownRate) + "%  MinPassRate: " + IntegerToString(IntellMinPassRate) + "%\r\n";
             g_auditSelection += "WorstRecentPct: " + IntegerToString(IntellWorstRecentPct) + "%  MinBlown: " + IntegerToString(IntellWorstRecentMinBlown) + "%  |  BestRecentPct: " + IntegerToString(IntellBestRecentPct) + "%  MinPass: " + IntegerToString(IntellBestRecentMinPass) + "%\r\n";
-            g_auditSelection += "MaxMinutesSinceLastTrade: " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "\r\n";
-           g_auditSelection += "MinCompletedRuns: " + IntegerToString(IntellMinCompletedRuns) + "\r\n";
-           g_auditSelection += "MinCompletion%: " + IntegerToString(IntellMinCompletionPercent) + "\r\n";
-           g_auditSelection += "MinSignalsPerTrade: " + IntegerToString(IntellMinSignalsPerTrade) + "\r\n";
+             g_auditSelection += "MaxMinutesSinceLastTrade: " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "\r\n";
+            g_auditSelection += "MinSignalsPerTrade: " + IntegerToString(IntellMinSignalsPerTrade) + "\r\n";
            g_auditSelection += "MaxSignalsPerTrade: " + IntegerToString(IntellMaxSignalsPerTrade) + "\r\n";
            g_auditSelection += "AvgPLThreshold%: " + IntegerToString(IntellAvgPLThresholdPct) + "\r\n";
            g_auditSelection += "RecencyHalfLifeDays: " + DoubleToString(_gPropRecencyHalfLifeDays, 1) + "\r\n";
@@ -9602,8 +9592,8 @@
            int totalRuns = startsCnt[sid];
            if(totalRuns == 0) continue;
            int totalComps = passes[sid] + breached[sid];
-           double passRate = totalComps > 0 ? (double)passes[sid] / totalComps * 100.0 : 0.0;
-           double blownRate = totalComps > 0 ? (double)breached[sid] / totalComps * 100.0 : 0.0;
+           double passRate = totalRuns > 0 ? (double)passes[sid] / totalRuns * 100.0 : 0.0;
+           double blownRate = totalRuns > 0 ? (double)breached[sid] / totalRuns * 100.0 : 0.0;
            int w = wins[sid]; int l = losses[sid]; int cd = w + l;
            double wr = cd > 0 ? (double)w / cd * 100.0 : 0.0;
            double pf = l > 0 ? (double)w / l : (w > 0 ? 999.0 : 0.0);
@@ -9812,20 +9802,16 @@
       if(totalComps == 0) return "  All runs active, none completed";
 
       int minsSince = lastClose > 0 ? (int)((TimeCurrent() - lastClose) / 60) : 999999;
-      double completionPct = (double)totalComps / startsCnt * 100.0;
-      int totalSignals = propSignalCounts[idx];
+       int totalSignals = propSignalCounts[idx];
       double testSpanDays = (g_intellScanRangeFrom > 0 && g_intellScanRangeTo > 0) ?
          (double)(g_intellScanRangeTo - g_intellScanRangeFrom) / 86400.0 : 1.0;
       double avgSigDay = (double)totalSignals / testSpanDays;
-      double passRate = totalComps > 0 ? (double)passes / totalComps * 100.0 : 0.0;
-      double blownRate = totalComps > 0 ? (double)breached / totalComps * 100.0 : 0.0;
+       double passRate = startsCnt > 0 ? (double)passes / startsCnt * 100.0 : 0.0;
+       double blownRate = startsCnt > 0 ? (double)breached / startsCnt * 100.0 : 0.0;
 
-      string ck = ShortToString(0x2713);
-      string xk = ShortToString(0x2717);
-      detail += "\n";
-      detail += "  " + (completionPct >= (double)IntellMinCompletionPercent ? ck : xk) + " Completion: " +
-         DoubleToString(completionPct, 1) + "% >= " + IntegerToString(IntellMinCompletionPercent) + "%\n";
-      detail += "  " + (minsSince <= IntellMaxMinutesSinceLastTrade ? ck : xk) + " Last trade: " +
+       string ck = ShortToString(0x2713);
+       string xk = ShortToString(0x2717);
+        detail += "  " + (minsSince <= IntellMaxMinutesSinceLastTrade ? ck : xk) + " Last trade: " +
          IntegerToString(minsSince) + "m <= " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m\n";
       detail += "  " + (avgSigDay >= IntellMinSignalsPerTrade && avgSigDay <= IntellMaxSignalsPerTrade ? ck : xk) + " Sig/day: " +
          DoubleToString(avgSigDay, 1) + " in [" + IntegerToString(IntellMinSignalsPerTrade) + "," + IntegerToString(IntellMaxSignalsPerTrade) + "]\n";
@@ -9939,13 +9925,7 @@
       if(totalComps == 0) { outReject = IntegerToString(startsCnt) + " active, 0 completed"; return false; }
       datetime now = TimeCurrent();
       int minsSince = lastClose > 0 ? (int)((now - lastClose) / 60) : 999999;
-      double completionPct = (double)totalComps / startsCnt * 100.0;
-      if(completionPct < (double)IntellMinCompletionPercent)
-      {
-         outReject = "completion " + DoubleToString(completionPct, 1) + "% < " + IntegerToString(IntellMinCompletionPercent) + "%";
-         return false;
-      }
-      if(minsSince > IntellMaxMinutesSinceLastTrade)
+       if(minsSince > IntellMaxMinutesSinceLastTrade)
       {
          outReject = "last " + IntegerToString(minsSince) + "m ago > " + IntegerToString(IntellMaxMinutesSinceLastTrade) + "m";
          return false;
@@ -9958,9 +9938,9 @@
          outReject = "sig/day " + DoubleToString(avgSigDay, 1) + " not in [" + IntegerToString(IntellMinSignalsPerTrade) + "," + IntegerToString(IntellMaxSignalsPerTrade) + "]";
          return false;
       }
-      double passRate = totalComps > 0 ? (double)passes / totalComps * 100.0 : 0.0;
-      double blownRate = totalComps > 0 ? (double)breached / totalComps * 100.0 : 0.0;
-      if(IntellSelectWorst)
+       double passRate = startsCnt > 0 ? (double)passes / startsCnt * 100.0 : 0.0;
+       double blownRate = startsCnt > 0 ? (double)breached / startsCnt * 100.0 : 0.0;
+       if(IntellSelectWorst)
       {
          if(blownRate < (double)IntellMinBlownRate)
          {
